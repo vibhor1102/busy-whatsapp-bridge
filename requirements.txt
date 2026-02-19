@@ -1,0 +1,25 @@
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+pydantic-settings==2.6.1
+pyodbc==5.2.0
+python-multipart==0.0.17
+httpx==0.27.2
+python-dotenv==1.0.1
+structlog==24.4.0
+twilio==9.3.7
+
+# Windows Service Dependencies
+pywin32==308
+
+# Production Dependencies
+psutil==6.1.0
+watchdog==6.0.0
+
+# Testing
+pytest==8.3.3
+pytest-asyncio==0.24.0
+requests==2.32.3
+
+# Security (Optional - for HTTPS)
+cryptography==44.0.0
