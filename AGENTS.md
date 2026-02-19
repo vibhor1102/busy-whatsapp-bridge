@@ -17,3 +17,5 @@
 **NOT Available:** `man`, `python3`
 
 **Path with spaces (User's Name is `Vibhor Goel`):** Always quote - `"C:\Users\Name\path"`
+
+**Virtual Environment:** Always use the virtual environment (`venv`) for all Python operations - activate it first before running any Python commands.
