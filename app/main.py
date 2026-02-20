@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Optional
 import structlog
 import sys
 
@@ -122,7 +123,7 @@ async def get_party_by_phone(phone: str):
 async def send_invoice_get(
     phone: str = Query(..., description="Customer phone number"),
     msg: str = Query(..., description="Message text"),
-    pdf_url: str = Query(..., description="URL to invoice PDF")
+    pdf_url: Optional[str] = Query(None, description="URL to invoice PDF (optional - will be extracted from message if not provided)")
 ):
     """
     Receive invoice notification from Busy (GET method).

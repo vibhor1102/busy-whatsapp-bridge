@@ -29,17 +29,19 @@ Before configuring Busy, ensure:
 Enter this URL in the **Config** field:
 
 ```
-http://YOUR_SERVER_IP:8000/api/v1/send-invoice?phone={MobileNo}&msg={Message}&pdf_url={AttachmentURL}
+http://YOUR_SERVER_IP:8000/api/v1/send-invoice?phone={MobileNo}&msg={Message}
 ```
 
 **Replace `YOUR_SERVER_IP` with:**
 - If running on same machine: `localhost` or `127.0.0.1`
-- If running on different machine: The actual IP address (e.g., `192.168.1.100`)
+- If running on different machine: The actual IP address (e.g., `192.168.1.166`)
 
 **Example:**
 ```
-http://192.168.1.100:8000/api/v1/send-invoice?phone={MobileNo}&msg={Message}&pdf_url={AttachmentURL}
+http://192.168.1.166:8000/api/v1/send-invoice?phone={MobileNo}&msg={Message}
 ```
+
+**Note:** The PDF URL is automatically extracted from the message text, so you don't need to include `&pdf_url={AttachmentURL}` parameter.
 
 ### Step 4: Configure Message Template (Optional)
 
@@ -136,38 +138,53 @@ Once frontend-backend integration is working:
 When Busy sends a webhook, it makes a GET request to:
 
 ```
-GET /api/v1/send-invoice?phone={MobileNo}&msg={Message}&pdf_url={AttachmentURL}
+GET /api/v1/send-invoice?phone={MobileNo}&msg={Message}
 ```
 
 **Parameters:**
-- `phone` - Customer mobile number (e.g., +919876543210)
-- `msg` - Message text from template
-- `pdf_url` - URL to invoice PDF on Busy cloud
+- `phone` - Customer mobile number (e.g., +919876543210) **(Required)**
+- `msg` - Message text from template **(Required)**
+  - The message should include the PDF URL (e.g., `files.busy.in/?XXXXXX`)
+  - The system automatically extracts the PDF URL from the message
+- `pdf_url` - URL to invoice PDF **(Optional)**
+  - If not provided, extracted automatically from `msg`
+  - If provided, used directly
 
 **What the server does:**
 1. Receives the request
-2. Looks up customer in Master1 table (if phone matches)
-3. Logs the request
-4. Returns success/error response to Busy
+2. Extracts PDF URL from message text (if not provided in `pdf_url`)
+3. Looks up customer in Master1 table (if phone matches)
+4. Enhances message with customer details (optional)
+5. Sends via configured WhatsApp provider
+6. Returns success/error response to Busy
 
 **Current behavior:**
 - ✓ Request is received and logged
+- ✓ PDF URL automatically extracted from message
 - ✓ Customer lookup works (if phone number in database)
+- ✓ Message enhancement with party details
 - ✓ Response sent back to Busy
-- ⚠ WhatsApp messaging NOT yet implemented (Phase 2)
+- ✓ WhatsApp messaging via configured provider (Meta/Webhook)
 
 ## Testing Without Busy
 
 You can test the integration without Busy using curl or browser:
 
 ```bash
-# Test endpoint
-curl "http://localhost:8000/api/v1/send-invoice?phone=+919876543210&msg=Test%20message&pdf_url=http://example.com/test.pdf"
+# Test with PDF URL in message
+curl "http://localhost:8000/api/v1/send-invoice?phone=+919876543210&msg=Test%20message%20files.busy.in/?ABC123"
+
+# Test with explicit PDF URL
+curl "http://localhost:8000/api/v1/send-invoice?phone=+919876543210&msg=Test&message&pdf_url=http://example.com/test.pdf"
 ```
 
 Or open in browser:
 ```
-http://localhost:8000/api/v1/send-invoice?phone=+919876543210&msg=Test&pdf_url=http://test.com/1.pdf
+# Simple test
+http://localhost:8000/api/v1/send-invoice?phone=+919876543210&msg=Test%20message
+
+# With PDF URL embedded in message
+http://localhost:8000/api/v1/send-invoice?phone=+919876543210&msg=Invoice%20ready%20files.busy.in/?ABC123
 ```
 
 This will show you exactly what Busy will experience.

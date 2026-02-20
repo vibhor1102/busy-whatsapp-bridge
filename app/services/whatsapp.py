@@ -24,6 +24,113 @@ class WhatsAppProvider(ABC):
 # - QR code authentication flow
 
 
+class EvolutionProvider(WhatsAppProvider):
+    """Evolution API (WhatsApp Web) integration."""
+    
+    def __init__(self):
+        self.settings = get_settings()
+        self.api_url = getattr(self.settings, 'EVOLUTION_API_URL', 'http://localhost:8080')
+        self.api_key = getattr(self.settings, 'EVOLUTION_API_KEY', '')
+        self.instance_name = getattr(self.settings, 'EVOLUTION_INSTANCE_NAME', 'default')
+        
+        # Ensure api_url doesn't end with /
+        self.api_url = self.api_url.rstrip('/')
+    
+    async def send_message(self, message: WhatsAppMessage) -> WhatsAppResponse:
+        """Send message via Evolution API."""
+        try:
+            if not self.api_key:
+                raise ValueError("Evolution API key not configured")
+            
+            # Clean phone number
+            to_number = message.to.replace("whatsapp:", "").replace("+", "")
+            
+            # Check if instance exists
+            headers = {
+                "apikey": self.api_key,
+                "Content-Type": "application/json"
+            }
+            
+            async with httpx.AsyncClient() as client:
+                # Check instance status
+                instance_url = f"{self.api_url}/instance/connectionState/{self.instance_name}"
+                instance_response = await client.get(instance_url, headers=headers)
+                instance_response.raise_for_status()
+                
+                # Build request payload
+                payload = {
+                    "number": to_number,
+                    "options": {
+                        "delay": 1200,
+                        "presence": "composing"
+                    }
+                }
+                
+                if message.media_url:
+                    # Send document/PDF
+                    endpoint = f"{self.api_url}/message/sendMedia/{self.instance_name}"
+                    payload["mediaMessage"] = {
+                        "mediatype": "document",
+                        "media": message.media_url,
+                        "caption": message.body
+                    }
+                    logger.info(
+                        "evolution_sending_document",
+                        to=message.to,
+                        url=message.media_url,
+                        instance=self.instance_name
+                    )
+                else:
+                    # Send text message
+                    endpoint = f"{self.api_url}/message/sendText/{self.instance_name}"
+                    payload["textMessage"] = {
+                        "text": message.body
+                    }
+                    logger.info(
+                        "evolution_sending_text",
+                        to=message.to,
+                        instance=self.instance_name
+                    )
+                
+                response = await client.post(
+                    endpoint,
+                    headers=headers,
+                    json=payload,
+                    timeout=60.0
+                )
+                response.raise_for_status()
+                
+                result = response.json()
+                
+                logger.info(
+                    "evolution_message_sent",
+                    to=message.to,
+                    instance=self.instance_name,
+                    response=result
+                )
+                
+                return WhatsAppResponse(
+                    success=True,
+                    message_id=result.get("key", {}).get("id", "evolution_msg"),
+                    error=None
+                )
+                
+        except httpx.HTTPError as e:
+            logger.error("evolution_http_error", to=message.to, error=str(e))
+            return WhatsAppResponse(
+                success=False,
+                message_id=None,
+                error=f"HTTP Error: {str(e)}"
+            )
+        except Exception as e:
+            logger.error("evolution_send_error", to=message.to, error=str(e))
+            return WhatsAppResponse(
+                success=False,
+                message_id=None,
+                error=str(e)
+            )
+
+
 class MetaProvider(WhatsAppProvider):
     """Meta Business API (Facebook/WhatsApp Cloud API) integration."""
     
@@ -181,6 +288,7 @@ def get_whatsapp_provider() -> WhatsAppProvider:
     provider_map = {
         "meta": MetaProvider,
         "webhook": WebhookProvider,
+        "evolution": EvolutionProvider,
         # TODO: "baileys": BaileysProvider - WhatsApp Web via Baileys library (Node.js subprocess)
     }
     

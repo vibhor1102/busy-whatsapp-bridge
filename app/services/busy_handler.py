@@ -1,5 +1,6 @@
 import structlog
-from typing import Optional
+import re
+from typing import Optional, Tuple
 from app.database.connection import db
 from app.models.schemas import (
     InvoiceNotification, 
@@ -18,6 +19,46 @@ class BusyHandler:
     def __init__(self):
         self.whatsapp_provider = get_whatsapp_provider()
     
+    def _extract_pdf_url(self, msg: str, pdf_url: Optional[str]) -> Tuple[str, Optional[str]]:
+        """
+        Extract PDF URL from message if pdf_url is a placeholder.
+        
+        Returns:
+            Tuple of (cleaned_message, extracted_pdf_url)
+        """
+        # Check if pdf_url is a placeholder or empty
+        is_placeholder = not pdf_url or pdf_url.strip() == "" or "{" in pdf_url or "}" in pdf_url
+        
+        if is_placeholder:
+            # Try to extract URL from message (looking for busy.in domain or any URL)
+            # Pattern matches: files.busy.in/?XXXXXX or any http/https URL
+            url_patterns = [
+                r'(files\.busy\.in/\?\w+)',  # Busy cloud files
+                r'(https?://\S+)',  # Any HTTP URL
+                r'(www\.\S+)',  # www URLs
+            ]
+            
+            for pattern in url_patterns:
+                match = re.search(pattern, msg, re.IGNORECASE)
+                if match:
+                    extracted_url = match.group(1)
+                    # Ensure it has protocol
+                    if not extracted_url.startswith('http'):
+                        extracted_url = f"https://{extracted_url}"
+                    
+                    # Remove URL from message
+                    cleaned_msg = re.sub(pattern, '', msg, flags=re.IGNORECASE).strip()
+                    # Clean up extra whitespace
+                    cleaned_msg = re.sub(r'\s+', ' ', cleaned_msg).strip()
+                    
+                    return cleaned_msg, extracted_url
+            
+            # No URL found in message
+            return msg, None
+        
+        # pdf_url is valid, just return as-is
+        return msg, pdf_url
+
     async def process_invoice_notification(
         self, 
         notification: InvoiceNotification
@@ -27,14 +68,22 @@ class BusyHandler:
         
         Workflow:
         1. Receive notification with phone, message, PDF URL
-        2. Query database for party details (optional enhancement)
-        3. Send WhatsApp message with PDF
+        2. Extract PDF URL from message if needed
+        3. Query database for party details (optional enhancement)
+        4. Send WhatsApp message with PDF
         """
         try:
+            # Extract PDF URL from message if placeholder
+            cleaned_msg, extracted_pdf_url = self._extract_pdf_url(
+                notification.msg, 
+                notification.pdf_url
+            )
+            
             logger.info(
                 "processing_invoice_notification",
                 phone=notification.phone,
-                has_pdf=bool(notification.pdf_url)
+                has_pdf=bool(extracted_pdf_url),
+                pdf_extracted=extracted_pdf_url != notification.pdf_url
             )
             
             # Optional: Fetch additional party details from database
@@ -44,11 +93,11 @@ class BusyHandler:
                 # Enhance message with party details if available
                 party = PartyDetails(**party_data)
                 enhanced_message = self._enhance_message(
-                    notification.msg, 
+                    cleaned_msg, 
                     party
                 )
             else:
-                enhanced_message = notification.msg
+                enhanced_message = cleaned_msg
                 logger.warning(
                     "party_not_found_in_db",
                     phone=notification.phone,
@@ -59,7 +108,7 @@ class BusyHandler:
             whatsapp_msg = WhatsAppMessage(
                 to=notification.phone,
                 body=enhanced_message,
-                media_url=notification.pdf_url
+                media_url=extracted_pdf_url
             )
             
             # Send via WhatsApp provider
