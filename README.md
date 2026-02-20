@@ -66,10 +66,8 @@ BDS_FILE_PATH=C:\Busy\Data\YourCompany.bds
 BDS_PASSWORD=ILoveMyINDIA
 
 # WhatsApp Provider (REQUIRED)
-WHATSAPP_PROVIDER=twilio
-TWILIO_ACCOUNT_SID=your_account_sid
-TWILIO_AUTH_TOKEN=your_auth_token
-TWILIO_PHONE_NUMBER=+1234567890
+WHATSAPP_PROVIDER=webhook
+WEBHOOK_URL=http://localhost:3000/send
 ```
 
 ### 3. Install Windows Service

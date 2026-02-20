@@ -126,10 +126,8 @@ BDS_FILE_PATH=C:\Busy\Production\Company.bds
 BDS_PASSWORD=YourStrongPassword123
 
 # WhatsApp Provider
-WHATSAPP_PROVIDER=twilio
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_PHONE_NUMBER=whatsapp:+1234567890
+WHATSAPP_PROVIDER=webhook
+WEBHOOK_URL=http://localhost:3000/send
 
 # Logging
 LOG_LEVEL=WARNING

@@ -56,12 +56,8 @@ BDS_FILE_PATH=C:\Busy\Data\YourCompany.bds
 BDS_PASSWORD=ILoveMyINDIA
 
 # WhatsApp Provider
-WHATSAPP_PROVIDER=twilio
-
-# Twilio (if using Twilio)
-TWILIO_ACCOUNT_SID=your_sid
-TWILIO_AUTH_TOKEN=your_token
-TWILIO_PHONE_NUMBER=whatsapp:+1234567890
+WHATSAPP_PROVIDER=webhook
+WEBHOOK_URL=http://localhost:3000/send
 ```
 
 ## 📞 Phone Number Format

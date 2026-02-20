@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-FastAPI-based middleware integrating Busy Accounting Software with WhatsApp providers (Twilio, Meta, Webhook). Runs as a Windows Service with MS Access database connectivity.
+FastAPI-based middleware integrating Busy Accounting Software with WhatsApp providers (Meta, Webhook). Baileys (WhatsApp Web) support planned for future. Runs as a Windows Service with MS Access database connectivity.
 
 **Stack:** Python 3.9+, FastAPI, Pydantic, pyodbc, structlog, pytest
 
@@ -205,7 +205,6 @@ tests/
 Key variables in `.env`:
 - `BDS_FILE_PATH` - Path to Busy .bds database file
 - `BDS_PASSWORD` - Database password
-- `WHATSAPP_PROVIDER` - Provider: twilio, meta, webhook
-- `TWILIO_*` - Twilio credentials
+- `WHATSAPP_PROVIDER` - Provider: meta, webhook (baileys - planned)
 - `META_*` - Meta Business API credentials
 - `DEBUG` - Enable debug mode (True/False)

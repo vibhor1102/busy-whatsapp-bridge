@@ -17,79 +17,11 @@ class WhatsAppProvider(ABC):
         pass
 
 
-class TwilioProvider(WhatsAppProvider):
-    """Twilio WhatsApp Business API integration."""
-    
-    def __init__(self):
-        self.settings = get_settings()
-        self.account_sid = self.settings.TWILIO_ACCOUNT_SID
-        self.auth_token = self.settings.TWILIO_AUTH_TOKEN
-        self.from_number = self.settings.TWILIO_PHONE_NUMBER
-        self.base_url = "https://api.twilio.com/2010-04-01"
-    
-    async def send_message(self, message: WhatsAppMessage) -> WhatsAppResponse:
-        """Send message via Twilio WhatsApp API."""
-        try:
-            if not self.account_sid or not self.auth_token:
-                raise ValueError("Twilio credentials not configured")
-            
-            url = f"{self.base_url}/Accounts/{self.account_sid}/Messages.json"
-            
-            # Format phone numbers with WhatsApp prefix
-            to_number = message.to if message.to.startswith("whatsapp:") else f"whatsapp:{message.to}"
-            if self.from_number:
-                from_number = self.from_number if self.from_number.startswith("whatsapp:") else f"whatsapp:{self.from_number}"
-            else:
-                raise ValueError("TWILIO_PHONE_NUMBER not configured")
-            
-            payload = {
-                "To": to_number,
-                "From": from_number,
-                "Body": message.body
-            }
-            
-            # Add media URL if provided
-            if message.media_url:
-                payload["MediaUrl"] = message.media_url
-            
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url,
-                    data=payload,
-                    auth=(self.account_sid, self.auth_token),
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                
-                result = response.json()
-                
-                logger.info(
-                    "twilio_message_sent",
-                    message_sid=result.get("sid"),
-                    to=message.to,
-                    status=result.get("status")
-                )
-                
-                return WhatsAppResponse(
-                    success=True,
-                    message_id=result.get("sid"),
-                    error=None
-                )
-                
-        except httpx.HTTPError as e:
-            logger.error("twilio_http_error", to=message.to, error=str(e))
-            return WhatsAppResponse(
-                success=False,
-                message_id=None,
-                error=f"HTTP Error: {str(e)}"
-            )
-        except Exception as e:
-            logger.error("twilio_send_error", to=message.to, error=str(e))
-            return WhatsAppResponse(
-                success=False,
-                message_id=None,
-                error=str(e)
-            )
+# TODO: Add Baileys provider for WhatsApp Web integration
+# Baileys is a pure TypeScript/JavaScript library, so we'll need:
+# - A Node.js bridge or subprocess communication
+# - WebSocket connection for real-time messaging
+# - QR code authentication flow
 
 
 class MetaProvider(WhatsAppProvider):
@@ -247,9 +179,9 @@ def get_whatsapp_provider() -> WhatsAppProvider:
     settings = get_settings()
     
     provider_map = {
-        "twilio": TwilioProvider,
         "meta": MetaProvider,
-        "webhook": WebhookProvider
+        "webhook": WebhookProvider,
+        # TODO: "baileys": BaileysProvider - WhatsApp Web via Baileys library (Node.js subprocess)
     }
     
     provider_class = provider_map.get(settings.WHATSAPP_PROVIDER.lower())

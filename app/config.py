@@ -19,12 +19,7 @@ class Settings(BaseSettings):
     ODBC_DRIVER: str = "Microsoft Access Driver (*.mdb, *.accdb)"
     
     # WhatsApp Provider Settings
-    WHATSAPP_PROVIDER: str = "twilio"  # twilio, meta, webhook
-    
-    # Twilio Settings
-    TWILIO_ACCOUNT_SID: Optional[str] = None
-    TWILIO_AUTH_TOKEN: Optional[str] = None
-    TWILIO_PHONE_NUMBER: Optional[str] = None
+    WHATSAPP_PROVIDER: str = "meta"  # meta, webhook, baileys (future)
     
     # Meta Settings
     META_API_VERSION: str = "v18.0"
