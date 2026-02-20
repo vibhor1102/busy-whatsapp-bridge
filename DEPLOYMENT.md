@@ -380,7 +380,7 @@ print('Connection successful!')
 
 ### WhatsApp API Failures
 
-- Check Twilio/Meta API status pages
+- Check Meta Business API status page
 - Verify rate limits not exceeded
 - Check phone number format includes country code
 
@@ -416,7 +416,7 @@ If you need to handle high volume:
 
 - **Internal IT:** [Your IT Department]
 - **Busy Support:** [Busy Software Vendor]
-- **WhatsApp Provider:** Twilio/Meta support portals
+- **WhatsApp Provider:** Meta Business API support portal
 
 ---
 

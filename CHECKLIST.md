@@ -32,9 +32,9 @@ notepad .env
 ```ini
 BDS_FILE_PATH=C:\Busy\Data\YourCompany.bds
 BDS_PASSWORD=YourActualPassword
-TWILIO_ACCOUNT_SID=your_sid
-TWILIO_AUTH_TOKEN=your_token
-TWILIO_PHONE_NUMBER=+1234567890
+META_API_VERSION=v19.0
+META_PHONE_NUMBER_ID=your_phone_number_id
+META_ACCESS_TOKEN=your_access_token
 ```
 
 ### Step 3: Test Database
@@ -173,7 +173,7 @@ python app\service_wrapper.py start
 - Ensure Busy is not locking the file
 
 **WhatsApp Issues:**
-- Check Twilio/Meta dashboard
+- Check Meta Business dashboard
 - Verify phone number format (+countrycode)
 - Check API credentials
 

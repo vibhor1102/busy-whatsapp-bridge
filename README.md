@@ -14,7 +14,7 @@ Enterprise-grade middleware that seamlessly integrates **Busy Accounting Softwar
 
 - **🔧 Native Windows Service** - Auto-start on boot, runs in background
 - **📊 32-bit ODBC Support** - Full compatibility with Busy .bds MS Access databases
-- **📱 Multi-Provider** - Twilio, Meta Business API, or custom webhook
+- **📱 Multi-Provider** - Meta Business API or custom webhook (Baileys support planned)
 - **🔒 Production Ready** - Structured logging, error handling, health monitoring
 - **⚡ High Performance** - Async FastAPI with connection pooling
 - **📈 Scalable** - Event-driven architecture with webhook support
@@ -33,7 +33,7 @@ Enterprise-grade middleware that seamlessly integrates **Busy Accounting Softwar
                    ┌──────────────┐      ┌──────────────┐        ┌──────────────┐
                    │   Database   │      │   WhatsApp   │        │    Logs      │
                    │  (MS Access) │      │   Provider   │        │   (Event/    │
-                   │   (.bds)     │      │ (Twilio/Meta)│        │    File)     │
+                    │   (.bds)     │      │    (Meta)    │        │    File)     │
                    └──────────────┘      └──────────────┘        └──────────────┘
 ```
 
@@ -215,7 +215,7 @@ python -c "import struct; print(struct.calcsize('P') * 8)"
 - Run as Administrator if permission issues
 
 **WhatsApp messages not sending**
-- Verify Twilio/Meta credentials
+- Verify Meta API credentials
 - Check phone number format (with country code)
 - Review logs in Windows Event Viewer
 

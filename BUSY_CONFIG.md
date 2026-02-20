@@ -129,7 +129,7 @@ Once frontend-backend integration is working:
 1. **Monitor logs** during testing to see actual requests
 2. **Verify parameters** are being passed correctly
 3. **Test with different customers** to ensure phone number matching works
-4. **Add WhatsApp messaging support** (Twilio/Meta integration)
+4. **Add WhatsApp messaging support** (Meta Business API integration)
 
 ## API Reference for Busy
 

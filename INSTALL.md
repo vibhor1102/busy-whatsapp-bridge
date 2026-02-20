@@ -170,9 +170,9 @@ http://YOUR_SERVER_IP:8000/api/v1/send-invoice?phone={MobileNo}&msg={Message}&pd
 
 ### Issue: WhatsApp messages not sending
 **Solution:** 
-1. Check Twilio/Meta credentials in .env
+1. Check Meta API credentials in .env
 2. Verify phone number format (include country code)
-3. Check Twilio console for message logs
+3. Check Meta Business dashboard for message logs
 
 ### Issue: "Module not found"
 **Solution:** 
