@@ -9,6 +9,7 @@ from app.models.schemas import (
     WhatsAppResponse
 )
 from app.services.whatsapp import get_whatsapp_provider
+from app.services.queue_service import queue_service
 
 logger = structlog.get_logger()
 
@@ -70,7 +71,7 @@ class BusyHandler:
         1. Receive notification with phone, message, PDF URL
         2. Extract PDF URL from message if needed
         3. Query database for party details (optional enhancement)
-        4. Send WhatsApp message with PDF
+        4. Queue message for delivery (via background worker)
         """
         try:
             # Extract PDF URL from message if placeholder
@@ -104,30 +105,27 @@ class BusyHandler:
                     using_original_message=True
                 )
             
-            # Prepare WhatsApp message
-            whatsapp_msg = WhatsAppMessage(
-                to=notification.phone,
-                body=enhanced_message,
-                media_url=extracted_pdf_url
+            # Queue message for delivery (non-blocking)
+            result = await queue_service.enqueue_invoice_notification(
+                phone=notification.phone,
+                message=enhanced_message,
+                pdf_url=extracted_pdf_url,
+                provider="baileys",
+                source="busy"
             )
             
-            # Send via WhatsApp provider
-            result = await self.whatsapp_provider.send_message(whatsapp_msg)
+            logger.info(
+                "invoice_notification_queued",
+                phone=notification.phone,
+                queue_id=result["queue_id"],
+                status=result["status"]
+            )
             
-            if result.success:
-                logger.info(
-                    "invoice_notification_sent",
-                    phone=notification.phone,
-                    message_id=result.message_id
-                )
-            else:
-                logger.error(
-                    "invoice_notification_failed",
-                    phone=notification.phone,
-                    error=result.error
-                )
-            
-            return result
+            return WhatsAppResponse(
+                success=True,
+                message_id=str(result["queue_id"]),
+                error=None
+            )
             
         except Exception as e:
             logger.error(

@@ -381,9 +381,12 @@ class BaileysProvider(WhatsAppProvider):
             )
 
 
-def get_whatsapp_provider() -> WhatsAppProvider:
+def get_whatsapp_provider(provider_name: Optional[str] = None) -> WhatsAppProvider:
     """Factory function to get configured WhatsApp provider."""
     settings = get_settings()
+    
+    # Use provided name or default from settings
+    provider_name = (provider_name or settings.WHATSAPP_PROVIDER).lower()
     
     provider_map = {
         "meta": MetaProvider,
@@ -392,8 +395,8 @@ def get_whatsapp_provider() -> WhatsAppProvider:
         "baileys": BaileysProvider,
     }
     
-    provider_class = provider_map.get(settings.WHATSAPP_PROVIDER.lower())
+    provider_class = provider_map.get(provider_name)
     if not provider_class:
-        raise ValueError(f"Unknown WhatsApp provider: {settings.WHATSAPP_PROVIDER}")
+        raise ValueError(f"Unknown WhatsApp provider: {provider_name}")
     
     return provider_class()

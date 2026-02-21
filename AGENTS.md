@@ -1,3 +1,6 @@
+- ALWAYS USE PARALLEL TOOLS WHEN APPLICABLE.
+- Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
+
 # Agent Guidelines for Busy WhatsApp Gateway
 
 ## Project Overview
@@ -195,22 +198,13 @@ app/
 │   └── schemas.py       # Pydantic models
 ├── database/
 │   ├── __init__.py
-│   └── connection.py    # MS Access/ODBC handler
+│   ├── connection.py    # MS Access/ODBC handler
+│   └── message_queue.py # SQLite queue/history database
 └── services/
     ├── __init__.py
     ├── whatsapp.py      # WhatsApp providers
-    └── busy_handler.py  # Business logic
-baileys-server/          # Node.js Baileys WhatsApp Web bridge
-├── package.json         # Node.js dependencies
-├── server.js            # Express HTTP server
-├── baileys-client.js    # Baileys wrapper class
-└── auth/                # Session storage (gitignored)
-tests/
-└── test_webhook.py      # API test suite
-gateway-manager.py       # Tray manager (starts both servers, system tray icon)
-Start-Gateway.bat        # User-friendly launcher with auto-dep install
-Create-Desktop-Shortcut.bat  # Creates desktop shortcut
-USER-GUIDE.md            # End-user documentation
+    ├── busy_handler.py  # Business logic
+    └── queue_service.py # Message queue processing
 ```
 
 ---
@@ -256,3 +250,32 @@ Node.js bridge service (`baileys-server/`) provides WhatsApp Web integration via
 **Key Files:**
 - `app/services/busy_handler.py` - Processes Busy webhooks, extracts PDF from message
 - `app/main.py` - Endpoint: `GET /api/v1/send-invoice`
+
+## Message Queue System (New)
+
+**Purpose:** Reliable message delivery with retry logic and history tracking.
+
+**Features:**
+- SQLite-based queue (`data/messages.db`)
+- Automatic retry with exponential backoff: immediate → 30s → 5min → 15min → 1hr
+- Dead letter queue for permanently failed messages (after 5 retries)
+- Message history with filtering by phone, status, date
+- Background worker processes messages automatically
+- Non-blocking: Busy webhook returns immediately, messages queued for delivery
+
+**API Endpoints:**
+- `GET /api/v1/queue/status` - Queue statistics
+- `GET /api/v1/queue/pending` - Pending/retrying messages
+- `GET /api/v1/queue/history` - Sent/failed message history
+- `GET /api/v1/queue/dead-letter` - Failed messages (5+ retries)
+- `POST /api/v1/queue/retry/{id}` - Force retry a message
+
+**Database Tables:**
+- `message_queue` - Active messages (pending/retrying)
+- `message_history` - Completed messages (sent/failed)
+- `dead_letter_queue` - Permanently failed messages
+
+**Key Files:**
+- `app/database/message_queue.py` - Queue database operations
+- `app/services/queue_service.py` - Queue worker and processing logic
+- `app/services/busy_handler.py` - Now queues messages instead of direct send

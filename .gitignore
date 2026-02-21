@@ -49,6 +49,10 @@ venv.bak/
 *.bds
 *.laccdb
 
+# Application data
+/data/
+data/
+
 # Logs
 *.log
 logs/

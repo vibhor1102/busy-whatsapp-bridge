@@ -1,0 +1,216 @@
+"""
+Message Queue Service
+Handles message queuing, processing, and retry logic.
+"""
+
+import asyncio
+import httpx
+from datetime import datetime
+from typing import Optional
+from app.database.message_queue import message_db
+from app.models.schemas import WhatsAppMessage, WhatsAppResponse
+from app.services.whatsapp import get_whatsapp_provider
+import structlog
+
+logger = structlog.get_logger()
+
+
+class MessageQueueService:
+    """Service for managing message queue operations."""
+    
+    def __init__(self):
+        self._processing = False
+        self._worker_task: Optional[asyncio.Task] = None
+    
+    async def enqueue_invoice_notification(
+        self,
+        phone: str,
+        message: str,
+        pdf_url: Optional[str] = None,
+        provider: str = "baileys",
+        source: str = "busy"
+    ) -> dict:
+        """Add an invoice notification to the queue."""
+        queue_id = message_db.enqueue_message(
+            phone=phone,
+            message=message,
+            pdf_url=pdf_url,
+            provider=provider,
+            source=source
+        )
+        
+        return {
+            "success": True,
+            "queue_id": queue_id,
+            "status": "pending",
+            "message": "Message queued for delivery"
+        }
+    
+    async def process_single_message(self, message: dict) -> bool:
+        """Process a single message from the queue."""
+        queue_id = message['id']
+        phone = message['phone']
+        text = message['message']
+        pdf_url = message['pdf_url']
+        provider_name = message['provider']
+        
+        try:
+            logger.info(
+                "processing_queue_message",
+                queue_id=queue_id,
+                phone=phone,
+                provider=provider_name,
+                retry_count=message['retry_count']
+            )
+            
+            # Get the appropriate provider
+            provider = get_whatsapp_provider(provider_name)
+            
+            # Create WhatsApp message
+            wa_message = WhatsAppMessage(
+                to=phone,
+                body=text,
+                media_url=pdf_url
+            )
+            
+            # Send the message
+            result = await provider.send_message(wa_message)
+            
+            if result.success:
+                # Mark as sent
+                message_db.mark_message_sent(
+                    queue_id=queue_id,
+                    message_id=result.message_id or f"msg_{queue_id}",
+                    provider=provider_name
+                )
+                logger.info(
+                    "queue_message_sent",
+                    queue_id=queue_id,
+                    message_id=result.message_id
+                )
+                return True
+            else:
+                # Mark as failed - will be retried
+                message_db.mark_message_failed(
+                    queue_id=queue_id,
+                    error_message=result.error or "Unknown error"
+                )
+                logger.warning(
+                    "queue_message_failed",
+                    queue_id=queue_id,
+                    error=result.error
+                )
+                return False
+                
+        except httpx.HTTPError as e:
+            error_msg = f"HTTP Error: {str(e)}"
+            message_db.mark_message_failed(queue_id=queue_id, error_message=error_msg)
+            logger.error(
+                "queue_message_http_error",
+                queue_id=queue_id,
+                error=str(e)
+            )
+            return False
+            
+        except Exception as e:
+            error_msg = f"Processing Error: {str(e)}"
+            message_db.mark_message_failed(queue_id=queue_id, error_message=error_msg)
+            logger.error(
+                "queue_message_exception",
+                queue_id=queue_id,
+                error=str(e),
+                exc_info=True
+            )
+            return False
+    
+    async def process_queue_batch(self, batch_size: int = 10):
+        """Process a batch of pending messages."""
+        messages = message_db.get_pending_messages(limit=batch_size)
+        
+        if not messages:
+            return 0
+        
+        logger.info("processing_queue_batch", count=len(messages))
+        
+        processed = 0
+        for message in messages:
+            if not self._processing:
+                break
+            
+            success = await self.process_single_message(message)
+            processed += 1
+            
+            # Small delay between messages to avoid rate limiting
+            if processed < len(messages):
+                await asyncio.sleep(0.5)
+        
+        return processed
+    
+    async def _worker_loop(self):
+        """Background worker loop."""
+        logger.info("message_queue_worker_started")
+        
+        while self._processing:
+            try:
+                # Process batch of messages
+                processed = await self.process_queue_batch(batch_size=10)
+                
+                if processed == 0:
+                    # No messages to process, sleep longer
+                    await asyncio.sleep(5)
+                else:
+                    # Processed some messages, brief pause
+                    await asyncio.sleep(1)
+                    
+            except Exception as e:
+                logger.error("queue_worker_error", error=str(e), exc_info=True)
+                await asyncio.sleep(5)
+        
+        logger.info("message_queue_worker_stopped")
+    
+    def start_worker(self):
+        """Start the background worker."""
+        if self._processing:
+            logger.warning("queue_worker_already_running")
+            return
+        
+        self._processing = True
+        self._worker_task = asyncio.create_task(self._worker_loop())
+        logger.info("message_queue_worker_started")
+    
+    def stop_worker(self):
+        """Stop the background worker."""
+        if not self._processing:
+            return
+        
+        self._processing = False
+        if self._worker_task:
+            self._worker_task.cancel()
+        logger.info("message_queue_worker_stopped")
+    
+    def get_status(self) -> dict:
+        """Get current queue status."""
+        stats = message_db.get_queue_stats()
+        return {
+            "worker_running": self._processing,
+            **stats
+        }
+    
+    async def force_retry(self, queue_id: int) -> bool:
+        """Force immediate retry of a specific message."""
+        message = message_db.get_message_by_id(queue_id)
+        if not message:
+            return False
+        
+        if message['status'] not in ['pending', 'retrying']:
+            return False
+        
+        return await self.process_single_message(message)
+    
+    async def retry_dead_letter(self, dead_letter_id: int) -> bool:
+        """Move a dead letter message back to queue for retry."""
+        return message_db.retry_dead_letter(dead_letter_id)
+
+
+# Global instance
+queue_service = MessageQueueService()

@@ -15,7 +15,9 @@ from app.models.schemas import (
     HealthResponse
 )
 from app.database.connection import db
+from app.database.message_queue import message_db
 from app.services.busy_handler import busy_handler
+from app.services.queue_service import queue_service
 
 # Configure structured logging
 structlog.configure(
@@ -99,10 +101,15 @@ async def lifespan(app: FastAPI):
                 message="Baileys server not running. Start it with: cd baileys-server && npm start"
             )
     
+    # Start message queue worker
+    queue_service.start_worker()
+    logger.info("message_queue_worker_started")
+    
     yield
     
     # Shutdown
     logger.info("application_shutdown")
+    queue_service.stop_worker()
     db.disconnect()
 
 
@@ -412,6 +419,111 @@ async def restart_baileys():
             status_code=500,
             detail=str(e)
         )
+
+
+@app.get("/api/v1/queue/status", tags=["Queue"])
+async def get_queue_status():
+    """
+    Get message queue statistics and status.
+    
+    Returns counts of pending, retrying, dead letter messages,
+    and today's delivery statistics.
+    """
+    return queue_service.get_status()
+
+
+@app.get("/api/v1/queue/history", tags=["Queue"])
+async def get_message_history(
+    phone: Optional[str] = Query(None, description="Filter by phone number"),
+    status: Optional[str] = Query(None, description="Filter by status (sent/failed)"),
+    limit: int = Query(100, ge=1, le=500, description="Number of results"),
+    offset: int = Query(0, ge=0, description="Offset for pagination")
+):
+    """
+    Get message history with filtering and pagination.
+    
+    Query sent messages with optional filters.
+    """
+    history = message_db.get_message_history(
+        phone=phone,
+        status=status,
+        limit=limit,
+        offset=offset
+    )
+    
+    return {
+        "count": len(history),
+        "limit": limit,
+        "offset": offset,
+        "messages": history
+    }
+
+
+@app.get("/api/v1/queue/dead-letter", tags=["Queue"])
+async def get_dead_letter_queue(
+    limit: int = Query(100, ge=1, le=500)
+):
+    """
+    Get messages in the dead letter queue.
+    
+    These are messages that failed after all retry attempts.
+    """
+    messages = message_db.get_dead_letter_messages(limit=limit)
+    
+    return {
+        "count": len(messages),
+        "messages": messages
+    }
+
+
+@app.post("/api/v1/queue/retry/{message_id}", tags=["Queue"])
+async def retry_message(message_id: int):
+    """
+    Force immediate retry of a specific message.
+    
+    Works for both pending messages and dead letter messages.
+    """
+    # First check if it's in the regular queue
+    message = message_db.get_message_by_id(message_id)
+    
+    if message:
+        success = await queue_service.force_retry(message_id)
+        return {
+            "success": success,
+            "message": "Message retry initiated" if success else "Failed to retry message"
+        }
+    
+    # Check if it's a dead letter message
+    dead_letter = message_db.get_dead_letter_messages(limit=1000)
+    dl_message = next((m for m in dead_letter if m['queue_id'] == message_id), None)
+    
+    if dl_message:
+        # Retry the dead letter
+        success = message_db.retry_dead_letter(dl_message['id'])
+        return {
+            "success": success,
+            "message": "Dead letter message re-queued for retry" if success else "Failed to retry"
+        }
+    
+    raise HTTPException(
+        status_code=404,
+        detail=f"Message {message_id} not found in queue or dead letter"
+    )
+
+
+@app.post("/api/v1/queue/pending", tags=["Queue"])
+async def get_pending_messages(
+    limit: int = Query(100, ge=1, le=500)
+):
+    """
+    Get messages currently in the queue (pending or retrying).
+    """
+    messages = message_db.get_pending_messages(limit=limit)
+    
+    return {
+        "count": len(messages),
+        "messages": messages
+    }
 
 
 @app.exception_handler(Exception)
