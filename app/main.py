@@ -48,7 +48,8 @@ async def lifespan(app: FastAPI):
         "application_startup",
         app_name=settings.APP_NAME,
         version=settings.APP_VERSION,
-        debug=settings.DEBUG
+        debug=settings.DEBUG,
+        whatsapp_provider=settings.WHATSAPP_PROVIDER
     )
     
     # Test database connection on startup
@@ -58,6 +59,45 @@ async def lifespan(app: FastAPI):
             "database_connection_failed_on_startup",
             path=settings.BDS_FILE_PATH
         )
+    
+    # Check WhatsApp provider status
+    if settings.WHATSAPP_PROVIDER == "baileys":
+        baileys_url = getattr(settings, 'BAILEYS_SERVER_URL', 'http://localhost:3001')
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{baileys_url}/status",
+                    timeout=5.0
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    baileys_state = data.get("data", {}).get("state", "unknown")
+                    if baileys_state == "connected":
+                        logger.info(
+                            "baileys_connected",
+                            user=data.get("data", {}).get("user", {})
+                        )
+                    elif baileys_state == "qr_ready":
+                        logger.warning(
+                            "baileys_qr_ready",
+                            message="Baileys is waiting for QR code scan. Visit /baileys/qr to authenticate."
+                        )
+                    else:
+                        logger.warning(
+                            "baileys_not_connected",
+                            state=baileys_state
+                        )
+                else:
+                    logger.error(
+                        "baileys_status_error",
+                        status_code=response.status_code
+                    )
+        except Exception as e:
+            logger.error(
+                "baileys_unreachable",
+                error=str(e),
+                message="Baileys server not running. Start it with: cd baileys-server && npm start"
+            )
     
     yield
     
@@ -94,11 +134,50 @@ async def health_check():
     """Health check endpoint."""
     db_connected = db.test_connection()
     
+    # Check WhatsApp provider status
+    whatsapp_status = {
+        "provider": settings.WHATSAPP_PROVIDER,
+        "connected": False,
+        "state": "unknown"
+    }
+    
+    if settings.WHATSAPP_PROVIDER == "baileys":
+        baileys_url = getattr(settings, 'BAILEYS_SERVER_URL', 'http://localhost:3001')
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{baileys_url}/status",
+                    timeout=5.0
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    baileys_state = data.get("data", {}).get("state", "unknown")
+                    whatsapp_status["connected"] = baileys_state == "connected"
+                    whatsapp_status["state"] = baileys_state
+                    whatsapp_status["user"] = data.get("data", {}).get("user", {})
+        except Exception as e:
+            whatsapp_status["error"] = str(e)
+            whatsapp_status["state"] = "unreachable"
+    elif settings.WHATSAPP_PROVIDER == "meta":
+        # Meta doesn't have a persistent connection to check
+        whatsapp_status["connected"] = bool(
+            getattr(settings, 'META_ACCESS_TOKEN', None) and 
+            getattr(settings, 'META_PHONE_NUMBER_ID', None)
+        )
+        whatsapp_status["state"] = "configured" if whatsapp_status["connected"] else "not_configured"
+    elif settings.WHATSAPP_PROVIDER == "webhook":
+        whatsapp_status["connected"] = bool(getattr(settings, 'WEBHOOK_URL', None))
+        whatsapp_status["state"] = "configured" if whatsapp_status["connected"] else "not_configured"
+    
+    # Determine overall health
+    is_healthy = db_connected and whatsapp_status["connected"]
+    
     return HealthResponse(
-        status="healthy" if db_connected else "degraded",
+        status="healthy" if is_healthy else "degraded",
         version=settings.APP_VERSION,
         database_connected=db_connected,
-        timestamp=datetime.now()
+        timestamp=datetime.now(),
+        whatsapp=whatsapp_status
     )
 
 

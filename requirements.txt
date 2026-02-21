@@ -21,3 +21,7 @@ requests==2.32.3
 
 # Security (Optional - for HTTPS)
 cryptography==44.0.0
+
+# Desktop/Tray Support (Optional - for GUI mode)
+pystray==0.19.5
+pillow==11.1.0

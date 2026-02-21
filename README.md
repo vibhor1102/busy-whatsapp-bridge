@@ -19,6 +19,18 @@ Enterprise-grade middleware that seamlessly integrates **Busy Accounting Softwar
 - **⚡ High Performance** - Async FastAPI with connection pooling
 - **📈 Scalable** - Event-driven architecture with webhook support
 
+## 🖥️ Easy Desktop Setup (Recommended for Users)
+
+**New! User-friendly desktop application with system tray:**
+
+1. **Run `Create-Desktop-Shortcut.bat`** - Creates desktop shortcut
+2. **Edit `.env` file** - Set your database path
+3. **Double-click the shortcut** - Runs in system tray
+
+📖 **See [USER-GUIDE.md](USER-GUIDE.md) for detailed instructions**
+
+---
+
 ## 🏗️ Architecture
 
 ```

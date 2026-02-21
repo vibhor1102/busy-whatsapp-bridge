@@ -40,13 +40,15 @@ source venv/Scripts/activate  # Git Bash
 ## Build/Run/Test Commands
 
 ```bash
-# Development server
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-# Or: ./run-server.bat
+# User-friendly desktop launcher (system tray - RECOMMENDED)
+./Start-Gateway.bat              # Starts tray manager + both servers
+python gateway-manager.py        # Direct Python execution
 
-# Baileys WhatsApp Web server (separate terminal)
-cd baileys-server && npm install && npm start
-# Or: ./run-baileys.bat
+**Single-Instance Protection:** `gateway-manager.py` uses Windows named mutex to prevent duplicate instances.
+
+# Development (manual)
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+cd baileys-server && npm start   # In separate terminal
 
 # Windows Service
 python app/service_wrapper.py install
@@ -205,6 +207,10 @@ baileys-server/          # Node.js Baileys WhatsApp Web bridge
 └── auth/                # Session storage (gitignored)
 tests/
 └── test_webhook.py      # API test suite
+gateway-manager.py       # Tray manager (starts both servers, system tray icon)
+Start-Gateway.bat        # User-friendly launcher with auto-dep install
+Create-Desktop-Shortcut.bat  # Creates desktop shortcut
+USER-GUIDE.md            # End-user documentation
 ```
 
 ---
@@ -214,7 +220,7 @@ tests/
 Key variables in `.env`:
 - `BDS_FILE_PATH` - Path to Busy .bds database file
 - `BDS_PASSWORD` - Database password
-- `WHATSAPP_PROVIDER` - Provider: meta, webhook, baileys, evolution
+- `WHATSAPP_PROVIDER` - Provider: baileys (default), meta, webhook, evolution
 - `META_*` - Meta Business API credentials
 - `BAILEYS_SERVER_URL` - Baileys Node.js server URL (default: http://localhost:3001)
 - `BAILEYS_ENABLED` - Enable Baileys integration (true/false)

@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     ODBC_DRIVER: str = "Microsoft Access Driver (*.mdb, *.accdb)"
     
     # WhatsApp Provider Settings
-    WHATSAPP_PROVIDER: str = "meta"  # meta, webhook, baileys (future)
+    WHATSAPP_PROVIDER: str = "baileys"  # baileys, meta, webhook, evolution
     
     # Meta Settings
     META_API_VERSION: str = "v18.0"
