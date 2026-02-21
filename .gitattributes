@@ -1,0 +1,29 @@
+# Auto detect text files and normalize line endings
+* text=auto
+
+# Force Windows batch files to always use CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Treat these as binary (never convert line endings)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary
+
+# Ensure these are treated as text
+*.py text
+*.js text
+*.json text
+*.md text
+*.txt text
+*.yml text
+*.yaml text
+*.html text
+*.css text
+*.xml text
