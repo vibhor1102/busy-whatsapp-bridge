@@ -1,10 +1,11 @@
 from fastapi import FastAPI, HTTPException, Query, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
 import structlog
 import sys
+import httpx
 
 from app.config import get_settings
 from app.models.schemas import (
@@ -210,6 +211,128 @@ async def search_parties(
         "count": len(parties),
         "parties": parties
     }
+
+
+@app.get("/api/v1/baileys/status", tags=["Baileys"])
+async def get_baileys_status():
+    """
+    Get Baileys WhatsApp connection status.
+    
+    Returns connection state, QR availability, and user info if connected.
+    """
+    baileys_url = getattr(settings, 'BAILEYS_SERVER_URL', 'http://localhost:3001')
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{baileys_url}/status",
+                timeout=5.0
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            return {
+                "success": True,
+                "baileys_server": "running",
+                "data": data.get("data", {})
+            }
+    except httpx.ConnectError:
+        return {
+            "success": False,
+            "baileys_server": "not_running",
+            "error": "Baileys server is not running. Start it with: cd baileys-server && npm start"
+        }
+    except Exception as e:
+        logger.error("baileys_status_error", error=str(e))
+        return {
+            "success": False,
+            "baileys_server": "error",
+            "error": str(e)
+        }
+
+
+@app.get("/baileys/qr", tags=["Baileys"])
+async def baileys_qr_page():
+    """
+    Redirect to Baileys QR code page for WhatsApp authentication.
+    
+    Opens a web page where users can scan QR code with WhatsApp mobile app.
+    """
+    baileys_url = getattr(settings, 'BAILEYS_SERVER_URL', 'http://localhost:3001')
+    return RedirectResponse(url=f"{baileys_url}/qr/page")
+
+
+@app.get("/api/v1/baileys/qr", tags=["Baileys"])
+async def get_baileys_qr():
+    """
+    Get Baileys QR code as base64 image data.
+    
+    Returns QR code image and metadata for custom frontend integration.
+    """
+    baileys_url = getattr(settings, 'BAILEYS_SERVER_URL', 'http://localhost:3001')
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{baileys_url}/qr",
+                timeout=5.0
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            return {
+                "success": True,
+                "data": data.get("data", {})
+            }
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail="Baileys server is not running. Start it with: cd baileys-server && npm start"
+        )
+    except Exception as e:
+        logger.error("baileys_qr_error", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
+@app.post("/api/v1/baileys/restart", tags=["Baileys"])
+async def restart_baileys():
+    """
+    Restart Baileys WhatsApp connection.
+    
+    Useful when connection is stuck or needs fresh authentication.
+    """
+    baileys_url = getattr(settings, 'BAILEYS_SERVER_URL', 'http://localhost:3001')
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{baileys_url}/restart",
+                timeout=30.0
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            logger.info("baileys_restart_initiated")
+            
+            return {
+                "success": True,
+                "message": "Baileys connection restarted",
+                "data": data
+            }
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail="Baileys server is not running. Start it with: cd baileys-server && npm start"
+        )
+    except Exception as e:
+        logger.error("baileys_restart_error", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 
 @app.exception_handler(Exception)

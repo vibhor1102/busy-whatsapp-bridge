@@ -17,13 +17,6 @@ class WhatsAppProvider(ABC):
         pass
 
 
-# TODO: Add Baileys provider for WhatsApp Web integration
-# Baileys is a pure TypeScript/JavaScript library, so we'll need:
-# - A Node.js bridge or subprocess communication
-# - WebSocket connection for real-time messaging
-# - QR code authentication flow
-
-
 class EvolutionProvider(WhatsAppProvider):
     """Evolution API (WhatsApp Web) integration."""
     
@@ -281,6 +274,113 @@ class WebhookProvider(WhatsAppProvider):
             )
 
 
+class BaileysProvider(WhatsAppProvider):
+    """Baileys WhatsApp Web integration via Node.js bridge."""
+    
+    def __init__(self):
+        self.settings = get_settings()
+        self.server_url = getattr(self.settings, 'BAILEYS_SERVER_URL', 'http://localhost:3001')
+        self.server_url = self.server_url.rstrip('/')
+    
+    async def _check_connection(self) -> bool:
+        """Check if Baileys server is connected to WhatsApp."""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.server_url}/status",
+                    timeout=5.0
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    return data.get("data", {}).get("state") == "connected"
+        except Exception:
+            pass
+        return False
+    
+    async def send_message(self, message: WhatsAppMessage) -> WhatsAppResponse:
+        """Send message via Baileys WhatsApp Web bridge."""
+        try:
+            is_connected = await self._check_connection()
+            if not is_connected:
+                raise ValueError(
+                    "Baileys server not connected to WhatsApp. "
+                    "Please scan QR code at /baileys/qr endpoint"
+                )
+            
+            to_number = message.to.replace("whatsapp:", "").replace("+", "")
+            
+            if message.media_url:
+                endpoint = f"{self.server_url}/send-media"
+                payload = {
+                    "to": to_number,
+                    "mediaUrl": message.media_url,
+                    "caption": message.body,
+                    "mimetype": "application/pdf"
+                }
+                logger.info(
+                    "baileys_sending_media",
+                    to=message.to,
+                    url=message.media_url
+                )
+            else:
+                endpoint = f"{self.server_url}/send"
+                payload = {
+                    "to": to_number,
+                    "message": message.body
+                }
+                logger.info(
+                    "baileys_sending_text",
+                    to=message.to
+                )
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    endpoint,
+                    json=payload,
+                    timeout=60.0
+                )
+                
+                if response.status_code != 200:
+                    error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
+                    raise ValueError(error_data.get('error', f'HTTP {response.status_code}'))
+                
+                result = response.json()
+                
+                logger.info(
+                    "baileys_message_sent",
+                    to=message.to,
+                    message_id=result.get("data", {}).get("messageId")
+                )
+                
+                return WhatsAppResponse(
+                    success=True,
+                    message_id=result.get("data", {}).get("messageId"),
+                    error=None
+                )
+                
+        except httpx.HTTPError as e:
+            logger.error("baileys_http_error", to=message.to, error=str(e))
+            return WhatsAppResponse(
+                success=False,
+                message_id=None,
+                error=f"HTTP Error: {str(e)}"
+            )
+        except ValueError as e:
+            logger.error("baileys_connection_error", to=message.to, error=str(e))
+            return WhatsAppResponse(
+                success=False,
+                message_id=None,
+                error=str(e)
+            )
+        except Exception as e:
+            logger.error("baileys_send_error", to=message.to, error=str(e))
+            return WhatsAppResponse(
+                success=False,
+                message_id=None,
+                error=str(e)
+            )
+
+
 def get_whatsapp_provider() -> WhatsAppProvider:
     """Factory function to get configured WhatsApp provider."""
     settings = get_settings()
@@ -289,7 +389,7 @@ def get_whatsapp_provider() -> WhatsAppProvider:
         "meta": MetaProvider,
         "webhook": WebhookProvider,
         "evolution": EvolutionProvider,
-        # TODO: "baileys": BaileysProvider - WhatsApp Web via Baileys library (Node.js subprocess)
+        "baileys": BaileysProvider,
     }
     
     provider_class = provider_map.get(settings.WHATSAPP_PROVIDER.lower())

@@ -1,0 +1,12 @@
+node_modules/
+
+auth/
+
+*.log
+
+.env
+.env.local
+
+.DS_Store
+
+pino-*.log

@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     WEBHOOK_URL: Optional[str] = None
     WEBHOOK_AUTH_TOKEN: Optional[str] = None
     
+    # Baileys Settings (WhatsApp Web via Node.js)
+    BAILEYS_SERVER_URL: str = "http://localhost:3001"
+    BAILEYS_ENABLED: bool = False
+    BAILEYS_AUTO_START: bool = True
+    
     # Logging
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"

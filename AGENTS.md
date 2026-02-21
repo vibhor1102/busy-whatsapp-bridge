@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-FastAPI-based middleware integrating Busy Accounting Software with WhatsApp providers (Meta, Webhook). Baileys (WhatsApp Web) support planned for future. Runs as a Windows Service with MS Access database connectivity.
+FastAPI-based middleware integrating Busy Accounting Software with WhatsApp providers (Meta, Webhook, Baileys). Runs as a Windows Service with MS Access database connectivity.
 
-**Stack:** Python 3.9+, FastAPI, Pydantic, pyodbc, structlog, pytest
+**Stack:** Python 3.9+, FastAPI, Pydantic, pyodbc, structlog, pytest, Node.js 18+ (for Baileys)
 
 ---
 
@@ -43,6 +43,10 @@ source venv/Scripts/activate  # Git Bash
 # Development server
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 # Or: ./run-server.bat
+
+# Baileys WhatsApp Web server (separate terminal)
+cd baileys-server && npm install && npm start
+# Or: ./run-baileys.bat
 
 # Windows Service
 python app/service_wrapper.py install
@@ -194,6 +198,11 @@ app/
     ├── __init__.py
     ├── whatsapp.py      # WhatsApp providers
     └── busy_handler.py  # Business logic
+baileys-server/          # Node.js Baileys WhatsApp Web bridge
+├── package.json         # Node.js dependencies
+├── server.js            # Express HTTP server
+├── baileys-client.js    # Baileys wrapper class
+└── auth/                # Session storage (gitignored)
 tests/
 └── test_webhook.py      # API test suite
 ```
@@ -205,6 +214,39 @@ tests/
 Key variables in `.env`:
 - `BDS_FILE_PATH` - Path to Busy .bds database file
 - `BDS_PASSWORD` - Database password
-- `WHATSAPP_PROVIDER` - Provider: meta, webhook (baileys - planned)
+- `WHATSAPP_PROVIDER` - Provider: meta, webhook, baileys, evolution
 - `META_*` - Meta Business API credentials
+- `BAILEYS_SERVER_URL` - Baileys Node.js server URL (default: http://localhost:3001)
+- `BAILEYS_ENABLED` - Enable Baileys integration (true/false)
 - `DEBUG` - Enable debug mode (True/False)
+
+## Baileys (WhatsApp Web)
+
+Node.js bridge service (`baileys-server/`) provides WhatsApp Web integration via Baileys library.
+
+**Architecture:** Python FastAPI → HTTP → Node.js Express → Baileys → WhatsApp Web
+
+**Session Storage:** `baileys-server/auth/baileys_session/` (portable, persistent)
+
+**QR Flow:** Server generates QR → SSE pushes to browser → User scans with WhatsApp mobile → Session saved → Auto-reconnect on restart
+
+**Endpoints:**
+- `/qr/page` - Web UI with live QR (SSE real-time updates)
+- `/qr/stream` - Server-Sent Events for instant QR updates
+- `/status` - Connection status
+- `/send` - Send text message
+- `/send-media` - Send document/PDF
+
+## Busy Integration
+
+**Webhook URL:** `http://<server>:8000/api/v1/send-invoice?phone={MobileNo}&msg={Message}`
+
+**PDF Handling:** System extracts PDF URLs from message text automatically (pattern: `files.busy.in/?[code]`). The `pdf_url` parameter is optional.
+
+**Busy SMS Template:** Use short templates. Busy sends data as multiple GET requests (originally 33 chunks for full invoice). Short SMS template = concise message with embedded PDF URL.
+
+**Database:** Optional. Webhook works without DB connection (health shows "degraded" but functional).
+
+**Key Files:**
+- `app/services/busy_handler.py` - Processes Busy webhooks, extracts PDF from message
+- `app/main.py` - Endpoint: `GET /api/v1/send-invoice`

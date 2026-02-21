@@ -71,3 +71,9 @@ Desktop.ini
 # Backup files
 *.bak
 *.backup
+
+# Node.js / Baileys
+baileys-server/node_modules/
+baileys-server/auth/
+baileys-server/*.log
+baileys-server/package-lock.json

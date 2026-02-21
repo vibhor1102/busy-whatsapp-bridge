@@ -1,0 +1,28 @@
+{
+  "name": "busy-whatsapp-baileys",
+  "version": "1.0.0",
+  "description": "Baileys WhatsApp Web bridge for Busy WhatsApp Gateway",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "baileys",
+    "busy",
+    "gateway"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "6.7.12",
+    "express": "4.21.2",
+    "pino": "8.19.0",
+    "pino-pretty": "13.1.1",
+    "qrcode": "1.5.4"
+  }
+}
