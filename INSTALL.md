@@ -42,7 +42,7 @@
 
 1. Open terminal in project folder:
    ```cmd
-   cd "C:\Path\To\Busy Whatsapp Application"
+   cd "C:\Path\To\Busy-Whatsapp-Application"
    ```
 
 2. Create virtual environment (recommended):
