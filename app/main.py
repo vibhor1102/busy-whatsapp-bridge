@@ -26,18 +26,34 @@ from app.services.queue_service import queue_service
 from app.websocket import ws_manager, WebSocketMessage
 from app.dashboard.routes import router as dashboard_router
 
-# Configure structured logging
+# Configure structured logging - console-friendly format
+def console_renderer(logger, name, event_dict):
+    """Human-readable console output for logs."""
+    timestamp = event_dict.pop('timestamp', datetime.now().strftime('%H:%M:%S'))
+    level = event_dict.pop('level', 'INFO').upper()
+    event = event_dict.pop('event', '')
+    
+    level_colors = {'DEBUG': '\033[36m', 'INFO': '\033[32m', 'WARNING': '\033[33m', 'ERROR': '\033[31m', 'CRITICAL': '\033[35m'}
+    reset = '\033[0m'
+    dim = '\033[2m'
+    
+    color = level_colors.get(level, '')
+    
+    if event_dict:
+        extras = ' '.join(f'{k}={v}' for k, v in sorted(event_dict.items()))
+        return f"{dim}[{timestamp}]{reset} {color}{level:8}{reset} {event} {dim}{extras}{reset}"
+    return f"{dim}[{timestamp}]{reset} {color}{level:8}{reset} {event}"
+
 structlog.configure(
     processors=[
         structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
         structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.TimeStamper(fmt='%H:%M:%S'),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
-        structlog.processors.JSONRenderer()
+        console_renderer
     ],
     context_class=dict,
     logger_factory=structlog.stdlib.LoggerFactory(),
