@@ -1,11 +1,16 @@
-from fastapi import FastAPI, HTTPException, Query, Depends
-from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
+from fastapi import FastAPI, HTTPException, Query, Depends, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
+from pathlib import Path
+from pydantic import BaseModel, Field
 import structlog
 import sys
 import httpx
+import json
+import shutil
 
 from app.config import get_settings
 from app.models.schemas import (
@@ -18,6 +23,8 @@ from app.database.connection import db
 from app.database.message_queue import message_db
 from app.services.busy_handler import busy_handler
 from app.services.queue_service import queue_service
+from app.websocket import ws_manager, WebSocketMessage
+from app.dashboard.routes import router as dashboard_router
 
 # Configure structured logging
 structlog.configure(
@@ -123,6 +130,61 @@ app = FastAPI(
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url="/redoc" if settings.DEBUG else None
 )
+
+# Mount static files for dashboard
+dashboard_path = Path(__file__).parent.parent / "dashboard" / "dist"
+assets_path = dashboard_path / "assets"
+if assets_path.exists():
+    app.mount("/assets", StaticFiles(directory=str(assets_path)), name="assets")
+if dashboard_path.exists():
+    app.mount("/dashboard-static", StaticFiles(directory=str(dashboard_path)), name="dashboard-static")
+
+
+@app.get("/dashboard")
+async def serve_dashboard():
+    """Serve the main dashboard page."""
+    index_path = dashboard_path / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path))
+    return JSONResponse(
+        content={"error": "Dashboard not built. Run 'npm run build' in dashboard/ directory"},
+        status_code=404
+    )
+
+
+@app.get("/dashboard/{path:path}")
+async def serve_dashboard_routes(path: str):
+    """Handle Vue Router history mode - serve index.html for all routes."""
+    index_path = dashboard_path / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path))
+    return JSONResponse(
+        content={"error": "Dashboard not built"},
+        status_code=404
+    )
+
+
+@app.websocket("/ws/dashboard")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time dashboard updates."""
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            # Receive client messages (subscriptions, commands)
+            data = await websocket.receive_text()
+            message = json.loads(data)
+            
+            if message.get("action") == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        await ws_manager.disconnect(websocket)
+    except Exception as e:
+        logger.error("websocket_error", error=str(e))
+        await ws_manager.disconnect(websocket)
+
+
+# Include dashboard API routes
+app.include_router(dashboard_router)
 
 
 @app.get("/", tags=["Root"])
@@ -511,7 +573,7 @@ async def retry_message(message_id: int):
     )
 
 
-@app.post("/api/v1/queue/pending", tags=["Queue"])
+@app.get("/api/v1/queue/pending", tags=["Queue"])
 async def get_pending_messages(
     limit: int = Query(100, ge=1, le=500)
 ):
@@ -524,6 +586,152 @@ async def get_pending_messages(
         "count": len(messages),
         "messages": messages
     }
+
+
+@app.post("/api/v1/whatsapp/disconnect", tags=["WhatsApp"])
+async def disconnect_whatsapp():
+    """
+    Disconnect WhatsApp session.
+    
+    Logs out the current WhatsApp session.
+    """
+    baileys_url = getattr(settings, 'BAILEYS_SERVER_URL', 'http://localhost:3001')
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{baileys_url}/logout",
+                timeout=10.0
+            )
+            if response.status_code == 200:
+                return {"success": True, "message": "Disconnected successfully"}
+            else:
+                raise HTTPException(
+                    status_code=502,
+                    detail="Failed to disconnect from Baileys server"
+                )
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail="Baileys server is not running"
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=504,
+            detail="Request to Baileys server timed out"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error disconnecting WhatsApp: {str(e)}"
+        )
+
+
+@app.post("/api/v1/system/baileys/start", tags=["System"])
+async def start_baileys_api():
+    """
+    Start Baileys server.
+    
+    Note: This is a placeholder endpoint. In production, Baileys is managed by the tray manager.
+    """
+    return {
+        "success": True,
+        "message": "Baileys should be started via the tray manager (right-click icon)"
+    }
+
+
+@app.post("/api/v1/system/baileys/stop", tags=["System"])
+async def stop_baileys_api():
+    """
+    Stop Baileys server.
+    
+    Note: This is a placeholder endpoint. In production, Baileys is managed by the tray manager.
+    """
+    return {
+        "success": True,
+        "message": "Baileys should be stopped via the tray manager (right-click icon)"
+    }
+
+
+@app.get("/api/v1/settings", tags=["Settings"])
+async def get_settings_endpoint():
+    """
+    Get current configuration settings (safe values only).
+    """
+    return {
+        "APP_NAME": settings.APP_NAME,
+        "APP_VERSION": settings.APP_VERSION,
+        "DEBUG": settings.DEBUG,
+        "HOST": settings.HOST,
+        "PORT": settings.PORT,
+        "WHATSAPP_PROVIDER": settings.WHATSAPP_PROVIDER,
+        "BAILEYS_SERVER_URL": settings.BAILEYS_SERVER_URL,
+        "BAILEYS_ENABLED": settings.BAILEYS_ENABLED,
+        "LOG_LEVEL": settings.LOG_LEVEL,
+    }
+
+
+@app.get("/api/v1/settings/env", tags=["Settings"])
+async def get_env_file():
+    """
+    Get editable configuration values (safe fields only, no secrets).
+    """
+    return {
+        "content": {
+            "WHATSAPP_PROVIDER": settings.WHATSAPP_PROVIDER,
+            "BAILEYS_SERVER_URL": settings.BAILEYS_SERVER_URL,
+            "BAILEYS_ENABLED": settings.BAILEYS_ENABLED,
+            "LOG_LEVEL": settings.LOG_LEVEL,
+            "BDS_FILE_PATH": settings.BDS_FILE_PATH,
+        }
+    }
+
+
+class EnvUpdateRequest(BaseModel):
+    """Validatable settings update request."""
+    WHATSAPP_PROVIDER: Optional[str] = Field(None, pattern="^(baileys|meta|webhook|evolution)$")
+    BAILEYS_SERVER_URL: Optional[str] = Field(None, pattern="^https?://")
+    BAILEYS_ENABLED: Optional[bool] = None
+    LOG_LEVEL: Optional[str] = Field(None, pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
+    BDS_FILE_PATH: Optional[str] = None
+
+
+@app.put("/api/v1/settings/env", tags=["Settings"])
+async def update_env_file(request: EnvUpdateRequest):
+    """
+    Update the .env file with validated settings.
+    """
+    env_path = Path(__file__).parent.parent / ".env"
+    backup_path = Path(__file__).parent.parent / ".env.backup"
+    
+    try:
+        # Read current .env content
+        current_content = {}
+        if env_path.exists():
+            with open(env_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        key, value = line.split("=", 1)
+                        current_content[key] = value
+        
+        # Update only allowed fields
+        update_data = request.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            current_content[key] = str(value)
+        
+        # Create backup
+        if env_path.exists():
+            shutil.copy(env_path, backup_path)
+        
+        # Write updated content
+        with open(env_path, "w") as f:
+            for key, value in current_content.items():
+                f.write(f"{key}={value}\n")
+        
+        return {"success": True, "message": "Settings saved. Restart required for changes to take effect."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write .env: {str(e)}")
 
 
 @app.exception_handler(Exception)

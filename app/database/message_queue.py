@@ -380,6 +380,49 @@ class MessageQueueDB:
             )
             return True
     
+    def get_message_counts(
+        self,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        status: Optional[str] = None
+    ) -> Dict[str, int]:
+        """Get message counts with filters using SQL aggregation.
+        
+        Args:
+            start_date: Optional start date filter
+            end_date: Optional end date filter
+            status: Optional status filter ('sent' or 'failed')
+            
+        Returns:
+            Dict with 'sent' and 'failed' counts
+        """
+        query = "SELECT status, COUNT(*) as count FROM message_history WHERE 1=1"
+        params = []
+        
+        if start_date:
+            query += " AND completed_at >= ?"
+            params.append(start_date)
+        
+        if end_date:
+            query += " AND completed_at <= ?"
+            params.append(end_date)
+        
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        
+        query += " GROUP BY status"
+        
+        with self._get_connection() as conn:
+            cursor = conn.execute(query, params)
+            rows = cursor.fetchall()
+            
+            counts = {'sent': 0, 'failed': 0}
+            for row in rows:
+                if row['status'] in counts:
+                    counts[row['status']] = row['count']
+            return counts
+    
     def get_queue_stats(self) -> Dict[str, Any]:
         """Get statistics about the queue."""
         with self._get_connection() as conn:

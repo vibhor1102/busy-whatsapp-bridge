@@ -188,7 +188,7 @@ curl http://localhost:8000/api/v1/health
 # Response:
 {
   "status": "healthy",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "database_connected": true,
   "timestamp": "2024-02-18T10:30:00"
 }

@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     
     # App Settings
     APP_NAME: str = "Busy WhatsApp Gateway"
-    APP_VERSION: str = "1.0.0"
+    APP_VERSION: str = "0.0.1"
     DEBUG: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 8000

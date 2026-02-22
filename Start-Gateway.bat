@@ -35,6 +35,7 @@ if not exist .env (
 
 echo.
 echo Starting Gateway Manager...
+echo Left-click tray icon to open Dashboard
 echo Right-click tray icon to control servers
 echo.
 

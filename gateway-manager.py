@@ -372,6 +372,13 @@ def update_tray_icon():
     tray_icon.menu = create_tray_menu()
 
 
+def open_dashboard():
+    """Open dashboard in browser."""
+    import webbrowser
+    webbrowser.open('http://localhost:8000/dashboard')
+    log_message("Opened Dashboard")
+
+
 def open_qr_page():
     """Open QR code page in browser."""
     import webbrowser
@@ -396,6 +403,7 @@ def show_status():
         started = f"\n  Started: {status['started'].strftime('%H:%M:%S')}" if status['started'] else ""
         status_text += f"{name.title()}: {state}{pid}{started}\n"
     
+    status_text += f"\nDashboard: http://localhost:8000/dashboard (Left-click tray icon)"
     status_text += f"\nBaileys QR: http://localhost:3001/qr/page"
     status_text += f"\nAPI Docs: http://localhost:8000/docs"
     
@@ -413,6 +421,8 @@ def create_tray_menu():
         return None
     
     return pystray.Menu(
+        pystray.MenuItem("Open Dashboard", open_dashboard, default=True),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("Status", show_status),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(
@@ -518,6 +528,7 @@ def main():
         return 1
     
     log_message("Servers started!")
+    log_message("Dashboard: http://localhost:8000/dashboard")
     log_message("QR Code: http://localhost:3001/qr/page")
     log_message("API: http://localhost:8000")
     
@@ -532,7 +543,8 @@ def main():
     # Start tray or console mode
     if HAS_TRAY:
         print("\nRunning in system tray mode...")
-        print("Right-click the tray icon to control servers")
+        print("Left-click tray icon to open Dashboard")
+        print("Right-click tray icon to control servers")
         print()
         
         tray_thread = threading.Thread(target=setup_tray, daemon=True)
