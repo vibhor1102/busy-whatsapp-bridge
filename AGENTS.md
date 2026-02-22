@@ -23,7 +23,11 @@ FastAPI-based middleware integrating Busy Accounting Software with WhatsApp prov
 | `$VAR` | `%VAR%` |
 | `"C:\Users\Name\path"` (quoted paths) | Unquoted paths with spaces |
 
-**Available Tools:** Python 3.13, Node.js v25.6.1, NPM 11.4.0, Git 2.53.0, Pip 25.2
+**Available Tools:** Python 3.13, Python 3.14.2 (32-bit), Node.js v25.6.1, NPM 11.4.0, Git 2.53.0, Pip 25.2
+
+**32-bit Python:** Required for Busy .bds database access (32-bit MS Access/ODBC)
+- Path: `C:\Users\Vibhor\AppData\Local\Programs\Python\Python314-32\python.exe`
+- Use for database scripts: `"C:\Users\Vibhor\AppData\Local\Programs\Python\Python314-32\python.exe" script.py`
 
 **Working Commands:** All standard Unix commands (ls, cat, rm, cp, mv, grep, find, head, tail, chmod, etc.)
 
@@ -36,11 +40,6 @@ FastAPI-based middleware integrating Busy Accounting Software with WhatsApp prov
 source venv/Scripts/activate  # Git Bash
 # OR
 .\venv\Scripts\activate.bat   # CMD
-```
-
-**PowerShell:** Use `pwsh` (PowerShell 7) for clean output:
-```bash
-pwsh -NoProfile -Command '$PSStyle.OutputRendering = "PlainText"; Get-Process'
 ```
 
 ---
@@ -250,7 +249,9 @@ Node.js bridge service (`baileys-server/`) provides WhatsApp Web integration via
 
 **Busy SMS Template:** Use short templates. Busy sends data as multiple GET requests (originally 33 chunks for full invoice). Short SMS template = concise message with embedded PDF URL.
 
-**Database:** Optional. Webhook works without DB connection (health shows "degraded" but functional).
+**Database:** Optional. Webhook works without DB connection (health shows "degraded" but functional). Requires 32-bit Python.
+
+**Database file:** `C:\Users\Vibhor\Desktop\COMP0012\db12025.bds`
 
 **Key Files:**
 - `app/services/busy_handler.py` - Processes Busy webhooks, extracts PDF from message
