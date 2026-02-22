@@ -1,4 +1,4 @@
-- ALWAYS USE PARALLEL SUBAGENTS (VIA DELEGATING TASKS) WHEN APPLICABLE.
+- ALWAYS USE PARALLEL SUBAGENTS (VIA DELEGATING TASKS) WHEN APPLICABLE. DON'T HESITATE SPAWNING 5+ SUBAGENTS WHEREVER REASONABLE.
 - Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
 
 # Agent Guidelines for Busy WhatsApp Gateway
