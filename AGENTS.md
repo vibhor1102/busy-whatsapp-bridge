@@ -38,6 +38,11 @@ source venv/Scripts/activate  # Git Bash
 .\venv\Scripts\activate.bat   # CMD
 ```
 
+**PowerShell:** Use `pwsh` (PowerShell 7) for clean output:
+```bash
+pwsh -NoProfile -Command '$PSStyle.OutputRendering = "PlainText"; Get-Process'
+```
+
 ---
 
 ## Build/Run/Test Commands
