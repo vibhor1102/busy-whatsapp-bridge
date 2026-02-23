@@ -788,7 +788,7 @@ REMINDER_LEDGER_DATE_RANGE_DAYS=90
 ## 12. File Structure
 
 ```
-Busy-Whatsapp-Application/
+busy-whatsapp-bridge/
 │
 ├── app/
 │   ├── api/

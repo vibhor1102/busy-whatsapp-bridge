@@ -51,7 +51,7 @@ class BaileysClient extends EventEmitter {
                 auth: state,
                 printQRInTerminal: false,
                 logger: pino({ level: 'silent' }),
-                browser: Browsers.macOS('Busy WhatsApp Gateway'),
+                browser: Browsers.macOS('Busy Whatsapp Bridge'),
                 connectTimeoutMs: 60000,
                 keepAliveIntervalMs: 25000,
                 markOnlineOnConnect: false,

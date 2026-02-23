@@ -13,7 +13,7 @@ if %errorLevel% neq 0 (
 )
 
 echo [1/3] Adding HTTP rule (port 8000)...
-netsh advfirewall firewall add rule name="Busy WhatsApp Gateway HTTP" dir=in action=allow protocol=TCP localport=8000
+netsh advfirewall firewall add rule name="Busy Whatsapp Bridge HTTP" dir=in action=allow protocol=TCP localport=8000
 if errorLevel 1 (
     echo      [WARNING] Rule might already exist or error occurred
 ) else (
@@ -22,7 +22,7 @@ if errorLevel 1 (
 echo.
 
 echo [2/3] Adding HTTPS rule (port 443)...
-netsh advfirewall firewall add rule name="Busy WhatsApp Gateway HTTPS" dir=in action=allow protocol=TCP localport=443
+netsh advfirewall firewall add rule name="Busy Whatsapp Bridge HTTPS" dir=in action=allow protocol=TCP localport=443
 if errorLevel 1 (
     echo      [WARNING] Rule might already exist or error occurred
 ) else (
@@ -31,7 +31,7 @@ if errorLevel 1 (
 echo.
 
 echo [3/3] Verifying rules...
-netsh advfirewall firewall show rule name="Busy WhatsApp Gateway HTTP"
+netsh advfirewall firewall show rule name="Busy Whatsapp Bridge HTTP"
 echo.
 
 echo ================================================

@@ -18,14 +18,14 @@ Before deploying to production, ensure you have:
 ```powershell
 # Run as Administrator
 # Allow incoming connections on port 8000
-New-NetFirewallRule -DisplayName "Busy WhatsApp Gateway" `
+New-NetFirewallRule -DisplayName "Busy Whatsapp Bridge" `
     -Direction Inbound `
     -LocalPort 8000 `
     -Protocol TCP `
     -Action Allow
 
 # If using HTTPS (port 443)
-New-NetFirewallRule -DisplayName "Busy WhatsApp Gateway HTTPS" `
+New-NetFirewallRule -DisplayName "Busy Whatsapp Bridge HTTPS" `
     -Direction Inbound `
     -LocalPort 443 `
     -Protocol TCP `
@@ -44,13 +44,13 @@ Create a dedicated service account with limited privileges:
 ```powershell
 # Create service account
 $password = Read-Host -AsSecureString "Enter password for service account"
-New-LocalUser -Name "BusyGateway" -Password $password -Description "Busy WhatsApp Gateway Service Account"
+New-LocalUser -Name "BusyGateway" -Password $password -Description "Busy Whatsapp Bridge Service Account"
 
 # Add to appropriate groups
 Add-LocalGroupMember -Group "IIS_IUSRS" -Member "BusyGateway"
 
 # Set folder permissions
-$path = "C:\Busy WhatsApp Gateway"
+$path = "C:\Busy Whatsapp Bridge"
 icacls $path /grant "BusyGateway:(OI)(CI)F" /T
 ```
 
@@ -100,8 +100,8 @@ Verify ODBC driver:
 
 ```powershell
 # Create application directory
-mkdir "C:\Busy WhatsApp Gateway"
-cd "C:\Busy WhatsApp Gateway"
+mkdir "C:\Busy Whatsapp Bridge"
+cd "C:\Busy Whatsapp Bridge"
 
 # Copy project files (or clone from git)
 # git clone https://your-repo.git .
@@ -250,9 +250,9 @@ Create monitoring script (`monitor.ps1`):
 
 ```powershell
 # Check service status
-$service = Get-Service -Name "BusyWhatsAppGateway" -ErrorAction SilentlyContinue
+$service = Get-Service -Name "BusyWhatsappBridge" -ErrorAction SilentlyContinue
 if ($service.Status -ne "Running") {
-    Write-EventLog -LogName Application -Source "BusyWhatsAppGateway" `
+    Write-EventLog -LogName Application -Source "BusyWhatsappBridge" `
         -EventId 1001 -EntryType Error `
         -Message "Service is not running!"
 }
@@ -261,12 +261,12 @@ if ($service.Status -ne "Running") {
 try {
     $response = Invoke-RestMethod -Uri "http://localhost:8000/api/v1/health" -TimeoutSec 10
     if ($response.status -ne "healthy") {
-        Write-EventLog -LogName Application -Source "BusyWhatsAppGateway" `
-            -EventId 1002 -EntryType Warning `
-            -Message "API health check failed"
-    }
+    Write-EventLog -LogName Application -Source "BusyWhatsappBridge" `
+        -EventId 1002 -EntryType Warning `
+        -Message "API health check failed"
+}
 } catch {
-    Write-EventLog -LogName Application -Source "BusyWhatsAppGateway" `
+    Write-EventLog -LogName Application -Source "BusyWhatsappBridge" `
         -EventId 1003 -EntryType Error `
         -Message "API is not responding"
 }
@@ -275,7 +275,7 @@ try {
 $disk = Get-WmiObject -Class Win32_LogicalDisk -Filter "DeviceID='C:'"
 $freePercent = [math]::Round(($disk.FreeSpace / $disk.Size) * 100, 2)
 if ($freePercent -lt 10) {
-    Write-EventLog -LogName Application -Source "BusyWhatsAppGateway" `
+    Write-EventLog -LogName Application -Source "BusyWhatsappBridge" `
         -EventId 1004 -EntryType Warning `
         -Message "Low disk space: $freePercent% remaining"
 }
@@ -327,8 +327,8 @@ $backupDir = "C:\Backups\BusyGateway\$date"
 New-Item -ItemType Directory -Force -Path $backupDir
 
 # Backup application
-copy "C:\Busy WhatsApp Gateway\.env" $backupDir
-Compress-Archive -Path "C:\Busy WhatsApp Gateway\logs" `
+copy "C:\Busy Whatsapp Bridge\.env" $backupDir
+Compress-Archive -Path "C:\Busy Whatsapp Bridge\logs" `
     -DestinationPath "$backupDir\logs.zip"
 
 # Backup database (ensure not in use)

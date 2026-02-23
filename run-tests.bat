@@ -1,6 +1,6 @@
 @echo off
 echo ================================================
-echo Busy WhatsApp Gateway - Test Suite
+echo Busy Whatsapp Bridge - Test Suite
 echo ================================================
 echo.
 

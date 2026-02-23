@@ -1,4 +1,4 @@
-# Busy WhatsApp Gateway - Installation Guide
+# Busy Whatsapp Bridge - Installation Guide
 
 ## Prerequisites
 
@@ -42,7 +42,7 @@
 
 1. Open terminal in project folder:
    ```cmd
-   cd "C:\Path\To\Busy-Whatsapp-Application"
+   cd "C:\Path\To\busy-whatsapp-bridge"
    ```
 
 2. Create virtual environment (recommended):

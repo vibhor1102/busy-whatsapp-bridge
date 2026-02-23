@@ -1,4 +1,4 @@
-# Busy WhatsApp Gateway - UI/UX Design Specification
+# Busy Whatsapp Bridge - UI/UX Design Specification
 
 ## Project Overview
 Modern web dashboard for managing WhatsApp gateway with real-time updates, dark mode support, and professional 2026 design aesthetic.
@@ -1802,7 +1802,7 @@ components.forEach(component => {
 
 ## Summary
 
-This design specification provides a complete component hierarchy and layout strategy for the Busy WhatsApp Gateway dashboard using exclusively PrimeVue components. Key features include:
+This design specification provides a complete component hierarchy and layout strategy for the Busy Whatsapp Bridge dashboard using exclusively PrimeVue components. Key features include:
 
 - **Professional dark mode aesthetic** with emerald green accents matching WhatsApp branding
 - **Real-time WebSocket integration** for live updates across all pages

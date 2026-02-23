@@ -1,6 +1,6 @@
 # 🚀 Quick Deployment Checklist
 
-Use this checklist to deploy Busy WhatsApp Gateway to production.
+Use this checklist to deploy Busy Whatsapp Bridge to production.
 
 ## ✅ Pre-Deployment (5 minutes)
 
@@ -19,7 +19,7 @@ Use this checklist to deploy Busy WhatsApp Gateway to production.
 
 ### Step 1: Setup (Run as Administrator)
 ```cmd
-cd "C:\Busy WhatsApp Gateway"
+cd "C:\Busy Whatsapp Bridge"
 setup-production.bat
 ```
 **Expected:** Creates venv, installs deps, tests DB connection
@@ -67,7 +67,7 @@ python app\service_wrapper.py start
 ```cmd
 python app\service_wrapper.py status
 ```
-**Expected:** `Service 'BusyWhatsAppGateway': Running`
+**Expected:** `Service 'BusyWhatsappBridge': Running`
 
 ### Step 7: Test API
 ```cmd
@@ -164,7 +164,7 @@ python app\service_wrapper.py start
 
 **Service Issues:**
 - Check logs: `logs/service.log`
-- Windows Event Viewer: Applications → BusyWhatsAppGateway
+- Windows Event Viewer: Applications → BusyWhatsappBridge
 - API docs: http://localhost:8000/docs
 
 **Database Issues:**

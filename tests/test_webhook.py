@@ -196,7 +196,7 @@ def test_search_parties(base_url: str = "http://localhost:8000", search_term: st
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Test Busy WhatsApp Gateway API"
+        description="Test Busy Whatsapp Bridge API"
     )
     parser.add_argument(
         "--url", 

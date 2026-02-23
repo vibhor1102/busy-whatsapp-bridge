@@ -18,16 +18,16 @@ from app.main import app
 import uvicorn
 
 
-class BusyWhatsAppService(win32serviceutil.ServiceFramework):
+class BusyWhatsappBridgeService(win32serviceutil.ServiceFramework):
     """
-    Windows Service for Busy WhatsApp Gateway.
+    Windows Service for Busy Whatsapp Bridge.
     
     This service runs the FastAPI application as a Windows service,
     providing automatic startup, crash recovery, and event logging.
     """
     
-    _svc_name_ = "BusyWhatsAppGateway"
-    _svc_display_name_ = "Busy Accounting WhatsApp Gateway"
+    _svc_name_ = "BusyWhatsappBridge"
+    _svc_display_name_ = "Busy Whatsapp Bridge"
     _svc_description_ = "Integrates Busy Accounting Software with WhatsApp/SMS providers via webhook API"
     
     def __init__(self, args):
@@ -54,7 +54,7 @@ class BusyWhatsAppService(win32serviceutil.ServiceFramework):
         
         # Windows Event Log handler
         event_handler = logging.handlers.NTEventLogHandler(
-            appname="BusyWhatsAppGateway"
+            appname="BusyWhatsappBridge"
         )
         event_handler.setLevel(logging.WARNING)
         
@@ -140,13 +140,13 @@ def cmd_install():
     """Install the Windows service."""
     try:
         win32serviceutil.InstallService(
-            BusyWhatsAppService.__class__,
-            BusyWhatsAppService._svc_name_,
-            BusyWhatsAppService._svc_display_name_,
+            BusyWhatsappBridgeService.__class__,
+            BusyWhatsappBridgeService._svc_name_,
+            BusyWhatsappBridgeService._svc_display_name_,
             startType=win32service.SERVICE_AUTO_START
         )
-        print(f"✓ Service '{BusyWhatsAppService._svc_name_}' installed successfully")
-        print(f"  Display Name: {BusyWhatsAppService._svc_display_name_}")
+        print(f"✓ Service '{BusyWhatsappBridgeService._svc_name_}' installed successfully")
+        print(f"  Display Name: {BusyWhatsappBridgeService._svc_display_name_}")
         print(f"  Start Type: Automatic")
         print("\nTo start the service, run:")
         print(f"  python app\\service_wrapper.py start")
@@ -158,8 +158,8 @@ def cmd_install():
 def cmd_remove():
     """Remove the Windows service."""
     try:
-        win32serviceutil.RemoveService(BusyWhatsAppService._svc_name_)
-        print(f"✓ Service '{BusyWhatsAppService._svc_name_}' removed successfully")
+        win32serviceutil.RemoveService(BusyWhatsappBridgeService._svc_name_)
+        print(f"✓ Service '{BusyWhatsappBridgeService._svc_name_}' removed successfully")
     except Exception as e:
         print(f"✗ Failed to remove service: {e}")
         sys.exit(1)
@@ -168,8 +168,8 @@ def cmd_remove():
 def cmd_start():
     """Start the Windows service."""
     try:
-        win32serviceutil.StartService(BusyWhatsAppService._svc_name_)
-        print(f"✓ Service '{BusyWhatsAppService._svc_name_}' started")
+        win32serviceutil.StartService(BusyWhatsappBridgeService._svc_name_)
+        print(f"✓ Service '{BusyWhatsappBridgeService._svc_name_}' started")
         print("  Check status with: python app\\service_wrapper.py status")
     except Exception as e:
         print(f"✗ Failed to start service: {e}")
@@ -179,8 +179,8 @@ def cmd_start():
 def cmd_stop():
     """Stop the Windows service."""
     try:
-        win32serviceutil.StopService(BusyWhatsAppService._svc_name_)
-        print(f"✓ Service '{BusyWhatsAppService._svc_name_}' stopped")
+        win32serviceutil.StopService(BusyWhatsappBridgeService._svc_name_)
+        print(f"✓ Service '{BusyWhatsappBridgeService._svc_name_}' stopped")
     except Exception as e:
         print(f"✗ Failed to stop service: {e}")
         sys.exit(1)
@@ -195,7 +195,7 @@ def cmd_restart():
 def cmd_status():
     """Check service status."""
     try:
-        status = win32serviceutil.QueryServiceStatus(BusyWhatsAppService._svc_name_)
+        status = win32serviceutil.QueryServiceStatus(BusyWhatsappBridgeService._svc_name_)
         status_map = {
             win32service.SERVICE_STOPPED: "Stopped",
             win32service.SERVICE_START_PENDING: "Starting",
@@ -206,7 +206,7 @@ def cmd_status():
             win32service.SERVICE_PAUSED: "Paused",
         }
         current_status = status_map.get(status[1], f"Unknown ({status[1]})")
-        print(f"Service '{BusyWhatsAppService._svc_name_}': {current_status}")
+        print(f"Service '{BusyWhatsappBridgeService._svc_name_}': {current_status}")
         
         if status[1] == win32service.SERVICE_RUNNING:
             print("  API Endpoint: http://localhost:8000")
@@ -219,7 +219,7 @@ if __name__ == '__main__':
     if len(sys.argv) == 1:
         # No arguments - run as service
         servicemanager.Initialize()
-        servicemanager.PrepareToHostSingle(BusyWhatsAppService)
+        servicemanager.PrepareToHostSingle(BusyWhatsappBridgeService)
         servicemanager.StartServiceCtrlDispatcher()
     else:
         # Command line arguments

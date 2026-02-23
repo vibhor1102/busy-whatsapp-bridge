@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     """Application configuration settings."""
     
     # App Settings
-    APP_NAME: str = "Busy WhatsApp Gateway"
+    APP_NAME: str = "Busy Whatsapp Bridge"
     APP_VERSION: str = "0.0.1"
     DEBUG: bool = False
     HOST: str = "0.0.0.0"

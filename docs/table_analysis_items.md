@@ -317,7 +317,7 @@ WHERE t.VchCode = 14014
 
 ## 9. Integration Recommendations
 
-For Busy WhatsApp Gateway integration:
+For Busy Whatsapp Bridge integration:
 
 1. **Item Lookup:** Query Master1 WHERE MasterType = 6
 2. **Item Search:** Search by Name, Alias, or PrintName

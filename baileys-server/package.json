@@ -1,7 +1,7 @@
 {
   "name": "busy-whatsapp-baileys",
   "version": "0.0.1",
-  "description": "Baileys WhatsApp Web bridge for Busy WhatsApp Gateway",
+  "description": "Baileys WhatsApp Web bridge for Busy Whatsapp Bridge",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

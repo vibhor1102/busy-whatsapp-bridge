@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Create desktop shortcuts for Busy WhatsApp Gateway
+Create desktop shortcuts for Busy Whatsapp Bridge
 Creates shortcuts for both console mode (with logs) and tray mode.
 """
 import os
@@ -38,7 +38,7 @@ Write-Host "Created: {name}"
 
 def main():
     print("="*60)
-    print("  Busy WhatsApp Gateway - Shortcut Creator")
+    print("  Busy Whatsapp Bridge - Shortcut Creator")
     print("="*60)
     print()
     
@@ -50,8 +50,8 @@ def main():
     print()
     
     shortcuts = [
-        ("WhatsApp Gateway", "", "Busy WhatsApp Gateway - Console Mode"),
-        ("WhatsApp Gateway (Tray)", "--tray", "Busy WhatsApp Gateway - System Tray Mode"),
+        ("WhatsApp Bridge", "", "Busy Whatsapp Bridge - Console Mode"),
+        ("WhatsApp Bridge (Tray)", "--tray", "Busy Whatsapp Bridge - System Tray Mode"),
     ]
     
     success = True
@@ -66,8 +66,8 @@ def main():
     if success:
         print("Shortcuts created on desktop!")
         print()
-        print("  - WhatsApp Gateway: Console mode (shows all logs)")
-        print("  - WhatsApp Gateway (Tray): System tray mode (background)")
+        print("  - WhatsApp Bridge: Console mode (shows all logs)")
+        print("  - WhatsApp Bridge (Tray): System tray mode (background)")
     else:
         print("Some shortcuts failed. Run 'python run.py' directly.")
     

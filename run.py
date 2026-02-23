@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Busy WhatsApp Gateway - Unified Runner
+Busy Whatsapp Bridge - Unified Runner
 ======================================
 
-The main entry point for the gateway. Supports multiple modes:
+The main entry point for the bridge. Supports multiple modes:
 
   python run.py           # Console mode (visible logs, all servers)
   python run.py --tray    # System tray mode (hidden console, tray icon)
@@ -343,14 +343,14 @@ def update_tray():
     
     if baileys_ok and fastapi_ok:
         TRAY_ICON.icon = create_tray_icon()
-        TRAY_ICON.title = "Busy WhatsApp Gateway - Running"
+        TRAY_ICON.title = "Busy Whatsapp Bridge - Running"
     elif baileys_ok or fastapi_ok:
         TRAY_ICON.icon = create_partial_icon()
         running = [n for n, s in SERVER_STATUS.items() if s['running']]
-        TRAY_ICON.title = f"Busy WhatsApp Gateway - {', '.join(running).title()}"
+        TRAY_ICON.title = f"Busy Whatsapp Bridge - {', '.join(running).title()}"
     else:
         TRAY_ICON.icon = create_error_icon()
-        TRAY_ICON.title = "Busy WhatsApp Gateway - Stopped"
+        TRAY_ICON.title = "Busy Whatsapp Bridge - Stopped"
     
     TRAY_ICON.menu = create_tray_menu()
 
@@ -405,11 +405,11 @@ def ensure_single_instance() -> bool:
     
     try:
         kernel32 = ctypes.windll.kernel32
-        mutex = kernel32.CreateMutexW(None, False, "Global\\BusyWhatsAppGateway_Instance")
+        mutex = kernel32.CreateMutexW(None, False, "Global\\BusyWhatsappBridge_Instance")
         if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
             kernel32.CloseHandle(mutex)
             print("\n" + "="*60)
-            print("  BUSY WHATSAPP GATEWAY - ALREADY RUNNING")
+            print("  BUSY WHATSAPP BRIDGE - ALREADY RUNNING")
             print("="*60)
             print("\n  Check system tray for the green WhatsApp icon.")
             print("  Right-click to access controls.\n")
@@ -424,7 +424,7 @@ def run_console_mode():
     CONSOLE_MODE = True
     
     print("\n" + colorize("="*60, 'bold'))
-    print(colorize("  BUSY WHATSAPP GATEWAY - CONSOLE MODE", 'bold'))
+    print(colorize("  BUSY WHATSAPP BRIDGE - CONSOLE MODE", 'bold'))
     print(colorize("="*60, 'bold') + "\n")
     
     if not check_prerequisites():
@@ -485,9 +485,9 @@ def run_tray_mode():
     start_fastapi()
     
     TRAY_ICON = pystray.Icon(
-        "busy-whatsapp",
+        "busy-whatsapp-bridge",
         create_tray_icon(),
-        "Busy WhatsApp Gateway",
+        "Busy Whatsapp Bridge",
         create_tray_menu()
     )
     
@@ -521,7 +521,7 @@ def run_headless_mode():
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Busy WhatsApp Gateway',
+        description='Busy Whatsapp Bridge',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Modes:

@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Busy WhatsApp Gateway Setup Script
+# Busy Whatsapp Bridge Setup Script
 # Run this script after cloning the repository
 
 echo "==============================================="
-echo "Busy WhatsApp Gateway - Setup"
+echo "Busy Whatsapp Bridge - Setup"
 echo "==============================================="
 echo ""
 

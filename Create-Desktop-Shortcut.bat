@@ -1,5 +1,5 @@
 @echo off
-echo Busy WhatsApp Gateway - Desktop Shortcut Creator
+echo Busy Whatsapp Bridge - Desktop Shortcut Creator
 echo =================================================
 echo.
 

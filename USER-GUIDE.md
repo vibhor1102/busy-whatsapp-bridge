@@ -1,4 +1,4 @@
-# Busy WhatsApp Gateway - Quick Start
+# Busy Whatsapp Bridge - Quick Start
 
 ## One-Click Startup
 

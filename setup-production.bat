@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 echo ================================================
-echo Busy WhatsApp Gateway - Production Setup
+echo Busy Whatsapp Bridge - Production Setup
 echo ================================================
 echo.
 

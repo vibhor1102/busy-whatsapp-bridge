@@ -1,4 +1,4 @@
-# Busy Accounting WhatsApp/SMS Integration Gateway
+# Busy Accounting WhatsApp/SMS Integration Bridge
 
 **Production-Ready Windows Service for Busy Accounting Software Integration**
 
@@ -62,7 +62,7 @@ Enterprise-grade middleware that seamlessly integrates **Busy Accounting Softwar
 
 ```cmd
 # Download and extract the project
-cd "C:\Busy WhatsApp Gateway"
+cd "C:\Busy Whatsapp Bridge"
 
 # Run production setup (as Administrator)
 setup-production.bat
@@ -163,7 +163,7 @@ Provides menu-driven interface for all service operations.
 ### Log Locations
 
 - **Application Logs:** `logs/service.log` (rotated automatically)
-- **Windows Event Log:** Applications and Services Logs → BusyWhatsAppGateway
+- **Windows Event Log:** Applications and Services Logs → BusyWhatsappBridge
 - **Access Logs:** Included in service.log
 
 ### View Logs

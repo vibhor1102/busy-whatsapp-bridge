@@ -1,6 +1,6 @@
 @echo off
 echo ================================================
-echo Busy WhatsApp Gateway - Service Manager
+echo Busy Whatsapp Bridge - Service Manager
 echo ================================================
 echo.
 
@@ -139,7 +139,7 @@ if exist "logs\service.log" (
     echo No log file found at logs\service.log
     echo.
     echo Checking Windows Event Log...
-    powershell -Command "Get-WinEvent -FilterHashtable @{LogName='Application'; ID=0} -MaxEvents 20 | Where-Object {$_.Message -like '*BusyWhatsApp*'} | Format-Table TimeCreated, LevelDisplayName, Message -Wrap"
+    powershell -Command "Get-WinEvent -FilterHashtable @{LogName='Application'; ID=0} -MaxEvents 20 | Where-Object {$_.Message -like '*BusyWhatsappBridge*'} | Format-Table TimeCreated, LevelDisplayName, Message -Wrap"
 )
 echo.
 pause
