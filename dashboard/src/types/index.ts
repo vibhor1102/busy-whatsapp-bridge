@@ -94,3 +94,101 @@ export interface WebSocketMessage {
 }
 
 export type Theme = 'dark' | 'light'
+
+// Payment Reminder Types
+export interface PartyReminderInfo {
+  code: string
+  name: string
+  print_name?: string
+  phone?: string
+  address?: string
+  closing_balance: number
+  closing_balance_formatted: string
+  amount_due: number
+  amount_due_formatted: string
+  sales_credit_days: number
+  purchase_credit_days?: number
+  credit_days_source: string
+  permanent_enabled: boolean
+  temp_enabled: boolean
+  last_reminder_sent?: string
+  reminder_count: number
+  can_generate_ledger: boolean
+}
+
+export interface ScheduleConfig {
+  enabled: boolean
+  frequency: 'weekly' | 'biweekly'
+  day_of_week: number
+  time: string
+  timezone: string
+  batch_size: number
+  delay_between_messages: number
+}
+
+export interface MessageTemplate {
+  id: string
+  name: string
+  description?: string
+  content: string
+  variables: string[]
+  is_default: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PartyConfig {
+  enabled: boolean
+  credit_days_override?: number
+  custom_template_id?: string
+  custom_message?: string
+  notes?: string
+}
+
+export interface ReminderConfig {
+  version: string
+  last_updated: string
+  default_credit_days: number
+  default_provider: string
+  schedule: ScheduleConfig
+  parties: Record<string, PartyConfig>
+  templates: MessageTemplate[]
+  active_template_id: string
+}
+
+export interface ReminderStats {
+  total_parties: number
+  eligible_parties: number
+  enabled_parties: number
+  reminders_sent_today: number
+  reminders_sent_this_week: number
+  reminders_sent_this_month: number
+  total_amount_due: number
+  average_amount_due: number
+  last_scheduler_run?: string
+  next_scheduler_run?: string
+  scheduler_status: 'running' | 'stopped' | 'paused'
+}
+
+export interface SchedulerStatus {
+  is_running: boolean
+  next_run?: string
+  schedule_enabled: boolean
+  frequency: string
+  day_of_week: number
+  time: string
+  timezone: string
+}
+
+export interface AmountDueCalculation {
+  party_code: string
+  party_name: string
+  closing_balance: number
+  credit_days_used: number
+  credit_days_source: string
+  recent_sales_total: number
+  recent_sales_count: number
+  recent_sales_date_range: [string, string]
+  amount_due: number
+  calculation_timestamp: string
+}

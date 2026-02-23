@@ -40,6 +40,19 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"
     
+    # Payment Reminder System Configuration
+    REMINDER_ENABLED: bool = True
+    REMINDER_PROVIDER: str = "meta"
+    REMINDER_DEFAULT_CREDIT_DAYS: int = 30
+    REMINDER_CONFIG_PATH: str = "data/reminder_config.json"
+    REMINDER_SCHEDULE_ENABLED: bool = False
+    REMINDER_SCHEDULE_FREQUENCY: str = "weekly"
+    REMINDER_SCHEDULE_DAY: int = 1
+    REMINDER_SCHEDULE_TIME: str = "10:00"
+    REMINDER_SCHEDULE_TIMEZONE: str = "Asia/Kolkata"
+    REMINDER_BATCH_SIZE: int = 50
+    REMINDER_DELAY_BETWEEN_MESSAGES: int = 5
+    
     class Config:
         env_file = ".env"
         case_sensitive = True

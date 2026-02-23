@@ -25,6 +25,7 @@ from app.services.busy_handler import busy_handler
 from app.services.queue_service import queue_service
 from app.websocket import ws_manager, WebSocketMessage
 from app.dashboard.routes import router as dashboard_router
+from app.api.reminder_routes import router as reminder_router
 
 # Configure structured logging - console-friendly format
 def console_renderer(logger, name, event_dict):
@@ -128,11 +129,28 @@ async def lifespan(app: FastAPI):
     queue_service.start_worker()
     logger.info("message_queue_worker_started")
     
+    # Initialize payment reminder scheduler
+    try:
+        from app.services.scheduler_service import scheduler_service
+        await scheduler_service.initialize()
+        logger.info("reminder_scheduler_initialized")
+    except Exception as e:
+        logger.warning("reminder_scheduler_init_failed", error=str(e))
+    
     yield
     
     # Shutdown
     logger.info("application_shutdown")
     queue_service.stop_worker()
+    
+    # Stop reminder scheduler
+    try:
+        from app.services.scheduler_service import scheduler_service
+        await scheduler_service.stop_scheduler()
+        logger.info("reminder_scheduler_stopped")
+    except Exception as e:
+        logger.warning("reminder_scheduler_stop_failed", error=str(e))
+    
     db.disconnect()
 
 
@@ -201,6 +219,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # Include dashboard API routes
 app.include_router(dashboard_router)
+
+# Include payment reminder API routes
+app.include_router(reminder_router)
 
 
 @app.get("/", tags=["Root"])

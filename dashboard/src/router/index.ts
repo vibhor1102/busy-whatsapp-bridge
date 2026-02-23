@@ -5,6 +5,7 @@ import MessageQueue from '@/views/MessageQueue.vue'
 import LiveLogs from '@/views/LiveLogs.vue'
 import SystemControl from '@/views/SystemControl.vue'
 import Settings from '@/views/Settings.vue'
+import Reminders from '@/views/Reminders.vue'
 
 const routes = [
   {
@@ -24,6 +25,12 @@ const routes = [
     name: 'Message Queue',
     component: MessageQueue,
     meta: { title: 'Message Queue', icon: 'pi pi-inbox' }
+  },
+  {
+    path: '/reminders',
+    name: 'Payment Reminders',
+    component: Reminders,
+    meta: { title: 'Payment Reminders', icon: 'pi pi-bell' }
   },
   {
     path: '/logs',

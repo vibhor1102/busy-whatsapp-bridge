@@ -358,6 +358,61 @@ class LedgerDataService:
             logger.warning("get_opening_balance_failed", party_code=party_code, error=str(e))
             return Decimal('0')
     
+    def get_credit_days(self, party_code: str) -> Tuple[int, str]:
+        """
+        Get credit days for a party from Master1 table.
+        
+        Checks Master1.I2 (Sales Credit Days) for the party.
+        Returns default if not set or party not found.
+        
+        Args:
+            party_code: Party code
+            
+        Returns:
+            Tuple of (credit_days, source)
+            Source indicates where the value came from:
+            - "master1_i2": From Master1.I2 column
+            - "default": Using default value (30 days)
+        """
+        from app.constants.reminder_constants import DEFAULT_CREDIT_DAYS
+        
+        party_code_int = self._validate_party_code(party_code)
+        
+        try:
+            query = f"""
+                SELECT I2
+                FROM Master1
+                WHERE Code = {party_code_int} AND MasterType = {MasterType.PARTY}
+            """
+            
+            with self.db.get_cursor() as cursor:
+                cursor.execute(query)
+                row = cursor.fetchone()
+                
+                if row and row[0] is not None and row[0] > 0:
+                    credit_days = int(row[0])
+                    logger.debug(
+                        "credit_days_fetched_from_master1",
+                        party_code=party_code,
+                        credit_days=credit_days
+                    )
+                    return credit_days, "master1_i2"
+                else:
+                    logger.debug(
+                        "credit_days_not_set_using_default",
+                        party_code=party_code,
+                        default_credit_days=DEFAULT_CREDIT_DAYS
+                    )
+                    return DEFAULT_CREDIT_DAYS, "default"
+                    
+        except Exception as e:
+            logger.warning(
+                "get_credit_days_error",
+                party_code=party_code,
+                error=str(e)
+            )
+            return DEFAULT_CREDIT_DAYS, "default"
+    
     def _get_voucher_type_name(self, vch_type: int) -> str:
         """Get human-readable voucher type abbreviation."""
         return VOUCHER_TYPE_NAMES.get(vch_type, "Jrnl")

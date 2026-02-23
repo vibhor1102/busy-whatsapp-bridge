@@ -1,0 +1,121 @@
+"""
+Constants for Payment Reminder System
+"""
+
+# Credit Days Configuration
+DEFAULT_CREDIT_DAYS = 30
+MAX_CREDIT_DAYS = 365
+MIN_CREDIT_DAYS = 1
+
+# Master1 Table Column for Credit Days
+MASTER1_SALES_CREDIT_DAYS_COLUMN = "I2"
+MASTER1_PURCHASE_CREDIT_DAYS_COLUMN = "I1"
+
+# Schedule Configuration
+SCHEDULE_FREQUENCY_WEEKLY = "weekly"
+SCHEDULE_FREQUENCY_BIWEEKLY = "biweekly"
+VALID_SCHEDULE_FREQUENCIES = [SCHEDULE_FREQUENCY_WEEKLY, SCHEDULE_FREQUENCY_BIWEEKLY]
+
+# Days of week (0=Sunday, 6=Saturday)
+DAYS_OF_WEEK = {
+    0: "Sunday",
+    1: "Monday",
+    2: "Tuesday",
+    3: "Wednesday",
+    4: "Thursday",
+    5: "Friday",
+    6: "Saturday"
+}
+
+# Default Schedule Settings
+DEFAULT_SCHEDULE_DAY = 1  # Monday
+DEFAULT_SCHEDULE_TIME = "10:00"
+DEFAULT_SCHEDULE_TIMEZONE = "Asia/Kolkata"
+DEFAULT_SCHEDULE_ENABLED = False
+
+# Rate Limiting & Batching
+DEFAULT_BATCH_SIZE = 50
+MIN_BATCH_SIZE = 10
+MAX_BATCH_SIZE = 500
+DEFAULT_DELAY_BETWEEN_MESSAGES = 5  # seconds
+MIN_DELAY_BETWEEN_MESSAGES = 1
+MAX_DELAY_BETWEEN_MESSAGES = 60
+
+# Meta API Provider
+REMINDER_PROVIDER_META = "meta"
+VALID_REMINDER_PROVIDERS = [REMINDER_PROVIDER_META]
+
+# Template Configuration
+MAX_TEMPLATES = 6
+DEFAULT_TEMPLATE_ID = "standard"
+TEMPLATE_VARIABLES = [
+    "customer_name",
+    "company_name", 
+    "amount_due",
+    "credit_days"
+]
+
+# Reminder Status
+REMINDER_STATUS_DRAFT = "draft"
+REMINDER_STATUS_SCHEDULED = "scheduled"
+REMINDER_STATUS_SENDING = "sending"
+REMINDER_STATUS_COMPLETED = "completed"
+REMINDER_STATUS_FAILED = "failed"
+REMINDER_STATUS_CANCELLED = "cancelled"
+VALID_REMINDER_STATUSES = [
+    REMINDER_STATUS_DRAFT,
+    REMINDER_STATUS_SCHEDULED,
+    REMINDER_STATUS_SENDING,
+    REMINDER_STATUS_COMPLETED,
+    REMINDER_STATUS_FAILED,
+    REMINDER_STATUS_CANCELLED
+]
+
+# Message Queue Status (from existing system)
+MESSAGE_STATUS_PENDING = "pending"
+MESSAGE_STATUS_PROCESSING = "processing"
+MESSAGE_STATUS_SENT = "sent"
+MESSAGE_STATUS_FAILED = "failed"
+
+# History Retention
+DEFAULT_HISTORY_RETENTION_DAYS = 365
+
+# Sort Options for Party List
+SORT_BY_AMOUNT_DUE = "amount_due"
+SORT_BY_NAME = "name"
+SORT_BY_CREDIT_DAYS = "credit_days"
+SORT_BY_LAST_REMINDER = "last_reminder"
+SORT_BY_CODE = "code"
+VALID_SORT_OPTIONS = [
+    SORT_BY_AMOUNT_DUE,
+    SORT_BY_NAME,
+    SORT_BY_CREDIT_DAYS,
+    SORT_BY_LAST_REMINDER,
+    SORT_BY_CODE
+]
+
+# Filter Options
+FILTER_ALL = "all"
+FILTER_ENABLED = "enabled"
+FILTER_DISABLED = "disabled"
+FILTER_NEVER_REMINDED = "never_reminded"
+FILTER_REMINDED_RECENTLY = "reminded_recently"
+VALID_FILTER_OPTIONS = [
+    FILTER_ALL,
+    FILTER_ENABLED,
+    FILTER_DISABLED,
+    FILTER_NEVER_REMINDED,
+    FILTER_REMINDED_RECENTLY
+]
+
+# Currency Formatting
+CURRENCY_SYMBOL = "₹"
+CURRENCY_DECIMAL_PLACES = 2
+
+# Config File
+CONFIG_VERSION = "1.0"
+CONFIG_FILE_NAME = "reminder_config.json"
+
+# Ledger PDF Settings
+LEDGER_INCLUDE_ALL_TRANSACTIONS = True
+LEDGER_DATE_RANGE_DAYS = 90

@@ -285,3 +285,34 @@ Node.js bridge service (`baileys-server/`) provides WhatsApp Web integration via
 - `app/database/message_queue.py` - Queue database operations
 - `app/services/queue_service.py` - Queue worker and processing logic
 - `app/services/busy_handler.py` - Now queues messages instead of direct send
+
+## Payment Reminder System
+
+**Purpose:** Automated weekly/bi-weekly payment reminders with ledger PDFs sent via Meta WhatsApp API.
+
+**Key Features:**
+- Calculates amount due: Closing Balance - Recent Sales (within credit days from Master1.I2)
+- Dual-toggle selection: Temporary (current batch) + Permanent (stored in JSON)
+- 5 Meta-compliant message templates
+- APScheduler for weekly/bi-weekly automated sending
+- Batch processing with rate limiting (50 msg/batch, 5s delay)
+- Full dashboard UI at `/dashboard/#/reminders`
+
+**Architecture:**
+- `app/api/reminder_routes.py` - 25+ API endpoints
+- `app/services/reminder_service.py` - Main orchestrator
+- `app/services/amount_due_calculator.py` - Amount due calculation using Master1.I2
+- `app/services/scheduler_service.py` - APScheduler wrapper
+- `app/services/template_service.py` - Template rendering
+- `app/services/reminder_config_service.py` - JSON config persistence
+- `data/reminder_config.json` - Party settings + templates
+- `dashboard/src/views/Reminders.vue` - Main UI
+- `dashboard/src/components/TemplateEditor.vue` - Template management
+
+**Amount Due Formula:** `Closing Balance - Sum of Sales vouchers in last N days` (N = Master1.I2 or default 30)
+
+**Env Variables:**
+- `REMINDER_ENABLED` - Enable system
+- `REMINDER_PROVIDER` - Only "meta" for bulk
+- `REMINDER_DEFAULT_CREDIT_DAYS` - Fallback when Master1.I2 = 0
+- `REMINDER_SCHEDULE_*` - Scheduler config
