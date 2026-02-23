@@ -25,3 +25,6 @@ cryptography==44.0.0
 # Desktop/Tray Support (Optional - for GUI mode)
 pystray==0.19.5
 pillow==11.1.0
+
+# PDF Generation for Ledgers
+fpdf2==2.8.3
