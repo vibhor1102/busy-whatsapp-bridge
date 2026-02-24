@@ -4,18 +4,45 @@ echo Busy Whatsapp Bridge - Service Manager
 echo ================================================
 echo.
 
-set "PYTHON=C:\Python39-32\python.exe"
+:: Find 32-bit Python
+set "PYTHON="
 
-if not exist "%PYTHON%" (
-    echo [ERROR] 32-bit Python not found at %PYTHON%
-    echo Please install Python 3.9+ 32-bit or update this script path
+:: Check common installation paths
+if exist "C:\Python39-32\python.exe" set "PYTHON=C:\Python39-32\python.exe"
+if exist "C:\Python310-32\python.exe" set "PYTHON=C:\Python310-32\python.exe"
+if exist "C:\Python311-32\python.exe" set "PYTHON=C:\Python311-32\python.exe"
+if exist "C:\Python312-32\python.exe" set "PYTHON=C:\Python312-32\python.exe"
+if exist "C:\Python313-32\python.exe" set "PYTHON=C:\Python313-32\python.exe"
+
+:: Check user-specific installations in AppData
+if exist "%LOCALAPPDATA%\Programs\Python\Python39-32\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python39-32\python.exe"
+if exist "%LOCALAPPDATA%\Programs\Python\Python310-32\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python310-32\python.exe"
+if exist "%LOCALAPPDATA%\Programs\Python\Python311-32\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python311-32\python.exe"
+if exist "%LOCALAPPDATA%\Programs\Python\Python312-32\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python312-32\python.exe"
+if exist "%LOCALAPPDATA%\Programs\Python\Python313-32\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python313-32\python.exe"
+if exist "%LOCALAPPDATA%\Programs\Python\Python314-32\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python314-32\python.exe"
+
+if not defined PYTHON (
+    echo [ERROR] 32-bit Python not found!
+    echo.
+    echo Searched in:
+    echo   - C:\Python39-32 through C:\Python314-32
+    echo   - %%LOCALAPPDATA%%\Programs\Python\Python39-32 through Python314-32
+    echo.
+    echo Please install Python 3.9+ 32-bit from https://www.python.org/downloads/windows/
     pause
     exit /b 1
 )
 
-if not exist ".env" (
-    echo [ERROR] .env file not found!
-    echo Please copy .env.example to .env and configure it
+:: Check for conf.json in AppData
+set "CONFIG_FILE=%LOCALAPPDATA%\BusyWhatsappBridge\conf.json"
+if not exist "%CONFIG_FILE%" (
+    echo [ERROR] conf.json not found at %CONFIG_FILE%!
+    echo.
+    echo Please run setup-production.bat first, or:
+    echo 1. Create directory: %LOCALAPPDATA%\BusyWhatsappBridge\
+    echo 2. Copy conf.json.example to %CONFIG_FILE%
+    echo 3. Edit conf.json with your settings
     pause
     exit /b 1
 )

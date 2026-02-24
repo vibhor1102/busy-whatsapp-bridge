@@ -1,0 +1,44 @@
+{
+  "server": {
+    "app_name": "Busy Whatsapp Bridge",
+    "app_version": "0.0.1",
+    "debug": false,
+    "host": "0.0.0.0",
+    "port": 8000
+  },
+  "database": {
+    "bds_file_path": "",
+    "bds_password": "ILoveMyINDIA",
+    "odbc_driver": "Microsoft Access Driver (*.mdb, *.accdb)"
+  },
+  "whatsapp": {
+    "provider": "baileys",
+    "meta_api_version": "v18.0",
+    "meta_phone_number_id": null,
+    "meta_access_token": null,
+    "meta_business_id": null,
+    "webhook_url": null,
+    "webhook_auth_token": null
+  },
+  "baileys": {
+    "server_url": "http://localhost:3001",
+    "enabled": false,
+    "auto_start": true
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "json"
+  },
+  "reminders": {
+    "enabled": true,
+    "provider": "meta",
+    "default_credit_days": 30,
+    "schedule_enabled": false,
+    "schedule_frequency": "weekly",
+    "schedule_day": 1,
+    "schedule_time": "10:00",
+    "schedule_timezone": "Asia/Kolkata",
+    "batch_size": 50,
+    "delay_between_messages": 5
+  }
+}

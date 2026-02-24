@@ -6,6 +6,10 @@ echo Busy Whatsapp Bridge - Production Setup
 echo ================================================
 echo.
 
+:: Save script directory and change to it (running as admin changes cwd to System32)
+set "SCRIPT_DIR=%~dp0"
+cd /d "%SCRIPT_DIR%"
+
 :: Check for Admin rights
 net session >nul 2>&1
 if %errorLevel% neq 0 (
@@ -15,9 +19,12 @@ if %errorLevel% neq 0 (
     exit /b 1
 )
 
+:: Make sure we're in the script directory
+cd /d "%SCRIPT_DIR%"
+
 :: Find 32-bit Python
 set "PYTHON32="
-set "PYTHON_PATHS=C:\Python39-32\python.exe C:\Python310-32\python.exe C:\Python311-32\python.exe C:\Python312-32\python.exe C:\Python313-32\python.exe"
+set "PYTHON_PATHS=C:\Python39-32\python.exe C:\Python310-32\python.exe C:\Python311-32\python.exe C:\Python312-32\python.exe C:\Python313-32\python.exe C:\Users\%USERNAME%\AppData\Local\Programs\Python\Python39-32\python.exe C:\Users\%USERNAME%\AppData\Local\Programs\Python\Python310-32\python.exe C:\Users\%USERNAME%\AppData\Local\Programs\Python\Python311-32\python.exe C:\Users\%USERNAME%\AppData\Local\Programs\Python\Python312-32\python.exe C:\Users\%USERNAME%\AppData\Local\Programs\Python\Python313-32\python.exe C:\Users\%USERNAME%\AppData\Local\Programs\Python\Python314-32\python.exe"
 
 for %%P in (%PYTHON_PATHS%) do (
     if exist "%%P" (
@@ -37,12 +44,29 @@ for /f "tokens=2*" %%a in ('reg query "HKLM\SOFTWARE\Python\PythonCore" /s /f "I
     )
 )
 
+:: Check user-specific Python installations in AppData
+for /f "tokens=2*" %%a in ('reg query "HKCU\SOFTWARE\Python\PythonCore" /s /f "InstallPath" 2^>nul ^| findstr "InstallPath"') do (
+    if exist "%%b\python.exe" (
+        "%%b\python.exe" -c "import struct; exit(0 if struct.calcsize('P') * 8 == 32 else 1)" 2>nul
+        if !errorLevel! equ 0 (
+            set "PYTHON32=%%b\python.exe"
+            goto :found_python
+        )
+    )
+)
+
 echo [ERROR] 32-bit Python not found!
 echo.
-echo Please install Python 3.9-3.13 (32-bit) from:
+echo Please install Python 3.13 (32-bit) from:
 echo https://www.python.org/downloads/windows/
 echo.
-echo Make sure to check "Add Python to PATH" during installation.
+echo IMPORTANT: Python 3.14 is NOT recommended as many packages lack pre-built wheels.
+echo Please use Python 3.13 for best compatibility.
+echo.
+echo During installation:
+echo   - Choose "Install Now" (no need to add to PATH)
+echo   - The script will find Python automatically
+echo   - Recommended path: C:\Users\%USERNAME%\AppData\Local\Programs\Python\Python313-32\
 pause
 exit /b 1
 
@@ -92,6 +116,9 @@ echo.
 
 :: Install dependencies
 echo [3/6] Installing dependencies (this may take a few minutes)...
+echo      (If this fails, you may need Microsoft Visual C++ Build Tools)
+echo      Download from: https://aka.ms/vs/17/release/vs_BuildTools.exe
+echo.
 pip install -r requirements.txt
 if errorLevel 1 (
     echo [ERROR] Failed to install dependencies
@@ -101,14 +128,23 @@ if errorLevel 1 (
 echo      ✓ Dependencies installed
 echo.
 
-:: Create environment file
+:: Create configuration file
 echo [4/6] Setting up configuration...
-if exist ".env" (
-    echo      .env file already exists
+
+:: Get AppData path
+for /f "tokens=2*" %%a in ('reg query "HKCU\Environment" /v LOCALAPPDATA 2^>nul ^| findstr "LOCALAPPDATA"') do set "LOCALAPPDATA=%%b"
+if not defined LOCALAPPDATA set "LOCALAPPDATA=%USERPROFILE%\AppData\Local"
+
+set "CONFIG_DIR=%LOCALAPPDATA%\BusyWhatsappBridge"
+set "CONFIG_FILE=%CONFIG_DIR%\conf.json"
+
+if exist "%CONFIG_FILE%" (
+    echo      conf.json already exists at %CONFIG_FILE%
 ) else (
-    copy .env.example .env >nul
-    echo      ✓ Created .env from template
-    echo      ⚠ IMPORTANT: Edit .env with your settings!
+    if not exist "%CONFIG_DIR%" mkdir "%CONFIG_DIR%"
+    copy conf.json.example "%CONFIG_FILE%" >nul
+    echo      ✓ Created conf.json at %CONFIG_FILE%
+    echo      ⚠ IMPORTANT: Edit conf.json with your settings!
 )
 echo.
 
@@ -125,7 +161,7 @@ echo      Attempting to connect to database...
 python -c "from app.database.connection import db; import sys; sys.exit(0 if db.test_connection() else 1)" 2>nul
 if errorLevel 1 (
     echo      ⚠ Database connection failed (expected if not configured yet)
-    echo        Please edit .env and set BDS_FILE_PATH
+    echo        Please edit conf.json and set database.bds_file_path
 ) else (
     echo      ✓ Database connection successful
 )
@@ -139,7 +175,7 @@ echo.
 echo Next steps:
 echo.
 echo 1. Configure the application:
-echo    notepad .env
+echo    notepad "%LOCALAPPDATA%\BusyWhatsappBridge\conf.json"
 echo.
 echo 2. Install as Windows Service:
 echo    manage-service.bat

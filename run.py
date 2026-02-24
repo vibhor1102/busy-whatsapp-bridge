@@ -140,13 +140,16 @@ def check_prerequisites() -> bool:
             return False
         log('SYSTEM', 'Baileys dependencies installed', 'green')
     
-    env_file = Path(__file__).parent / '.env'
-    if not env_file.exists():
-        example = Path(__file__).parent / '.env.example'
+    # Check for conf.json in AppData
+    from app.config import get_config_path
+    config_file = get_config_path()
+    if not config_file.exists():
+        example = Path(__file__).parent / 'conf.json.example'
         if example.exists():
             import shutil
-            shutil.copy(example, env_file)
-            log('SYSTEM', 'Created .env from template. Please configure and restart.', 'yellow')
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(example, config_file)
+            log('SYSTEM', f'Created conf.json at {config_file}. Please configure and restart.', 'yellow')
             return False
     
     log('SYSTEM', 'All prerequisites OK', 'green')

@@ -1,67 +1,203 @@
-from pydantic_settings import BaseSettings
-from functools import lru_cache
+import json
+import os
+from pathlib import Path
 from typing import Optional
+from functools import lru_cache
+from pydantic import BaseModel, Field
 
 
-class Settings(BaseSettings):
-    """Application configuration settings."""
+class ServerSettings(BaseModel):
+    """Server configuration."""
+    app_name: str = "Busy Whatsapp Bridge"
+    app_version: str = "0.0.1"
+    debug: bool = False
+    host: str = "0.0.0.0"
+    port: int = 8000
+
+
+class DatabaseSettings(BaseModel):
+    """Database configuration."""
+    bds_file_path: str = ""
+    bds_password: str = "ILoveMyINDIA"
+    odbc_driver: str = "Microsoft Access Driver (*.mdb, *.accdb)"
+
+
+class WhatsAppSettings(BaseModel):
+    """WhatsApp provider configuration."""
+    provider: str = "baileys"
+    meta_api_version: str = "v18.0"
+    meta_phone_number_id: Optional[str] = None
+    meta_access_token: Optional[str] = None
+    meta_business_id: Optional[str] = None
+    webhook_url: Optional[str] = None
+    webhook_auth_token: Optional[str] = None
+
+
+class BaileysSettings(BaseModel):
+    """Baileys configuration."""
+    server_url: str = "http://localhost:3001"
+    enabled: bool = False
+    auto_start: bool = True
+
+
+class LoggingSettings(BaseModel):
+    """Logging configuration."""
+    level: str = "INFO"
+    format: str = "json"
+
+
+class ReminderSettings(BaseModel):
+    """Payment reminder configuration."""
+    enabled: bool = True
+    provider: str = "meta"
+    default_credit_days: int = 30
+    schedule_enabled: bool = False
+    schedule_frequency: str = "weekly"
+    schedule_day: int = 1
+    schedule_time: str = "10:00"
+    schedule_timezone: str = "Asia/Kolkata"
+    batch_size: int = 50
+    delay_between_messages: int = 5
+
+
+class Settings(BaseModel):
+    """Application configuration."""
+    server: ServerSettings = Field(default_factory=ServerSettings)
+    database: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    whatsapp: WhatsAppSettings = Field(default_factory=WhatsAppSettings)
+    baileys: BaileysSettings = Field(default_factory=BaileysSettings)
+    logging: LoggingSettings = Field(default_factory=LoggingSettings)
+    reminders: ReminderSettings = Field(default_factory=ReminderSettings)
+
+    @property
+    def APP_NAME(self) -> str:
+        return self.server.app_name
     
-    # App Settings
-    APP_NAME: str = "Busy Whatsapp Bridge"
-    APP_VERSION: str = "0.0.1"
-    DEBUG: bool = False
-    HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    @property
+    def APP_VERSION(self) -> str:
+        return self.server.app_version
     
-    # Database Settings
-    BDS_FILE_PATH: str = ""
-    BDS_PASSWORD: str = "ILoveMyINDIA"
-    ODBC_DRIVER: str = "Microsoft Access Driver (*.mdb, *.accdb)"
+    @property
+    def DEBUG(self) -> bool:
+        return self.server.debug
     
-    # WhatsApp Provider Settings
-    WHATSAPP_PROVIDER: str = "baileys"  # baileys, meta, webhook, evolution
+    @property
+    def HOST(self) -> str:
+        return self.server.host
     
-    # Meta Settings
-    META_API_VERSION: str = "v18.0"
-    META_PHONE_NUMBER_ID: Optional[str] = None
-    META_ACCESS_TOKEN: Optional[str] = None
-    META_BUSINESS_ID: Optional[str] = None
+    @property
+    def PORT(self) -> int:
+        return self.server.port
     
-    # Webhook Settings
-    WEBHOOK_URL: Optional[str] = None
-    WEBHOOK_AUTH_TOKEN: Optional[str] = None
+    @property
+    def BDS_FILE_PATH(self) -> str:
+        return self.database.bds_file_path
     
-    # Baileys Settings (WhatsApp Web via Node.js)
-    BAILEYS_SERVER_URL: str = "http://localhost:3001"
-    BAILEYS_ENABLED: bool = False
-    BAILEYS_AUTO_START: bool = True
+    @property
+    def BDS_PASSWORD(self) -> str:
+        return self.database.bds_password
     
-    # Logging
-    LOG_LEVEL: str = "INFO"
-    LOG_FORMAT: str = "json"
+    @property
+    def ODBC_DRIVER(self) -> str:
+        return self.database.odbc_driver
     
-    # Payment Reminder System Configuration
-    REMINDER_ENABLED: bool = True
-    REMINDER_PROVIDER: str = "meta"
-    REMINDER_DEFAULT_CREDIT_DAYS: int = 30
-    REMINDER_CONFIG_PATH: str = "data/reminder_config.json"
-    REMINDER_SCHEDULE_ENABLED: bool = False
-    REMINDER_SCHEDULE_FREQUENCY: str = "weekly"
-    REMINDER_SCHEDULE_DAY: int = 1
-    REMINDER_SCHEDULE_TIME: str = "10:00"
-    REMINDER_SCHEDULE_TIMEZONE: str = "Asia/Kolkata"
-    REMINDER_BATCH_SIZE: int = 50
-    REMINDER_DELAY_BETWEEN_MESSAGES: int = 5
+    @property
+    def WHATSAPP_PROVIDER(self) -> str:
+        return self.whatsapp.provider
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    @property
+    def META_API_VERSION(self) -> str:
+        return self.whatsapp.meta_api_version
+    
+    @property
+    def META_PHONE_NUMBER_ID(self) -> Optional[str]:
+        return self.whatsapp.meta_phone_number_id
+    
+    @property
+    def META_ACCESS_TOKEN(self) -> Optional[str]:
+        return self.whatsapp.meta_access_token
+    
+    @property
+    def META_BUSINESS_ID(self) -> Optional[str]:
+        return self.whatsapp.meta_business_id
+    
+    @property
+    def WEBHOOK_URL(self) -> Optional[str]:
+        return self.whatsapp.webhook_url
+    
+    @property
+    def WEBHOOK_AUTH_TOKEN(self) -> Optional[str]:
+        return self.whatsapp.webhook_auth_token
+    
+    @property
+    def BAILEYS_SERVER_URL(self) -> str:
+        return self.baileys.server_url
+    
+    @property
+    def BAILEYS_ENABLED(self) -> bool:
+        return self.baileys.enabled
+    
+    @property
+    def BAILEYS_AUTO_START(self) -> bool:
+        return self.baileys.auto_start
+    
+    @property
+    def LOG_LEVEL(self) -> str:
+        return self.logging.level
+    
+    @property
+    def LOG_FORMAT(self) -> str:
+        return self.logging.format
+    
+    @property
+    def REMINDER_ENABLED(self) -> bool:
+        return self.reminders.enabled
+    
+    @property
+    def REMINDER_PROVIDER(self) -> str:
+        return self.reminders.provider
+    
+    @property
+    def REMINDER_DEFAULT_CREDIT_DAYS(self) -> int:
+        return self.reminders.default_credit_days
+    
+    @property
+    def REMINDER_CONFIG_PATH(self) -> str:
+        return "data/reminder_config.json"
+    
+    @property
+    def REMINDER_SCHEDULE_ENABLED(self) -> bool:
+        return self.reminders.schedule_enabled
+    
+    @property
+    def REMINDER_SCHEDULE_FREQUENCY(self) -> str:
+        return self.reminders.schedule_frequency
+    
+    @property
+    def REMINDER_SCHEDULE_DAY(self) -> int:
+        return self.reminders.schedule_day
+    
+    @property
+    def REMINDER_SCHEDULE_TIME(self) -> str:
+        return self.reminders.schedule_time
+    
+    @property
+    def REMINDER_SCHEDULE_TIMEZONE(self) -> str:
+        return self.reminders.schedule_timezone
+    
+    @property
+    def REMINDER_BATCH_SIZE(self) -> int:
+        return self.reminders.batch_size
+    
+    @property
+    def REMINDER_DELAY_BETWEEN_MESSAGES(self) -> int:
+        return self.reminders.delay_between_messages
     
     @property
     def database_connection_string(self) -> str:
         """Generate ODBC connection string for MS Access."""
         if not self.BDS_FILE_PATH:
-            raise ValueError("BDS_FILE_PATH must be set in environment")
+            raise ValueError("BDS_FILE_PATH must be set in configuration")
         
         return (
             f"DRIVER={{{self.ODBC_DRIVER}}};"
@@ -71,7 +207,35 @@ class Settings(BaseSettings):
         )
 
 
+def get_config_path() -> Path:
+    """Get the configuration file path in AppData."""
+    appdata = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+    config_dir = appdata / "BusyWhatsappBridge"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir / "conf.json"
+
+
+def load_settings() -> Settings:
+    """Load settings from conf.json."""
+    config_path = get_config_path()
+    
+    if config_path.exists():
+        with open(config_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return Settings(**data)
+    
+    # Return defaults if file doesn't exist
+    return Settings()
+
+
+def save_settings(settings: Settings) -> None:
+    """Save settings to conf.json."""
+    config_path = get_config_path()
+    with open(config_path, 'w', encoding='utf-8') as f:
+        json.dump(settings.model_dump(), f, indent=2)
+
+
 @lru_cache()
 def get_settings() -> Settings:
     """Get cached settings instance."""
-    return Settings()
+    return load_settings()

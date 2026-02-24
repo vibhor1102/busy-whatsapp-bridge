@@ -52,9 +52,9 @@ def check_odbc():
     except Exception as e:
         print(f"\n✗ Connection failed: {e}")
         print("\nTroubleshooting:")
-        print("1. Verify database path in .env file")
+        print("1. Verify database path in conf.json file")
         print("2. Ensure network path is accessible")
-        print("3. Try mapping network drive (e.g., F:\\) and using local path")
+        print("3. Try mapping network drive (e.g., F:\) and using local path")
         print("4. Check if 32-bit Access driver is installed")
         return False
 

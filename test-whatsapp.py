@@ -3,9 +3,9 @@
 Simple test script for WhatsApp Cloud API
 
 Setup:
-1. Fill in your META_ACCESS_TOKEN in the .env file
+1. Fill in your META_ACCESS_TOKEN in the conf.json file
 2. Update META_PHONE_NUMBER_ID with your test number ID (starts with 555)
-3. Change WHATSAPP_PROVIDER=meta in the .env file
+3. Change WHATSAPP_PROVIDER=meta in the conf.json file
 4. Run: python test-whatsapp.py
 """
 
@@ -16,25 +16,24 @@ import sys
 # Add app to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from dotenv import load_dotenv
+from app.config import get_settings
 from app.services.whatsapp import MetaProvider
 from app.models.schemas import WhatsAppMessage
-
-load_dotenv()
 
 async def send_test_message():
     """Send a test message to the specified number."""
     
     # Get settings
-    token = os.getenv("META_ACCESS_TOKEN", "")
-    phone_id = os.getenv("META_PHONE_NUMBER_ID", "")
+    settings = get_settings()
+    token = settings.META_ACCESS_TOKEN or ""
+    phone_id = settings.META_PHONE_NUMBER_ID or ""
     
     if not token or token == "YOUR_TOKEN_HERE":
-        print("[X] Error: Please set META_ACCESS_TOKEN in .env file")
+        print("[X] Error: Please set whatsapp.meta_access_token in conf.json file")
         return
     
     if not phone_id or phone_id == "555XXXXXXXXXXX":
-        print("[X] Error: Please set META_PHONE_NUMBER_ID in .env file")
+        print("[X] Error: Please set whatsapp.meta_phone_number_id in conf.json file")
         return
     
     # Test recipient

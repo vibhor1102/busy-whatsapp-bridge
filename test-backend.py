@@ -50,43 +50,46 @@ def check_dependencies():
     return True
 
 def check_environment():
-    """Check if .env file exists and is configured."""
+    """Check if conf.json file exists and is configured."""
     print_header("2. Checking Environment")
     
-    env_path = Path(".env")
-    if not env_path.exists():
-        print("  [MISSING] .env file not found")
+    from app.config import get_config_path
+    config_path = get_config_path()
+    
+    if not config_path.exists():
+        print(f"  [MISSING] conf.json not found at {config_path}")
         print("  Creating from template...")
         
-        if Path(".env.example").exists():
-            # Copy file
-            with open(".env.example", "r") as src, open(".env", "w") as dst:
-                dst.write(src.read())
-            print("  [OK] Created .env from template")
-            print("  [!] Please edit .env with your database path and credentials")
+        example = Path("conf.json.example")
+        if example.exists():
+            import shutil
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(example, config_path)
+            print(f"  [OK] Created conf.json at {config_path}")
+            print("  [!] Please edit conf.json with your database path and credentials")
         else:
-            print("  [FAIL] .env.example not found either")
+            print("  [FAIL] conf.json.example not found")
         return False
     
-    print("  [OK] .env file exists")
+    print(f"  [OK] conf.json exists at {config_path}")
     
     # Check critical config
     try:
-        from dotenv import load_dotenv
-        load_dotenv()
+        from app.config import get_settings
+        settings = get_settings()
         
-        bds_path = os.getenv("BDS_FILE_PATH")
+        bds_path = settings.BDS_FILE_PATH
         if bds_path and Path(bds_path).exists():
             print(f"  [OK] Database file found: {bds_path}")
         elif bds_path:
             print(f"  [MISSING] Database file NOT found: {bds_path}")
-            print(f"    Please update BDS_FILE_PATH in .env")
+            print(f"    Please update database.bds_file_path in conf.json")
             return False
         else:
-            print(f"  [WARN] BDS_FILE_PATH not set in .env")
+            print(f"  [WARN] BDS_FILE_PATH not set in conf.json")
             print(f"    Database tests will be skipped")
     except Exception as e:
-        print(f"  [WARN] Could not load .env: {e}")
+        print(f"  [WARN] Could not load conf.json: {e}")
     
     return True
 
@@ -130,7 +133,7 @@ def test_database():
         print(f"    Make sure:")
         print(f"    - Python is 32-bit (required for ODBC)")
         print(f"    - Microsoft Access Database Engine is installed (32-bit)")
-        print(f"    - Database path in .env is correct")
+        print(f"    - Database path in conf.json is correct")
         return False
 
 def start_server():
@@ -251,8 +254,8 @@ def main():
     
     # Check environment
     if not check_environment():
-        print("\n[WARN] Please configure .env file before continuing")
-        print("  Copy .env.example to .env and edit it")
+        print("\n[WARN] Please configure conf.json file before continuing")
+        print("  Copy conf.json.example to conf.json and edit it")
         return 1
     
     # Test database

@@ -12,7 +12,7 @@ import httpx
 import json
 import shutil
 
-from app.config import get_settings
+from app.config import get_settings, get_config_path, load_settings, save_settings, Settings
 from app.models.schemas import (
     InvoiceNotification,
     PartyDetails,
@@ -708,67 +708,75 @@ async def get_settings_endpoint():
     }
 
 
-@app.get("/api/v1/settings/env", tags=["Settings"])
-async def get_env_file():
+@app.get("/api/v1/settings/config", tags=["Settings"])
+async def get_config_file():
     """
     Get editable configuration values (safe fields only, no secrets).
     """
     return {
         "content": {
-            "WHATSAPP_PROVIDER": settings.WHATSAPP_PROVIDER,
-            "BAILEYS_SERVER_URL": settings.BAILEYS_SERVER_URL,
-            "BAILEYS_ENABLED": settings.BAILEYS_ENABLED,
-            "LOG_LEVEL": settings.LOG_LEVEL,
-            "BDS_FILE_PATH": settings.BDS_FILE_PATH,
+            "whatsapp": {
+                "provider": settings.WHATSAPP_PROVIDER,
+            },
+            "baileys": {
+                "server_url": settings.BAILEYS_SERVER_URL,
+                "enabled": settings.BAILEYS_ENABLED,
+            },
+            "logging": {
+                "level": settings.LOG_LEVEL,
+            },
+            "database": {
+                "bds_file_path": settings.BDS_FILE_PATH,
+            }
         }
     }
 
 
-class EnvUpdateRequest(BaseModel):
+class ConfigUpdateRequest(BaseModel):
     """Validatable settings update request."""
-    WHATSAPP_PROVIDER: Optional[str] = Field(None, pattern="^(baileys|meta|webhook|evolution)$")
-    BAILEYS_SERVER_URL: Optional[str] = Field(None, pattern="^https?://")
-    BAILEYS_ENABLED: Optional[bool] = None
-    LOG_LEVEL: Optional[str] = Field(None, pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
-    BDS_FILE_PATH: Optional[str] = None
+    whatsapp_provider: Optional[str] = Field(None, pattern="^(baileys|meta|webhook|evolution)$")
+    baileys_server_url: Optional[str] = Field(None, pattern="^https?://")
+    baileys_enabled: Optional[bool] = None
+    log_level: Optional[str] = Field(None, pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
+    bds_file_path: Optional[str] = None
 
 
-@app.put("/api/v1/settings/env", tags=["Settings"])
-async def update_env_file(request: EnvUpdateRequest):
+@app.put("/api/v1/settings/config", tags=["Settings"])
+async def update_config_file(request: ConfigUpdateRequest):
     """
-    Update the .env file with validated settings.
+    Update the conf.json file with validated settings.
     """
-    env_path = Path(__file__).parent.parent / ".env"
-    backup_path = Path(__file__).parent.parent / ".env.backup"
+    config_path = get_config_path()
+    backup_path = config_path.with_suffix('.json.backup')
     
     try:
-        # Read current .env content
-        current_content = {}
-        if env_path.exists():
-            with open(env_path, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#") and "=" in line:
-                        key, value = line.split("=", 1)
-                        current_content[key] = value
+        # Load current settings
+        current_settings = load_settings()
         
-        # Update only allowed fields
+        # Update fields
         update_data = request.model_dump(exclude_unset=True)
-        for key, value in update_data.items():
-            current_content[key] = str(value)
+        
+        if 'whatsapp_provider' in update_data:
+            current_settings.whatsapp.provider = update_data['whatsapp_provider']
+        if 'baileys_server_url' in update_data:
+            current_settings.baileys.server_url = update_data['baileys_server_url']
+        if 'baileys_enabled' in update_data:
+            current_settings.baileys.enabled = update_data['baileys_enabled']
+        if 'log_level' in update_data:
+            current_settings.logging.level = update_data['log_level']
+        if 'bds_file_path' in update_data:
+            current_settings.database.bds_file_path = update_data['bds_file_path']
         
         # Create backup
-        if env_path.exists():
-            shutil.copy(env_path, backup_path)
+        if config_path.exists():
+            shutil.copy(config_path, backup_path)
         
-        # Write updated content
-        with open(env_path, "w") as f:
-            for key, value in current_content.items():
-                f.write(f"{key}={value}\n")
+        # Save updated settings
+        save_settings(current_settings)
         
-        return {"success": True, "message": "Settings saved. Restart required for changes to take effect."}
+        return {"success": True, "message": "Settings saved to conf.json. Restart required for changes to take effect."}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write .env: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to write conf.json: {str(e)}")
 
 
 @app.exception_handler(Exception)

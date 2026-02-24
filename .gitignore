@@ -30,10 +30,9 @@ env.bak/
 venv.bak/
 .venv
 
-# Environment variables
-.env
-.env.local
-.env.*.local
+# Configuration files (user-specific, stored in AppData)
+# Note: conf.json is stored in %LOCALAPPDATA%\BusyWhatsappBridge\
+# and should not be committed to version control
 
 # IDE
 .vscode/

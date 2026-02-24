@@ -7,7 +7,7 @@
 
 FastAPI-based middleware integrating Busy Accounting Software with WhatsApp providers (Meta, Webhook, Baileys). Runs as a Windows Service with MS Access database connectivity.
 
-**Stack:** Python 3.9+, FastAPI, Pydantic, pyodbc, structlog, pytest, Node.js 18+ (for Baileys)
+**Stack:** Python 3.9+, FastAPI, Pydantic, pyodbc, structlog, pytest, Node.js 18+ (for Baileys), APScheduler (for reminders)
 
 ---
 
@@ -15,7 +15,7 @@ FastAPI-based middleware integrating Busy Accounting Software with WhatsApp prov
 
 **Critical:** This is a Windows environment with Git Bash (MinGW).
 
-**Paths:** Use `C:\Program Files\BusyWhatsappBridge\`. Junction exists at `C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\` (knowledge only, never use).
+**Paths:** Use `C:\Program Files\BusyWhatsappBridge\`. Config: `%LOCALAPPDATA%\BusyWhatsappBridge\conf.json`. Source junction: `C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\` (knowledge only, never use).
 
 | Do This | Not This |
 |---------|----------|
@@ -149,12 +149,11 @@ class InvoiceNotification(BaseModel):
 ### Configuration
 ```python
 class Settings(BaseSettings):
-    APP_NAME: str = "Busy Whatsapp Bridge"
-    DEBUG: bool = False
+    server: ServerSettings
+    database: DatabaseSettings
     
     class Config:
-        env_file = ".env"
-        case_sensitive = True
+        pass
 
 @lru_cache()
 def get_settings() -> Settings:
@@ -215,16 +214,16 @@ app/
 
 ---
 
-## Environment Variables
+## Configuration
 
-Key variables in `.env`:
-- `BDS_FILE_PATH` - Path to Busy .bds database file
-- `BDS_PASSWORD` - Database password
-- `WHATSAPP_PROVIDER` - Provider: baileys (default), meta, webhook, evolution
-- `META_*` - Meta Business API credentials
-- `BAILEYS_SERVER_URL` - Baileys Node.js server URL (default: http://localhost:3001)
-- `BAILEYS_ENABLED` - Enable Baileys integration (true/false)
-- `DEBUG` - Enable debug mode (True/False)
+Configuration stored in `%LOCALAPPDATA%\BusyWhatsappBridge\conf.json`:
+- `database.bds_file_path` - Path to Busy .bds database file
+- `database.bds_password` - Database password
+- `whatsapp.provider` - Provider: baileys (default), meta, webhook, evolution
+- `whatsapp.meta_*` - Meta Business API credentials
+- `baileys.server_url` - Baileys Node.js server URL (default: http://localhost:3001)
+- `baileys.enabled` - Enable Baileys integration (true/false)
+- `server.debug` - Enable debug mode (true/false)
 
 ## Baileys (WhatsApp Web)
 
