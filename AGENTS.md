@@ -15,7 +15,7 @@ FastAPI-based middleware integrating Busy Accounting Software with WhatsApp prov
 
 **Critical:** This is a Windows environment with Git Bash (MinGW).
 
-**Paths:** Use `C:\Program Files\BusyWhatsappBridge\`. Config: `%LOCALAPPDATA%\BusyWhatsappBridge\conf.json`. Source junction: `C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\` (knowledge only, never use).
+**Paths:** Working directory: `C:\Program Files\BusyWhatsappBridge\`. Config: `%LOCALAPPDATA%\BusyWhatsappBridge\`. Source junction: `C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\` (knowledge only, never use).
 
 | Do This | Not This |
 |---------|----------|
@@ -43,6 +43,21 @@ source venv/Scripts/activate  # Git Bash
 # OR
 .\venv\Scripts\activate.bat   # CMD
 ```
+
+---
+
+## Installation Structure
+
+| Location | Purpose |
+|----------|---------|
+| `C:\Program Files\BusyWhatsappBridge\` | Application code (immutable) |
+| `%LOCALAPPDATA%\BusyWhatsappBridge\` | Configuration & mutable data |
+
+**Config files in AppData:**
+- `conf.json` - Main configuration
+- `reminder_config.json` - Reminder system settings
+- `auth/` - Baileys session data
+- `data/` - SQLite databases (messages.db)
 
 ---
 
