@@ -158,12 +158,13 @@ goto :menu
 
 :logs
 echo.
-if exist "logs\service.log" (
-    echo Showing last 50 log lines...
+set "LOG_FILE=%LOCALAPPDATA%\BusyWhatsappBridge\logs\service.log"
+if exist "%LOG_FILE%" (
+    echo Showing last 50 log lines from AppData...
     echo.
-    powershell -Command "Get-Content logs\service.log -Tail 50"
+    powershell -Command "Get-Content '%LOG_FILE%' -Tail 50"
 ) else (
-    echo No log file found at logs\service.log
+    echo No log file found at %LOG_FILE%
     echo.
     echo Checking Windows Event Log...
     powershell -Command "Get-WinEvent -FilterHashtable @{LogName='Application'; ID=0} -MaxEvents 20 | Where-Object {$_.Message -like '*BusyWhatsappBridge*'} | Format-Table TimeCreated, LevelDisplayName, Message -Wrap"

@@ -404,6 +404,89 @@ async def set_active_template(template_id: str):
 
 
 # ============================================
+# Company Settings Endpoints
+# ============================================
+
+@router.get("/config/company")
+async def get_company_settings():
+    """Get company settings (name, contact phone, etc.)"""
+    try:
+        config = reminder_config_service.get_config()
+        return {
+            "name": config.company.name,
+            "contact_phone": config.company.contact_phone,
+            "address": config.company.address
+        }
+    except Exception as e:
+        logger.error("get_company_settings_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/config/company")
+async def update_company_settings(settings: dict):
+    """Update company settings"""
+    try:
+        from app.models.reminder_schemas import CompanySettings
+        
+        config = reminder_config_service.get_config()
+        config.company = CompanySettings(
+            name=settings.get("name", config.company.name),
+            contact_phone=settings.get("contact_phone", config.company.contact_phone),
+            address=settings.get("address", config.company.address)
+        )
+        reminder_config_service.save_config(config)
+        
+        logger.info("company_settings_updated", name=config.company.name)
+        return {
+            "status": "success",
+            "message": "Company settings updated",
+            "settings": {
+                "name": config.company.name,
+                "contact_phone": config.company.contact_phone,
+                "address": config.company.address
+            }
+        }
+    except Exception as e:
+        logger.error("update_company_settings_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/config/currency")
+async def get_currency_settings():
+    """Get currency settings"""
+    try:
+        config = reminder_config_service.get_config()
+        return {
+            "currency_symbol": config.currency_symbol
+        }
+    except Exception as e:
+        logger.error("get_currency_settings_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/config/currency")
+async def update_currency_settings(settings: dict):
+    """Update currency settings"""
+    try:
+        config = reminder_config_service.get_config()
+        if "currency_symbol" in settings:
+            config.currency_symbol = settings["currency_symbol"]
+        reminder_config_service.save_config(config)
+        
+        logger.info("currency_settings_updated", symbol=config.currency_symbol)
+        return {
+            "status": "success",
+            "message": "Currency settings updated",
+            "settings": {
+                "currency_symbol": config.currency_symbol
+            }
+        }
+    except Exception as e:
+        logger.error("update_currency_settings_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
 # Scheduler Control Endpoints
 # ============================================
 

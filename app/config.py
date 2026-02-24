@@ -163,7 +163,7 @@ class Settings(BaseModel):
     
     @property
     def REMINDER_CONFIG_PATH(self) -> str:
-        return "data/reminder_config.json"
+        return str(get_appdata_path() / "data" / "reminder_config.json")
     
     @property
     def REMINDER_SCHEDULE_ENABLED(self) -> bool:
@@ -207,12 +207,17 @@ class Settings(BaseModel):
         )
 
 
-def get_config_path() -> Path:
-    """Get the configuration file path in AppData."""
+def get_appdata_path() -> Path:
+    """Get the AppData base directory for Busy Whatsapp Bridge."""
     appdata = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
     config_dir = appdata / "BusyWhatsappBridge"
     config_dir.mkdir(parents=True, exist_ok=True)
-    return config_dir / "conf.json"
+    return config_dir
+
+
+def get_config_path() -> Path:
+    """Get the configuration file path in AppData."""
+    return get_appdata_path() / "conf.json"
 
 
 def load_settings() -> Settings:

@@ -53,42 +53,72 @@ source venv/Scripts/activate  # Git Bash
 | `C:\Program Files\BusyWhatsappBridge\` | Application code (immutable) |
 | `%LOCALAPPDATA%\BusyWhatsappBridge\` | Configuration & mutable data |
 
-**Config files in AppData:**
-- `conf.json` - Main configuration
-- `reminder_config.json` - Reminder system settings
-- `auth/` - Baileys session data
-- `data/` - SQLite databases (messages.db)
+**AppData Structure:**
+```
+%LOCALAPPDATA%\BusyWhatsappBridge\
+├── conf.json              # Main configuration
+├── data\
+│   ├── messages.db        # Message queue SQLite database
+│   └── reminder_config.json  # Payment reminder settings
+├── auth\
+│   └── baileys_session\   # WhatsApp Web session credentials
+└── logs\                  # Application logs
+    ├── gateway_YYYYMMDD.log
+    └── service.log
+```
+
+**Migration:** If upgrading from older versions, run `python migrate-to-appdata.py` once to migrate data from Program Files to AppData.
+
+---
+
+## Bundled Distribution (No Python Required!)
+
+This is a **portable bundled distribution** with Python and all dependencies included.
+
+**Bundled Components:**
+- `python/` - Embeddable Python 3.13 (32-bit)
+- `venv/` - Virtual environment with all dependencies pre-installed
+- `baileys-server/` - Node.js WhatsApp bridge
+
+**Management Scripts:**
+- `setup-bundled.bat` - First-time setup (creates venv, configures)
+- `manage-task.bat` - Task Scheduler menu (enable/disable auto-start)
+- `build-release.bat` - Creates distribution package
+- `Start-Gateway.bat` - Main launcher (uses bundled Python)
+
+**Auto-Start via Task Scheduler:**
+```bash
+./manage-task.bat              # Menu: enable/disable auto-start
+./Start-Gateway.bat --tray     # Manual start with tray icon
+```
 
 ---
 
 ## Build/Run/Test Commands
 
 ```bash
-# User-friendly desktop launcher (system tray - RECOMMENDED)
-./Start-Gateway.bat              # Starts tray manager + both servers
-python gateway-manager.py        # Direct Python execution
-
-**Single-Instance Protection:** `gateway-manager.py` uses Windows named mutex to prevent duplicate instances.
-
-# Development (manual)
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-cd baileys-server && npm start   # In separate terminal
-
-# Windows Service
-python app/service_wrapper.py install
-python app/service_wrapper.py start
-# Or: ./manage-service.bat
-
 # Run tests
-python tests/test_webhook.py --url http://localhost:8000
-# Or: ./run-tests.bat
+./venv/Scripts/pytest tests/ -v
+./venv/Scripts/python tests/test_webhook.py
+./venv/Scripts/python tests/test_queue.py
 
-# Run single test
-python -c "from tests.test_webhook import test_health_endpoint; test_health_endpoint()"
+# Development server
+./venv/Scripts/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-# pytest
-pytest tests/test_webhook.py::test_health_endpoint -v
-pytest --cov=app tests/
+# Task Scheduler management
+./venv/Scripts/python -m app.task_scheduler install    # Enable auto-start
+./venv/Scripts/python -m app.task_scheduler status     # Check status
+./manage-task.bat                                      # Interactive menu
+
+# Windows Service (legacy)
+./venv/Scripts/python app/service_wrapper.py install
+```
+
+**Key Files:**
+- `app/task_scheduler.py` - Task Scheduler Python wrapper
+- `manage-task.bat` - Interactive task management menu
+- `setup-bundled.bat` - First-time setup script
+- `build-release.bat` - Creates distribution package
 ```
 
 ---
@@ -321,14 +351,92 @@ Node.js bridge service (`baileys-server/`) provides WhatsApp Web integration via
 - `app/services/scheduler_service.py` - APScheduler wrapper
 - `app/services/template_service.py` - Template rendering
 - `app/services/reminder_config_service.py` - JSON config persistence
-- `data/reminder_config.json` - Party settings + templates
+- `data/reminder_config.json` - All settings, templates, party configs
 - `dashboard/src/views/Reminders.vue` - Main UI
 - `dashboard/src/components/TemplateEditor.vue` - Template management
 
 **Amount Due Formula:** `Closing Balance - Sum of Sales vouchers in last N days` (N = Master1.I2 or default 30)
+
+**Config Structure (`reminder_config.json`):**
+```json
+{
+  "version": "1.0",
+  "currency_symbol": "₹",
+  "company": {
+    "name": "Your Company Name",
+    "contact_phone": "7206366664",
+    "address": null
+  },
+  "schedule": {
+    "enabled": false,
+    "frequency": "weekly",
+    "day_of_week": 1,
+    "time": "10:00",
+    "timezone": "Asia/Kolkata",
+    "batch_size": 50,
+    "delay_between_messages": 5
+  },
+  "ledger": {
+    "date_range_days": 90,
+    "include_all_transactions": true
+  },
+  "history": {
+    "retention_days": 365
+  },
+  "limits": {
+    "max_templates": 6,
+    "max_batch_size": 500,
+    "max_delay_between_messages": 60
+  },
+  "templates": [...],
+  "active_template_id": "standard",
+  "parties": {}
+}
+```
+
+**Template Variables:** `{customer_name}`, `{company_name}`, `{amount_due}`, `{currency_symbol}`, `{credit_days}`, `{contact_phone}`, `{party_code}`, `{phone}`
+
+**API Endpoints:**
+- `GET/PUT /api/v1/reminders/config` - Full configuration
+- `GET/PUT /api/v1/reminders/config/company` - Company settings
+- `GET/PUT /api/v1/reminders/config/currency` - Currency symbol
+- `GET/PUT /api/v1/reminders/config/schedule` - Scheduler settings
+- `GET /api/v1/reminders/parties` - List eligible parties
+- `POST /api/v1/reminders/batch` - Create/send batch
+- `GET /api/v1/reminders/templates` - List templates
+- `POST /api/v1/reminders/templates` - Create template
+- `PUT/DELETE /api/v1/reminders/templates/{id}` - Update/delete template
+- `POST /api/v1/reminders/templates/{id}/active` - Set active template
+- `GET/POST /api/v1/reminders/scheduler/status` - Scheduler control
 
 **Env Variables:**
 - `REMINDER_ENABLED` - Enable system
 - `REMINDER_PROVIDER` - Only "meta" for bulk
 - `REMINDER_DEFAULT_CREDIT_DAYS` - Fallback when Master1.I2 = 0
 - `REMINDER_SCHEDULE_*` - Scheduler config
+- `BAILEYS_AUTH_DIR` - Path to Baileys session data (auto-set by run.py)
+
+---
+
+## AppData Migration
+
+**One-Time Migration:** Run `python migrate-to-appdata.py` once when upgrading from older versions:
+
+```bash
+python migrate-to-appdata.py
+```
+
+This migrates:
+- `data/messages.db` → AppData
+- `data/reminder_config.json` → AppData  
+- `baileys-server/auth/baileys_session/` → AppData
+- `logs/*` → AppData (copied, originals kept as backup)
+
+After migration completes successfully, you can delete:
+- The old directories from Program Files
+- The `migrate-to-appdata.py` script
+
+**Key Files:**
+- `migrate-to-appdata.py` - Standalone migration script (delete after use)
+- `app/config.py:get_appdata_path()` - Returns AppData base directory
+- All database/config services use AppData paths exclusively

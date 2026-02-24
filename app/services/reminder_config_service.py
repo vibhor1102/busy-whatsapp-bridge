@@ -19,6 +19,10 @@ from app.models.reminder_schemas import (
     PartyConfig,
     MessageTemplate,
     ScheduleConfig,
+    CompanySettings,
+    LedgerSettings,
+    HistorySettings,
+    LimitsConfig,
 )
 
 logger = structlog.get_logger()
@@ -54,46 +58,53 @@ class ReminderConfigService:
             DEFAULT_DELAY_BETWEEN_MESSAGES,
         )
         
+        # Templates now use {contact_phone} variable instead of hardcoded number
         default_templates = [
             MessageTemplate(
                 id="standard",
                 name="Standard Reminder",
                 description="Professional and courteous - for regular reminders",
-                content="Payment Reminder from {company_name}:\n\nDear {customer_name}, your outstanding balance is ₹{amount_due}.\n\nPlease find your ledger statement attached for reference.\n\nFor any queries regarding this statement, please call or message us at 7206366664.\n\nThank you for your business.",
+                content="Payment Reminder from {company_name}:\n\nDear {customer_name}, your outstanding balance is {currency_symbol}{amount_due}.\n\nPlease find your ledger statement attached for reference.\n\nFor any queries regarding this statement, please call or message us at {contact_phone}.\n\nThank you for your business.",
                 is_default=True
             ),
             MessageTemplate(
                 id="gentle",
                 name="Gentle Nudge",
                 description="Soft and friendly - for first reminders",
-                content="This is a gentle reminder from {company_name}.\n\nHello {customer_name}, your pending payment of ₹{amount_due} is awaiting settlement.\n\nYour complete account ledger is attached with this message.\n\nFor questions or clarifications, please contact us at 7206366664.\n\nWe appreciate your continued partnership.",
+                content="This is a gentle reminder from {company_name}.\n\nHello {customer_name}, your pending payment of {currency_symbol}{amount_due} is awaiting settlement.\n\nYour complete account ledger is attached with this message.\n\nFor questions or clarifications, please contact us at {contact_phone}.\n\nWe appreciate your continued partnership.",
                 is_default=False
             ),
             MessageTemplate(
                 id="urgent",
                 name="Urgent Notice",
                 description="Direct and urgent - for overdue accounts",
-                content="Urgent Payment Notice from {company_name}:\n\nDear {customer_name}, please note that an amount of ₹{amount_due} remains outstanding on your account.\n\nYour ledger statement is attached for your immediate review.\n\nPlease contact us at 7206366664 for any queries regarding this matter.\n\nImmediate attention requested.",
+                content="Urgent Payment Notice from {company_name}:\n\nDear {customer_name}, please note that an amount of {currency_symbol}{amount_due} remains outstanding on your account.\n\nYour ledger statement is attached for your immediate review.\n\nPlease contact us at {contact_phone} for any queries regarding this matter.\n\nImmediate attention requested.",
                 is_default=False
             ),
             MessageTemplate(
                 id="first",
                 name="First Reminder",
                 description="Friendly first contact - for initial reminders",
-                content="Friendly reminder from {company_name}:\n\nHello {customer_name}, this is to inform you that your current outstanding balance is ₹{amount_due}.\n\nPlease find your detailed ledger attached for your records.\n\nFor further enquiries, please call or message us at 7206366664.\n\nLooking forward to your prompt response.",
+                content="Friendly reminder from {company_name}:\n\nHello {customer_name}, this is to inform you that your current outstanding balance is {currency_symbol}{amount_due}.\n\nPlease find your detailed ledger attached for your records.\n\nFor further enquiries, please call or message us at {contact_phone}.\n\nLooking forward to your prompt response.",
                 is_default=False
             ),
             MessageTemplate(
                 id="final",
                 name="Final Notice",
                 description="Firm final notice - for persistent delays",
-                content="Final Payment Notice from {company_name}:\n\nDear {customer_name}, this is a final reminder regarding your outstanding amount of ₹{amount_due}.\n\nYour account ledger is attached for immediate review and action.\n\nPlease contact us urgently at 7206366664 to discuss this matter.\n\nImmediate settlement required.",
+                content="Final Payment Notice from {company_name}:\n\nDear {customer_name}, this is a final reminder regarding your outstanding amount of {currency_symbol}{amount_due}.\n\nYour account ledger is attached for immediate review and action.\n\nPlease contact us urgently at {contact_phone} to discuss this matter.\n\nImmediate settlement required.",
                 is_default=False
             ),
         ]
         
         return ReminderConfig(
             default_credit_days=DEFAULT_CREDIT_DAYS,
+            currency_symbol="₹",
+            company=CompanySettings(
+                name="Your Company Name",
+                contact_phone="",
+                address=None
+            ),
             schedule=ScheduleConfig(
                 enabled=DEFAULT_SCHEDULE_ENABLED,
                 day_of_week=DEFAULT_SCHEDULE_DAY,
@@ -103,16 +114,31 @@ class ReminderConfigService:
                 batch_size=DEFAULT_BATCH_SIZE,
                 delay_between_messages=DEFAULT_DELAY_BETWEEN_MESSAGES
             ),
+            ledger=LedgerSettings(
+                date_range_days=90,
+                include_all_transactions=True
+            ),
+            history=HistorySettings(
+                retention_days=365
+            ),
+            limits=LimitsConfig(
+                max_templates=6,
+                max_batch_size=500,
+                max_delay_between_messages=60
+            ),
             templates=default_templates,
             active_template_id=DEFAULT_TEMPLATE_ID,
             parties={}
         )
     
     def _load_config_from_file(self) -> ReminderConfig:
-        """Load configuration from JSON file"""
+        """Load configuration from JSON file with migration support"""
         try:
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+            
+            # Migrate old config format to new format
+            data = self._migrate_config(data)
             
             config = ReminderConfig(**data)
             logger.debug("config_loaded_from_file", path=str(self.config_path))
@@ -126,6 +152,101 @@ class ReminderConfigService:
             )
             # Return default config if file is corrupted
             return self._create_default_config()
+    
+    def _migrate_config(self, data: dict) -> dict:
+        """
+        Migrate old config format to new format.
+        Handles adding new fields that didn't exist in older versions.
+        """
+        migrated = False
+        
+        # Add currency_symbol if missing
+        if "currency_symbol" not in data:
+            data["currency_symbol"] = "₹"
+            migrated = True
+            logger.debug("config_migration_added_currency_symbol")
+        
+        # Add company settings if missing
+        if "company" not in data:
+            data["company"] = {
+                "name": "Your Company Name",
+                "contact_phone": "",
+                "address": None
+            }
+            migrated = True
+            logger.debug("config_migration_added_company_settings")
+        
+        # Add ledger settings if missing
+        if "ledger" not in data:
+            data["ledger"] = {
+                "date_range_days": 90,
+                "include_all_transactions": True
+            }
+            migrated = True
+            logger.debug("config_migration_added_ledger_settings")
+        
+        # Add history settings if missing
+        if "history" not in data:
+            data["history"] = {
+                "retention_days": 365
+            }
+            migrated = True
+            logger.debug("config_migration_added_history_settings")
+        
+        # Add limits settings if missing
+        if "limits" not in data:
+            data["limits"] = {
+                "max_templates": 6,
+                "max_batch_size": 500,
+                "max_delay_between_messages": 60
+            }
+            migrated = True
+            logger.debug("config_migration_added_limits_settings")
+        
+        # Migrate templates to use {contact_phone} and {currency_symbol} variables
+        # instead of hardcoded values
+        if "templates" in data:
+            for template in data["templates"]:
+                content = template.get("content", "")
+                # Replace hardcoded phone numbers with variable
+                if "7206366664" in content and "{contact_phone}" not in content:
+                    content = content.replace("7206366664", "{contact_phone}")
+                    template["content"] = content
+                    migrated = True
+                    logger.debug("config_migration_updated_template_phone", template_id=template.get("id"))
+                # Replace hardcoded currency symbol with variable  
+                if "₹{amount_due}" in content and "{currency_symbol}{amount_due}" not in content:
+                    content = content.replace("₹{amount_due}", "{currency_symbol}{amount_due}")
+                    template["content"] = content
+                    migrated = True
+                    logger.debug("config_migration_updated_template_currency", template_id=template.get("id"))
+        
+        # Update template variables list to include new variables
+        if "templates" in data:
+            for template in data["templates"]:
+                variables = template.get("variables", [])
+                if "contact_phone" not in variables:
+                    variables.append("contact_phone")
+                    migrated = True
+                if "currency_symbol" not in variables:
+                    variables.append("currency_symbol")
+                    migrated = True
+                if "party_code" not in variables:
+                    variables.append("party_code")
+                    migrated = True
+                if "phone" not in variables:
+                    variables.append("phone")
+                    migrated = True
+                template["variables"] = variables
+        
+        if migrated:
+            logger.info("config_migrated_to_new_format")
+            # Save the migrated config back to file
+            data["last_updated"] = datetime.now().isoformat()
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, default=str)
+        
+        return data
     
     def _save_config_to_file(self, config: ReminderConfig):
         """Save configuration to JSON file"""
@@ -202,9 +323,10 @@ class ReminderConfigService:
         if any(t.id == template.id for t in config.templates):
             raise ValueError(f"Template with ID '{template.id}' already exists")
         
-        # Check template limit
-        if len(config.templates) >= 6:
-            raise ValueError("Maximum number of templates (6) reached")
+        # Check template limit from config
+        max_templates = config.limits.max_templates
+        if len(config.templates) >= max_templates:
+            raise ValueError(f"Maximum number of templates ({max_templates}) reached")
         
         config.templates.append(template)
         self.save_config(config)

@@ -148,10 +148,9 @@ if exist "%CONFIG_FILE%" (
 )
 echo.
 
-:: Create logs directory
-echo [5/6] Creating log directory...
-if not exist "logs" mkdir logs
-echo      ✓ logs/ directory ready
+:: Logs directory (in AppData)
+echo [5/6] Log directory setup...
+echo      ✓ Logs will be stored in: %LOCALAPPDATA%\BusyWhatsappBridge\logs
 echo.
 
 :: Test database connectivity

@@ -52,7 +52,10 @@ TEMPLATE_VARIABLES = [
     "customer_name",
     "company_name", 
     "amount_due",
-    "credit_days"
+    "credit_days",
+    "contact_phone",
+    "party_code",
+    "phone"
 ]
 
 # Reminder Status
@@ -78,6 +81,7 @@ MESSAGE_STATUS_SENT = "sent"
 MESSAGE_STATUS_FAILED = "failed"
 
 # History Retention
+# NOTE: Now configurable in reminder_config.json under history.retention_days
 DEFAULT_HISTORY_RETENTION_DAYS = 365
 
 # Sort Options for Party List
@@ -109,6 +113,7 @@ VALID_FILTER_OPTIONS = [
 ]
 
 # Currency Formatting
+# NOTE: Now configurable in reminder_config.json - currency_symbol field
 CURRENCY_SYMBOL = "₹"
 CURRENCY_DECIMAL_PLACES = 2
 
@@ -117,5 +122,6 @@ CONFIG_VERSION = "1.0"
 CONFIG_FILE_NAME = "reminder_config.json"
 
 # Ledger PDF Settings
+# NOTE: Now configurable in reminder_config.json under ledger.*
 LEDGER_INCLUDE_ALL_TRANSACTIONS = True
 LEDGER_DATE_RANGE_DAYS = 90

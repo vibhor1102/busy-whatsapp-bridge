@@ -15,11 +15,11 @@ import structlog
 from app.constants.reminder_constants import (
     DEFAULT_CREDIT_DAYS,
     MASTER1_SALES_CREDIT_DAYS_COLUMN,
-    CURRENCY_SYMBOL,
 )
 from app.database.connection import db
 from app.models.reminder_schemas import AmountDueCalculation, PartyReminderInfo
 from app.services.ledger_data_service import ledger_data_service
+from app.services.reminder_config_service import reminder_config_service
 
 logger = structlog.get_logger()
 
@@ -29,6 +29,7 @@ class AmountDueCalculator:
     
     def __init__(self):
         self.db = db
+        self.config_service = reminder_config_service
         self.default_credit_days = DEFAULT_CREDIT_DAYS
     
     def _validate_party_code(self, party_code: str) -> int:
@@ -280,8 +281,10 @@ class AmountDueCalculator:
                     # Check if meets minimum threshold
                     if calculation.amount_due >= min_amount_due:
                         # Format amounts
-                        closing_formatted = f"{CURRENCY_SYMBOL}{calculation.closing_balance:,.2f}"
-                        amount_due_formatted = f"{CURRENCY_SYMBOL}{calculation.amount_due:,.2f}"
+                        config = self.config_service.get_config()
+                        currency = config.currency_symbol
+                        closing_formatted = f"{currency}{calculation.closing_balance:,.2f}"
+                        amount_due_formatted = f"{currency}{calculation.amount_due:,.2f}"
                         
                         party_info = PartyReminderInfo(
                             code=party_code,
@@ -329,7 +332,8 @@ class AmountDueCalculator:
     
     def format_amount(self, amount: Decimal) -> str:
         """Format amount with currency symbol"""
-        return f"{CURRENCY_SYMBOL}{amount:,.2f}"
+        config = self.config_service.get_config()
+        return f"{config.currency_symbol}{amount:,.2f}"
 
 
 # Global instance

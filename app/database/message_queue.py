@@ -14,11 +14,23 @@ import structlog
 logger = structlog.get_logger()
 
 
+def _get_default_db_path() -> Path:
+    """Get the default database path in AppData."""
+    from app.config import get_appdata_path
+    appdata = get_appdata_path()
+    data_dir = appdata / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir / "messages.db"
+
+
 class MessageQueueDB:
     """SQLite database for message queue and history."""
     
-    def __init__(self, db_path: str = "data/messages.db"):
-        self.db_path = Path(db_path)
+    def __init__(self, db_path: Optional[str] = None):
+        if db_path is None:
+            self.db_path = _get_default_db_path()
+        else:
+            self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
     

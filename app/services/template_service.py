@@ -4,14 +4,13 @@ Template Service
 Handles message template rendering and variable substitution.
 """
 import re
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import structlog
 
 from app.models.reminder_schemas import MessageTemplate
 from app.services.reminder_config_service import reminder_config_service
 from app.services.ledger_data_service import ledger_data_service
-from app.constants.reminder_constants import CURRENCY_SYMBOL
 
 logger = structlog.get_logger()
 
@@ -87,7 +86,7 @@ class TemplateService:
         self,
         party_code: str,
         amount_due: float,
-        company_name: str = None
+        company_name: Optional[str] = None
     ) -> Dict[str, str]:
         """
         Get all available variables for a party
@@ -95,30 +94,37 @@ class TemplateService:
         Args:
             party_code: Party code
             amount_due: Amount due value
-            company_name: Company name (optional, fetched if not provided)
+            company_name: Company name (optional, fetched from config if not provided)
             
         Returns:
             Dictionary of variable names and values
         """
+        # Get config for company settings and currency
+        config = self.config_service.get_config()
+        currency_symbol = config.currency_symbol
+        contact_phone = config.company.contact_phone
+        
         # Get party info
         party_info = ledger_data_service.get_customer_info(party_code)
         
-        # Get company name if not provided
+        # Get company name if not provided (from config fallback)
         if company_name is None:
             company_info = ledger_data_service.get_company_info()
-            company_name = company_info.name
+            company_name = company_info.name or config.company.name
         
         # Get credit days
         credit_days, _ = ledger_data_service.get_credit_days(party_code)
         
         # Format amount
-        amount_formatted = f"{CURRENCY_SYMBOL}{amount_due:,.2f}"
+        amount_formatted = f"{amount_due:,.2f}"
         
         return {
             "customer_name": party_info.name or party_info.print_name or "Valued Customer",
             "company_name": company_name,
             "amount_due": amount_formatted,
+            "currency_symbol": currency_symbol,
             "credit_days": str(credit_days),
+            "contact_phone": contact_phone,
             "party_code": party_code,
             "phone": party_info.phone or "",
         }
@@ -150,11 +156,14 @@ class TemplateService:
     
     def get_default_variables(self) -> Dict[str, str]:
         """Get sample variables for template preview/testing"""
+        config = self.config_service.get_config()
         return {
             "customer_name": "ABC Textiles",
-            "company_name": "Your Company Name",
-            "amount_due": f"{CURRENCY_SYMBOL}50,000.00",
+            "company_name": config.company.name,
+            "amount_due": "50,000.00",
+            "currency_symbol": config.currency_symbol,
             "credit_days": "30",
+            "contact_phone": config.company.contact_phone or "+91 98765 43210",
             "party_code": "1234",
             "phone": "+91 98765 43210",
         }

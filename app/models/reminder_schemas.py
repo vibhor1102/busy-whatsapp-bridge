@@ -113,6 +113,31 @@ class ScheduleConfig(BaseModel):
         return v
 
 
+class LedgerSettings(BaseModel):
+    """Ledger generation settings"""
+    date_range_days: int = Field(default=90, ge=30, le=365, description="Days of transaction history to include")
+    include_all_transactions: bool = Field(default=True, description="Include all transactions or only recent")
+
+
+class HistorySettings(BaseModel):
+    """Reminder history retention settings"""
+    retention_days: int = Field(default=365, ge=30, le=1825, description="Days to keep reminder history")
+
+
+class LimitsConfig(BaseModel):
+    """System limits configuration"""
+    max_templates: int = Field(default=6, ge=3, le=20, description="Maximum number of templates allowed")
+    max_batch_size: int = Field(default=500, ge=50, le=1000, description="Maximum messages per batch")
+    max_delay_between_messages: int = Field(default=60, ge=10, le=300, description="Maximum seconds between messages")
+
+
+class CompanySettings(BaseModel):
+    """Company information for reminders"""
+    name: str = Field(default="Your Company Name", description="Company name used in templates")
+    contact_phone: str = Field(default="", description="Contact phone number for customer queries")
+    address: Optional[str] = Field(None, description="Company address")
+
+
 class MessageTemplate(BaseModel):
     """Message template for reminders"""
     id: str = Field(..., description="Unique template identifier")
@@ -140,9 +165,22 @@ class ReminderConfig(BaseModel):
         description="Default credit days when Master1.I2 is 0"
     )
     default_provider: str = Field(default="meta", description="Default WhatsApp provider")
+    currency_symbol: str = Field(default="₹", description="Currency symbol for formatting")
+    
+    # Company settings
+    company: CompanySettings = Field(default_factory=lambda: CompanySettings(), description="Company information")
     
     # Scheduling
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig, description="Scheduler configuration")
+    
+    # Ledger settings
+    ledger: LedgerSettings = Field(default_factory=LedgerSettings, description="Ledger generation settings")
+    
+    # History settings
+    history: HistorySettings = Field(default_factory=HistorySettings, description="History retention settings")
+    
+    # System limits
+    limits: LimitsConfig = Field(default_factory=LimitsConfig, description="System limits")
     
     # Party overrides (only stored if different from default)
     parties: Dict[str, PartyConfig] = Field(

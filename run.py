@@ -37,8 +37,14 @@ try:
 except ImportError:
     HAS_TRAY = False
 
-LOG_DIR = Path(__file__).parent / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+def get_log_dir() -> Path:
+    """Get log directory in AppData."""
+    appdata = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+    log_dir = appdata / "BusyWhatsappBridge" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir
+
+LOG_DIR = get_log_dir()
 
 PROCESSES: Dict[str, subprocess.Popen] = {}
 SERVER_STATUS: Dict[str, Dict[str, Any]] = {
@@ -155,6 +161,14 @@ def check_prerequisites() -> bool:
     log('SYSTEM', 'All prerequisites OK', 'green')
     return True
 
+def get_baileys_auth_dir() -> str:
+    """Get Baileys auth directory in AppData."""
+    appdata = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+    auth_dir = appdata / "BusyWhatsappBridge" / "auth" / "baileys_session"
+    auth_dir.mkdir(parents=True, exist_ok=True)
+    return str(auth_dir)
+
+
 def start_baileys() -> bool:
     if SERVER_STATUS['baileys']['running']:
         log('BAILEYS', 'Already running', 'yellow')
@@ -162,6 +176,10 @@ def start_baileys() -> bool:
     
     baileys_dir = Path(__file__).parent / 'baileys-server'
     log('BAILEYS', 'Starting server...', 'cyan')
+    
+    # Set environment variables for Baileys server
+    env = os.environ.copy()
+    env['BAILEYS_AUTH_DIR'] = get_baileys_auth_dir()
     
     try:
         if CONSOLE_MODE:
@@ -171,7 +189,8 @@ def start_baileys() -> bool:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                bufsize=1
+                bufsize=1,
+                env=env
             )
         else:
             creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
@@ -181,7 +200,8 @@ def start_baileys() -> bool:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                creationflags=creationflags
+                creationflags=creationflags,
+                env=env
             )
         
         PROCESSES['baileys'] = proc
