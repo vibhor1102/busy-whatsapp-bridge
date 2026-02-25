@@ -12,6 +12,8 @@
         <router-link to="/whatsapp" class="quick-link">WhatsApp</router-link>
         <router-link to="/queue" class="quick-link">Queue</router-link>
         <router-link to="/reminders" class="quick-link">Reminders</router-link>
+        <router-link to="/logs" class="quick-link">Logs</router-link>
+        <router-link to="/system" class="quick-link">System</router-link>
         <router-link to="/settings" class="quick-link">Settings</router-link>
       </div>
     </div>

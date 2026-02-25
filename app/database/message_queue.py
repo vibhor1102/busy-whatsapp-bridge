@@ -67,6 +67,7 @@ class MessageQueueDB:
                     message TEXT NOT NULL,
                     pdf_url TEXT,
                     provider TEXT,
+                    source TEXT DEFAULT 'api',
                     status TEXT NOT NULL,
                     retry_count INTEGER DEFAULT 0,
                     error_message TEXT,
@@ -87,6 +88,7 @@ class MessageQueueDB:
                     message TEXT NOT NULL,
                     pdf_url TEXT,
                     provider TEXT,
+                    source TEXT DEFAULT 'api',
                     retry_count INTEGER,
                     final_error TEXT,
                     created_at TIMESTAMP,
@@ -110,7 +112,31 @@ class MessageQueueDB:
             """)
             
             conn.commit()
+            self._run_migrations(conn)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_history_source ON message_history(source)
+            """)
+            conn.commit()
             logger.info("message_queue_db_initialized", db_path=str(self.db_path))
+
+    def _has_column(self, conn: sqlite3.Connection, table_name: str, column_name: str) -> bool:
+        """Check whether a table has the requested column."""
+        cursor = conn.execute(f"PRAGMA table_info({table_name})")
+        columns = [row["name"] for row in cursor.fetchall()]
+        return column_name in columns
+
+    def _run_migrations(self, conn: sqlite3.Connection):
+        """Apply lightweight schema migrations for existing databases."""
+        migrated = False
+        if not self._has_column(conn, "message_history", "source"):
+            conn.execute("ALTER TABLE message_history ADD COLUMN source TEXT DEFAULT 'api'")
+            migrated = True
+        if not self._has_column(conn, "dead_letter_queue", "source"):
+            conn.execute("ALTER TABLE dead_letter_queue ADD COLUMN source TEXT DEFAULT 'api'")
+            migrated = True
+        if migrated:
+            conn.commit()
+            logger.info("message_queue_db_migrated")
     
     @contextmanager
     def _get_connection(self):
@@ -189,13 +215,15 @@ class MessageQueueDB:
                 conn.execute(
                     """
                     INSERT INTO message_history 
-                    (queue_id, phone, message, pdf_url, provider, status, 
+                    (queue_id, phone, message, pdf_url, provider, source, status, 
                      retry_count, message_id, created_at, sent_at, completed_at)
-                    VALUES (?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?, ?)
                     """,
                     (
+                        # sqlite3.Row behaves like a mapping but has no .get()
+                        # method, so use key checks explicitly.
                         queue_id, row['phone'], row['message'], row['pdf_url'],
-                        provider, row['retry_count'], message_id,
+                        provider, (row['source'] if 'source' in row.keys() else 'api'), row['retry_count'], message_id,
                         row['created_at'], now, now
                     )
                 )
@@ -246,13 +274,13 @@ class MessageQueueDB:
                 conn.execute(
                     """
                     INSERT INTO dead_letter_queue 
-                    (queue_id, phone, message, pdf_url, provider, retry_count, 
+                    (queue_id, phone, message, pdf_url, provider, source, retry_count, 
                      final_error, created_at, failed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         queue_id, msg_row['phone'], msg_row['message'],
-                        msg_row['pdf_url'], msg_row['provider'],
+                        msg_row['pdf_url'], msg_row['provider'], (msg_row['source'] if 'source' in msg_row.keys() else 'api'),
                         new_retry_count, error_message,
                         msg_row['created_at'], now
                     )
@@ -368,13 +396,13 @@ class MessageQueueDB:
                 """
                 INSERT INTO message_queue 
                 (phone, message, pdf_url, provider, status, retry_count, 
-                 next_retry_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?)
+                 next_retry_at, created_at, updated_at, source)
+                VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)
                 """,
                 (
                     row['phone'], row['message'], row['pdf_url'],
                     row['provider'], datetime.now(),
-                    row['created_at'], datetime.now()
+                    row['created_at'], datetime.now(), (row['source'] if 'source' in row.keys() else 'api')
                 )
             )
             
@@ -433,6 +461,40 @@ class MessageQueueDB:
             for row in rows:
                 if row['status'] in counts:
                     counts[row['status']] = row['count']
+            return counts
+
+    def get_message_counts_by_source(
+        self,
+        source: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        status: Optional[str] = None
+    ) -> Dict[str, int]:
+        """Get sent/failed counts from history for a specific source."""
+        query = "SELECT status, COUNT(*) as count FROM message_history WHERE source = ?"
+        params: List[Any] = [source]
+
+        if start_date:
+            query += " AND completed_at >= ?"
+            params.append(start_date)
+
+        if end_date:
+            query += " AND completed_at <= ?"
+            params.append(end_date)
+
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+
+        query += " GROUP BY status"
+
+        with self._get_connection() as conn:
+            cursor = conn.execute(query, params)
+            rows = cursor.fetchall()
+            counts = {"sent": 0, "failed": 0}
+            for row in rows:
+                if row["status"] in counts:
+                    counts[row["status"]] = row["count"]
             return counts
     
     def get_queue_stats(self) -> Dict[str, Any]:

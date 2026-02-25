@@ -21,6 +21,10 @@
       </div>
     </div>
 
+    <Message v-if="loadError" severity="warn" :closable="false" class="mb-3">
+      {{ loadError }}
+    </Message>
+
     <!-- Stats Cards -->
     <div class="stats-grid">
       <Card class="stat-card">
@@ -196,6 +200,21 @@
         </div>
       </template>
       <template #content>
+        <div v-if="loadingParties" class="empty-state">
+          <i class="pi pi-spin pi-spinner empty-icon"></i>
+          <h4>Loading Parties...</h4>
+          <p>Reading customer balances from Busy. This can take a few seconds.</p>
+        </div>
+
+        <div v-else-if="filteredParties.length === 0" class="empty-state">
+          <i class="pi pi-inbox empty-icon"></i>
+          <h4>No Eligible Parties Found</h4>
+          <p>
+            No parties currently match reminder criteria (amount due, filters, and DB data).
+            Try changing filters or refresh after verifying Busy data and credit-day rules.
+          </p>
+        </div>
+
         <div class="selection-actions mb-3">
           <Button
             label="Select All"
@@ -425,6 +444,8 @@ const toast = useToast()
 
 // State
 const loading = ref(false)
+const loadingParties = ref(false)
+const loadError = ref('')
 const parties = ref<PartyReminderInfo[]>([])
 const config = ref<ReminderConfig | null>(null)
 const templates = ref<MessageTemplate[]>([])
@@ -501,22 +522,18 @@ const filteredParties = computed(() => {
 
   // Sort
   result = [...result].sort((a, b) => {
-    let comparison = 0
     switch (sortBy.value) {
       case 'amount_due':
-        comparison = a.amount_due - b.amount_due
-        break
+        return b.amount_due - a.amount_due
       case 'name':
-        comparison = a.name.localeCompare(b.name)
-        break
+        return a.name.localeCompare(b.name)
       case 'credit_days':
-        comparison = a.sales_credit_days - b.sales_credit_days
-        break
+        return a.sales_credit_days - b.sales_credit_days
       case 'code':
-        comparison = a.code.localeCompare(b.code)
-        break
+        return a.code.localeCompare(b.code)
+      default:
+        return 0
     }
-    return comparison
   })
 
   return result
@@ -549,22 +566,78 @@ const schedulerStatusClass = computed(() => {
 // Methods
 const loadData = async () => {
   loading.value = true
+  loadError.value = ''
+
   try {
-    const [partiesData, configData, templatesData, statsData, schedulerData] = await Promise.all([
-      api.getEligibleParties(),
+    // Load lightweight metadata first to avoid stressing Access with parallel heavy scans.
+    const [configResult, templatesResult, schedulerResult] = await Promise.allSettled([
       api.getReminderConfig(),
       api.getTemplates(),
-      api.getReminderStats(),
       api.getSchedulerStatus(),
     ])
 
-    parties.value = partiesData
-    config.value = configData
-    templates.value = templatesData
-    selectedTemplateId.value = configData.active_template_id
-    stats.value = statsData
-    schedulerStatus.value = schedulerData
+    if (configResult.status === 'fulfilled') {
+      config.value = configResult.value
+      selectedTemplateId.value = configResult.value.active_template_id
+    }
+
+    if (templatesResult.status === 'fulfilled') {
+      templates.value = templatesResult.value
+      if (!selectedTemplateId.value && templatesResult.value.length > 0) {
+        selectedTemplateId.value = templatesResult.value[0].id
+      }
+    }
+
+    if (schedulerResult.status === 'fulfilled') {
+      schedulerStatus.value = schedulerResult.value
+    }
+
+    loadingParties.value = true
+    try {
+      const partiesData = await api.getEligibleParties()
+      parties.value = partiesData
+
+      if (tempSelections.value.size === 0) {
+        const preselected = partiesData.filter((p) => p.permanent_enabled).map((p) => p.code)
+        tempSelections.value = new Set(preselected)
+      }
+
+      const totalAmount = partiesData.reduce((sum, p) => sum + p.amount_due, 0)
+      const enabledCount = partiesData.filter((p) => p.permanent_enabled).length
+      stats.value = {
+        total_parties: partiesData.length,
+        eligible_parties: partiesData.length,
+        enabled_parties: enabledCount,
+        reminders_sent_today: 0,
+        reminders_sent_this_week: 0,
+        reminders_sent_this_month: 0,
+        total_amount_due: totalAmount,
+        average_amount_due: partiesData.length > 0 ? totalAmount / partiesData.length : 0,
+        last_scheduler_run: null,
+        next_scheduler_run: null,
+        scheduler_status: schedulerStatus.value?.is_running ? 'running' : 'stopped',
+      } as ReminderStats
+    } catch (error) {
+      parties.value = []
+      stats.value = {
+        total_parties: 0,
+        eligible_parties: 0,
+        enabled_parties: 0,
+        reminders_sent_today: 0,
+        reminders_sent_this_week: 0,
+        reminders_sent_this_month: 0,
+        total_amount_due: 0,
+        average_amount_due: 0,
+        last_scheduler_run: null,
+        next_scheduler_run: null,
+        scheduler_status: schedulerStatus.value?.is_running ? 'running' : 'stopped',
+      } as ReminderStats
+      loadError.value = 'Could not fetch eligible parties from Busy database. Check DB path/password and try Refresh.'
+    } finally {
+      loadingParties.value = false
+    }
   } catch (error) {
+    loadError.value = 'Failed to load reminders data. Please refresh.'
     toast.add({
       severity: 'error',
       summary: 'Error',
@@ -626,7 +699,7 @@ const updatePermanentSelection = async (partyCode: string, enabled: boolean) => 
 
   try {
     await api.updatePartyConfig(partyCode, {
-      enabled: enabled,
+      permanent_enabled: enabled,
     })
     party.permanent_enabled = enabled
     toast.add({
@@ -708,10 +781,20 @@ const sendReminders = async () => {
 
 const scheduleReminders = async () => {
   try {
+    if (!scheduleTime.value || !/^\d{2}:\d{2}$/.test(scheduleTime.value)) {
+      throw new Error('Enter schedule time in HH:MM format')
+    }
     const partyCodes = selectedParties.value.map(p => p.code)
     const scheduleDateTime = new Date(scheduleDate.value)
     const [hours, minutes] = scheduleTime.value.split(':').map(Number)
+    if (hours > 23 || minutes > 59) {
+      throw new Error('Invalid schedule time')
+    }
     scheduleDateTime.setHours(hours, minutes)
+
+    if (scheduleDateTime <= new Date()) {
+      throw new Error('Schedule time must be in the future')
+    }
     
     const result = await api.scheduleReminders(partyCodes, selectedTemplateId.value, scheduleDateTime)
     
@@ -725,10 +808,11 @@ const scheduleReminders = async () => {
     showScheduleDialog.value = false
     tempSelections.value.clear()
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to schedule reminders'
     toast.add({
       severity: 'error',
       summary: 'Error',
-      detail: 'Failed to schedule reminders',
+      detail: message,
       life: 3000,
     })
   }
@@ -823,11 +907,11 @@ const triggerManualRun = async () => {
 }
 
 const formatCurrency = (amount: number): string => {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
+  const symbol = config.value?.currency_symbol || '₹'
+  return `${symbol}${new Intl.NumberFormat('en-IN', {
     minimumFractionDigits: 2,
-  }).format(amount)
+    maximumFractionDigits: 2,
+  }).format(amount)}`
 }
 
 onMounted(() => {
@@ -997,6 +1081,31 @@ onMounted(() => {
 
 .text-muted {
   color: var(--text-color-secondary);
+}
+
+.empty-state {
+  border: 1px dashed var(--surface-border);
+  border-radius: 8px;
+  padding: 1.25rem;
+  text-align: center;
+  margin-bottom: 1rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.empty-icon {
+  font-size: 1.5rem;
+  margin-bottom: 0.5rem;
+  color: var(--text-color-secondary);
+}
+
+.empty-state h4 {
+  margin: 0 0 0.35rem;
+}
+
+.empty-state p {
+  margin: 0;
+  color: var(--text-color-secondary);
+  font-size: 0.92rem;
 }
 
 @media (max-width: 768px) {

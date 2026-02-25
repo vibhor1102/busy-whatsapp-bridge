@@ -39,6 +39,10 @@ class ReminderSchedulerService:
         except Exception as e:
             logger.warning("failed_to_read_last_run_time", error=str(e))
         return None
+
+    def get_last_run_time(self) -> Optional[datetime]:
+        """Public accessor for last scheduler run timestamp."""
+        return self._get_last_run_time()
     
     def _set_last_run_time(self, run_time: datetime):
         """Save the last run time to file."""
@@ -167,6 +171,7 @@ class ReminderSchedulerService:
                 template_id=template.id,
                 sent_by="scheduler"
             )
+            self._set_last_run_time(datetime.now())
             
             logger.info(
                 "scheduled_reminders_completed",
@@ -243,6 +248,7 @@ class ReminderSchedulerService:
                 template_id=template.id,
                 sent_by="manual"
             )
+            self._set_last_run_time(datetime.now())
             
             logger.info(
                 "manual_reminders_completed",

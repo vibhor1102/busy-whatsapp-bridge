@@ -123,7 +123,7 @@ class AmountDueCalculator:
             # Query Tran1 for sales transactions (VchType = 9)
             # Note: Sales increase Dr balance (customer owes more)
             query = """
-                SELECT SUM(IIF(t1.VchAmtBaseCur IS NULL, 0, t1.VchAmtBaseCur)), COUNT(*)
+                SELECT SUM(IIF(ISNULL(t1.VchAmtBaseCur), 0, t1.VchAmtBaseCur)), COUNT(*)
                 FROM Tran1 t1
                 INNER JOIN Tran2 t2 ON t1.VchCode = t2.VchCode
                 WHERE t2.MasterCode1 = ?
@@ -324,7 +324,7 @@ class AmountDueCalculator:
                     logger.debug("party_skipped_no_transactions", party_code=party_code)
                     continue
                 except Exception as e:
-                    logger.warning(
+                    logger.debug(
                         "error_processing_party",
                         party_code=party_code,
                         error=str(e)

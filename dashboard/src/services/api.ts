@@ -9,7 +9,6 @@ import type {
   ReminderConfig,
   ScheduleConfig,
   PartyReminderInfo,
-  PartyConfig,
   AmountDueCalculation,
   MessageTemplate,
   ReminderStats,
@@ -110,10 +109,12 @@ class ApiService {
   // Logs
   async getLogs(
     level?: string,
-    limit: number = 100
+    limit: number = 100,
+    source?: string
   ): Promise<LogEntry[]> {
     const params = new URLSearchParams()
     if (level) params.append('level', level)
+    if (source) params.append('source', source)
     params.append('limit', limit.toString())
     
     return this.fetch<{ logs: LogEntry[] }>(`/logs?${params}`)
@@ -139,19 +140,46 @@ class ApiService {
     )
   }
 
+  async startQueueWorker(): Promise<{ success: boolean; message: string; worker_running: boolean }> {
+    return this.fetch<{ success: boolean; message: string; worker_running: boolean }>(
+      '/system/queue/start',
+      { method: 'POST' }
+    )
+  }
+
+  async stopQueueWorker(): Promise<{ success: boolean; message: string; worker_running: boolean }> {
+    return this.fetch<{ success: boolean; message: string; worker_running: boolean }>(
+      '/system/queue/stop',
+      { method: 'POST' }
+    )
+  }
+
+  async processQueueNow(batchSize: number = 20): Promise<{ success: boolean; processed: number; message: string }> {
+    return this.fetch<{ success: boolean; processed: number; message: string }>(
+      `/queue/process?batch_size=${batchSize}`,
+      { method: 'POST' }
+    )
+  }
+
   // Settings
   async getSettings(): Promise<Record<string, any>> {
     return this.fetch<Record<string, any>>('/settings')
   }
 
-  async getEnvContents(): Promise<{ content: string }> {
-    return this.fetch<{ content: string }>('/settings/env')
+  async getSettingsConfig(): Promise<{ content: Record<string, any> }> {
+    return this.fetch<{ content: Record<string, any> }>('/settings/config')
   }
 
-  async updateEnv(content: string): Promise<{ success: boolean }> {
-    return this.fetch<{ success: boolean }>('/settings/env', {
+  async updateSettingsConfig(payload: {
+    whatsapp_provider?: string
+    baileys_server_url?: string
+    baileys_enabled?: boolean
+    log_level?: string
+    bds_file_path?: string
+  }): Promise<{ success: boolean; message: string }> {
+    return this.fetch<{ success: boolean; message: string }>('/settings/config', {
       method: 'PUT',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(payload),
     })
   }
 
@@ -195,7 +223,12 @@ class ApiService {
 
   async updatePartyConfig(
     partyCode: string,
-    config: Partial<PartyConfig>
+    config: {
+      permanent_enabled?: boolean
+      credit_days_override?: number
+      custom_template_id?: string
+      notes?: string
+    }
   ): Promise<{ success: boolean; party: PartyReminderInfo; message: string }> {
     return this.fetch<{ success: boolean; party: PartyReminderInfo; message: string }>(
       `/reminders/parties/${partyCode}`,

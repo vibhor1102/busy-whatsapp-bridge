@@ -5,6 +5,7 @@ Handles message queuing, processing, and retry logic.
 
 import asyncio
 import httpx
+import os
 from datetime import datetime
 from typing import Optional
 from app.database.message_queue import message_db
@@ -21,6 +22,24 @@ class MessageQueueService:
     def __init__(self):
         self._processing = False
         self._worker_task: Optional[asyncio.Task] = None
+
+    @staticmethod
+    def _is_local_file_path(value: Optional[str]) -> bool:
+        if not value:
+            return False
+        return os.path.isabs(value) or value.startswith(".\\") or value.startswith("./")
+
+    @staticmethod
+    def _cleanup_local_media(value: Optional[str]):
+        if not value:
+            return
+        if not MessageQueueService._is_local_file_path(value):
+            return
+        try:
+            if os.path.exists(value):
+                os.remove(value)
+        except Exception as e:
+            logger.warning("queue_media_cleanup_failed", path=value, error=str(e))
     
     async def enqueue_invoice_notification(
         self,
@@ -67,10 +86,19 @@ class MessageQueueService:
             provider = get_whatsapp_provider(provider_name)
             
             # Create WhatsApp message
+            media_url = pdf_url
+            if self._is_local_file_path(pdf_url) and not os.path.exists(pdf_url):
+                logger.warning(
+                    "queue_media_missing_fallback_to_text",
+                    queue_id=queue_id,
+                    media_path=pdf_url
+                )
+                media_url = None
+
             wa_message = WhatsAppMessage(
                 to=phone,
                 body=text,
-                media_url=pdf_url
+                media_url=media_url
             )
             
             # Send the message
@@ -88,6 +116,7 @@ class MessageQueueService:
                     queue_id=queue_id,
                     message_id=result.message_id
                 )
+                self._cleanup_local_media(pdf_url)
                 return True
             else:
                 # Mark as failed - will be retried

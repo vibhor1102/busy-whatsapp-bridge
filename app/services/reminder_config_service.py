@@ -99,6 +99,7 @@ class ReminderConfigService:
         
         return ReminderConfig(
             default_credit_days=DEFAULT_CREDIT_DAYS,
+            default_provider=self.settings.WHATSAPP_PROVIDER,
             currency_symbol="₹",
             company=CompanySettings(
                 name="Your Company Name",
@@ -165,6 +166,12 @@ class ReminderConfigService:
             data["currency_symbol"] = "₹"
             migrated = True
             logger.debug("config_migration_added_currency_symbol")
+
+        # Align reminder provider with configured WhatsApp provider if missing
+        if "default_provider" not in data:
+            data["default_provider"] = self.settings.WHATSAPP_PROVIDER
+            migrated = True
+            logger.debug("config_migration_added_default_provider", provider=data["default_provider"])
         
         # Add company settings if missing
         if "company" not in data:

@@ -11,8 +11,10 @@ import sys
 import httpx
 import json
 import shutil
+import re
+import uuid
 
-from app.config import get_settings, get_config_path, load_settings, save_settings, Settings
+from app.config import get_settings, get_config_path, get_local_appdata_path, load_settings, save_settings, Settings
 from app.models.schemas import (
     InvoiceNotification,
     PartyDetails,
@@ -743,6 +745,128 @@ async def stop_baileys_api():
         "success": True,
         "message": "Baileys should be stopped via the tray manager (right-click icon)"
     }
+
+
+@app.post("/api/v1/system/queue/start", tags=["System"])
+async def start_queue_worker_api():
+    """Start queue worker loop."""
+    try:
+        queue_service.start_worker()
+        return {"success": True, "message": "Queue worker started", "worker_running": queue_service.get_status().get("worker_running", False)}
+    except Exception as e:
+        logger.error("queue_worker_start_api_error", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to start queue worker: {str(e)}")
+
+
+@app.post("/api/v1/system/queue/stop", tags=["System"])
+async def stop_queue_worker_api():
+    """Stop queue worker loop."""
+    try:
+        queue_service.stop_worker()
+        return {"success": True, "message": "Queue worker stopped", "worker_running": queue_service.get_status().get("worker_running", False)}
+    except Exception as e:
+        logger.error("queue_worker_stop_api_error", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to stop queue worker: {str(e)}")
+
+
+@app.get("/api/v1/system/resources", tags=["System"])
+async def get_system_resources():
+    """Get system resource usage for dashboard diagnostics."""
+    try:
+        import psutil  # type: ignore
+
+        vm = psutil.virtual_memory()
+        disk = psutil.disk_usage(str(Path.cwd().anchor or "C:\\"))
+
+        return {
+            "cpu_percent": round(float(psutil.cpu_percent(interval=0.1)), 1),
+            "memory": {
+                "total": int(vm.total),
+                "available": int(vm.available),
+                "percent": round(float(vm.percent), 1),
+                "used": int(vm.used),
+            },
+            "disk": {
+                "total": int(disk.total),
+                "used": int(disk.used),
+                "free": int(disk.free),
+                "percent": round(float(disk.percent), 1),
+            }
+        }
+    except Exception as e:
+        logger.warning("system_resources_fallback", error=str(e))
+        return {
+            "cpu_percent": 0.0,
+            "memory": {"total": 0, "available": 0, "percent": 0.0, "used": 0},
+            "disk": {"total": 0, "used": 0, "free": 0, "percent": 0.0}
+        }
+
+
+def _detect_level(line: str) -> str:
+    match = re.search(r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b", line, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    return "INFO"
+
+
+def _detect_timestamp(line: str) -> str:
+    # 2026-02-25 20:53:12 or 2026-02-25T20:53:12
+    match = re.search(r"(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})", line)
+    if match:
+        return match.group(1).replace(" ", "T")
+    return datetime.now().isoformat()
+
+
+@app.get("/api/v1/logs", tags=["Logs"])
+async def get_logs(
+    level: Optional[str] = Query(None, description="DEBUG|INFO|WARNING|ERROR|CRITICAL"),
+    source: Optional[str] = Query(None, description="all|fastapi|baileys|system|gateway"),
+    limit: int = Query(100, ge=1, le=1000),
+):
+    """Fetch recent logs from AppData logs directory."""
+    logs_dir = get_local_appdata_path() / "logs"
+    entries = []
+    level_filter = (level or "").upper().strip()
+    source_filter = (source or "all").lower().strip()
+
+    if not logs_dir.exists():
+        return {"logs": entries}
+
+    files = sorted(logs_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if source_filter not in ("", "all"):
+        files = [f for f in files if source_filter in f.name.lower()]
+
+    for log_file in files:
+        if len(entries) >= limit:
+            break
+        try:
+            with open(log_file, "r", encoding="utf-8", errors="replace") as fh:
+                lines = fh.readlines()[-min(limit * 8, 2000):]
+        except Exception:
+            continue
+
+        source_name = log_file.stem
+        for raw_line in reversed(lines):
+            line = raw_line.strip()
+            if not line:
+                continue
+            log_level = _detect_level(line)
+            if level_filter and log_level != level_filter:
+                continue
+
+            entries.append({
+                "id": str(uuid.uuid4()),
+                "timestamp": _detect_timestamp(line),
+                "level": log_level,
+                "logger": source_name,
+                "message": line,
+                "source": source_name,
+            })
+            if len(entries) >= limit:
+                break
+
+    entries.reverse()
+    return {"logs": entries}
 
 
 @app.get("/api/v1/settings", tags=["Settings"])

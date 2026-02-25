@@ -9,7 +9,8 @@ Provides endpoints for:
 - Scheduler control
 - Statistics and history
 """
-from datetime import date
+import asyncio
+from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
@@ -132,17 +133,12 @@ async def list_eligible_parties(
 async def get_party_details(party_code: str):
     """Get detailed information for a specific party"""
     try:
-        # Keep DB load bounded even for detail lookup.
-        parties = await reminder_service.get_eligible_parties(limit=100)
-        party = next((p for p in parties if p.code == party_code), None)
-        
-        if not party:
-            raise HTTPException(status_code=404, detail=f"Party {party_code} not found")
-        
-        return party
+        return await reminder_service.get_party_info(party_code)
         
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error("get_party_error", party_code=party_code, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
@@ -243,14 +239,30 @@ async def send_reminders(request: CreateBatchRequest):
 async def schedule_reminders(request: CreateBatchRequest):
     """Schedule reminders for later delivery"""
     try:
-        # For now, we'll just send immediately
-        # In production, this would store the batch for later processing
-        batch_id = await reminder_service.send_reminders_to_parties(
-            party_codes=request.party_codes,
-            template_id=request.template_id,
-            sent_by="scheduled"
-        )
-        
+        if not request.schedule_for:
+            raise HTTPException(status_code=400, detail="schedule_for is required for scheduled reminders")
+
+        schedule_for = request.schedule_for
+        if schedule_for <= datetime.now(schedule_for.tzinfo):
+            raise HTTPException(status_code=400, detail="schedule_for must be a future datetime")
+
+        batch_id = f"scheduled-{schedule_for.strftime('%Y%m%d%H%M%S')}-{len(request.party_codes)}"
+
+        async def _delayed_send():
+            delay_seconds = max(0.0, (schedule_for - datetime.now(schedule_for.tzinfo)).total_seconds())
+            if delay_seconds > 0:
+                await asyncio.sleep(delay_seconds)
+            try:
+                await reminder_service.send_reminders_to_parties(
+                    party_codes=request.party_codes,
+                    template_id=request.template_id,
+                    sent_by="scheduled"
+                )
+            except Exception as e:
+                logger.error("scheduled_batch_execution_failed", batch_id=batch_id, error=str(e), exc_info=True)
+
+        asyncio.create_task(_delayed_send())
+
         return {
             "status": "scheduled",
             "batch_id": batch_id,

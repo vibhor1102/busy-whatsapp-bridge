@@ -10,7 +10,6 @@ Coordinates all reminder operations including:
 """
 import asyncio
 import os
-import tempfile
 import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -32,6 +31,7 @@ from app.services.template_service import template_service
 from app.services.ledger_data_service import ledger_data_service
 from app.services.ledger_pdf_service import ledger_pdf_service
 from app.database.message_queue import message_db
+from app.config import get_local_appdata_path
 from app.constants.reminder_constants import (
     REMINDER_STATUS_COMPLETED,
     REMINDER_STATUS_FAILED,
@@ -49,6 +49,8 @@ class ReminderService:
         self.calculator = amount_due_calculator
         self.config_service = reminder_config_service
         self.template_svc = template_service
+        self._ledger_dir = get_local_appdata_path() / "data" / "reminder_ledgers"
+        self._ledger_dir.mkdir(parents=True, exist_ok=True)
     
     async def get_eligible_parties(
         self,
@@ -115,6 +117,31 @@ class ReminderService:
         )
         
         return parties
+
+    async def get_party_info(self, party_code: str) -> PartyReminderInfo:
+        """Get a single party reminder info payload by party code."""
+        calculation = await self.calculator.calculate_for_party(party_code)
+        customer = ledger_data_service.get_customer_info(party_code)
+
+        config = self.config_service.get_config()
+        currency = config.currency_symbol
+        party_config = config.parties.get(party_code)
+
+        party = PartyReminderInfo(
+            code=party_code,
+            name=customer.name,
+            print_name=customer.print_name,
+            phone=customer.phone,
+            closing_balance=calculation.closing_balance,
+            closing_balance_formatted=f"{currency}{calculation.closing_balance:,.2f}",
+            amount_due=calculation.amount_due,
+            amount_due_formatted=f"{currency}{calculation.amount_due:,.2f}",
+            sales_credit_days=calculation.credit_days_used,
+            credit_days_source=calculation.credit_days_source,
+            permanent_enabled=bool(party_config.enabled) if party_config else False,
+            temp_enabled=False,
+        )
+        return party
     
     async def update_party_selection(
         self,
@@ -286,34 +313,35 @@ class ReminderService:
                     
                     # Queue message
                     if party_info.phone:
-                        # Save PDF to temp location
-                        temp_dir = tempfile.gettempdir()
-                        pdf_path = os.path.join(temp_dir, f"ledger_{party_code}_{batch_id}.pdf")
+                        provider = (config.default_provider or "baileys").lower()
+                        # Persist locally so retries still have access to media.
+                        pdf_path = str(self._ledger_dir / f"ledger_{party_code}_{batch_id}.pdf")
                         with open(pdf_path, 'wb') as f:
                             f.write(pdf_bytes)
-                        
-                        # Queue for sending
-                        try:
-                            message_db.enqueue_message(
-                                phone=party_info.phone,
-                                message=message,
-                                pdf_path=pdf_path,
-                                provider=config.default_provider,
-                                source="payment_reminder"
+
+                        # Meta requires publicly reachable URLs for media. Local file paths
+                        # are only valid for local providers like Baileys/Evolution.
+                        media_ref = pdf_path if provider in {"baileys", "evolution"} else None
+                        if media_ref is None:
+                            logger.warning(
+                                "reminder_media_not_supported_for_provider",
+                                provider=provider,
+                                party_code=party_code,
                             )
-                        finally:
-                            # Clean up temp file after queuing
-                            try:
-                                if os.path.exists(pdf_path):
-                                    os.remove(pdf_path)
-                            except Exception as cleanup_error:
-                                logger.warning("failed_to_cleanup_temp_pdf", 
-                                             path=pdf_path, error=str(cleanup_error))
+
+                        message_db.enqueue_message(
+                            phone=party_info.phone,
+                            message=message,
+                            pdf_url=media_ref,
+                            provider=provider,
+                            source="payment_reminder"
+                        )
                         
                         results[party_code] = {
                             "status": "queued",
                             "phone": party_info.phone,
-                            "amount_due": str(calculation.amount_due)
+                            "amount_due": str(calculation.amount_due),
+                            "media_attached": bool(media_ref),
                         }
                         
                         logger.info(
@@ -370,7 +398,7 @@ class ReminderService:
     async def get_stats(self) -> ReminderStats:
         """Get reminder system statistics"""
         # Get all eligible parties
-        eligible_parties = await self.get_eligible_parties(limit=100)
+        eligible_parties = await self.get_eligible_parties(limit=200)
         
         # Count enabled parties
         enabled_count = sum(1 for p in eligible_parties if p.permanent_enabled)
@@ -383,19 +411,45 @@ class ReminderService:
         from app.services.scheduler_service import scheduler_service
         scheduler_status = scheduler_service.get_status()
         
-        # TODO: Get actual reminder counts from history
-        # For now, return placeholder values
-        
+        now = datetime.now()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = today_start - timedelta(days=today_start.weekday())
+        month_start = today_start.replace(day=1)
+
+        today_counts = message_db.get_message_counts_by_source(
+            source="payment_reminder",
+            start_date=today_start,
+        )
+        week_counts = message_db.get_message_counts_by_source(
+            source="payment_reminder",
+            start_date=week_start,
+        )
+        month_counts = message_db.get_message_counts_by_source(
+            source="payment_reminder",
+            start_date=month_start,
+        )
+
+        try:
+            with self.calculator.db.get_cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) FROM Master1 WHERE MasterType = 2")
+                total_parties = int(cursor.fetchone()[0] or 0)
+        except Exception:
+            total_parties = 0
+
+        last_scheduler_run = None
+        if hasattr(scheduler_service, "get_last_run_time"):
+            last_scheduler_run = scheduler_service.get_last_run_time()
+
         return ReminderStats(
-            total_parties=0,  # TODO: Get from database
+            total_parties=total_parties,
             eligible_parties=len(eligible_parties),
             enabled_parties=enabled_count,
-            reminders_sent_today=0,  # TODO: Query from history
-            reminders_sent_this_week=0,
-            reminders_sent_this_month=0,
+            reminders_sent_today=today_counts.get("sent", 0),
+            reminders_sent_this_week=week_counts.get("sent", 0),
+            reminders_sent_this_month=month_counts.get("sent", 0),
             total_amount_due=total_due,
             average_amount_due=avg_due,
-            last_scheduler_run=None,  # TODO: Track in scheduler
+            last_scheduler_run=last_scheduler_run,
             next_scheduler_run=scheduler_status.get("next_run"),
             scheduler_status="running" if scheduler_status.get("is_running") else "stopped"
         )
