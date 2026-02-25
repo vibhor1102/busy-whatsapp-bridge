@@ -46,8 +46,9 @@ async def get_dashboard_stats():
         "system": {
             "version": settings.APP_VERSION,
             "start_time": datetime.now().isoformat(),
-            "database_connected": db_connected
+            "uptime": 0
         },
+        "database_connected": db_connected,
         "queue": queue_stats,
         "whatsapp": whatsapp_status,
         "messages": {

@@ -45,6 +45,7 @@ export interface SystemStats {
 
 export interface DashboardStats {
   system: SystemStats
+  database_connected: boolean
   queue: QueueStats
   whatsapp: BaileysStatus
   messages: {

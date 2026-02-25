@@ -345,11 +345,32 @@ app.get('/qr/page', (req, res) => {
                     console.log('SSE message:', data);
                     
                     if (data.type === 'init') {
-                        // Initial state - check if we already have a QR image
+                        // Initial state - update UI based on connection state
                         if (data.qrImage) {
                             updateQRState('qr', { qrImage: data.qrImage });
                             lastQRTime = data.qrTimestamp;
                             startStopwatch();
+                        } else if (data.status) {
+                            // Update status badge based on server state
+                            const badge = document.getElementById('status-badge');
+                            const statusEl = document.getElementById('connection-status');
+                            
+                            if (data.status.state === 'connected') {
+                                badge.textContent = 'Connected';
+                                badge.className = 'status-badge status-connected';
+                                statusEl.style.display = 'none';
+                            } else if (data.status.state === 'qr_ready') {
+                                badge.textContent = 'Waiting for Scan';
+                                badge.className = 'status-badge status-qr_ready';
+                                statusEl.textContent = 'QR code ready - scan with your phone';
+                            } else if (data.status.state === 'connecting') {
+                                badge.textContent = 'Connecting...';
+                                badge.className = 'status-badge status-qr_ready';
+                                statusEl.textContent = 'Initializing WhatsApp connection...';
+                            } else {
+                                badge.textContent = data.status.state.charAt(0).toUpperCase() + data.status.state.slice(1);
+                                statusEl.textContent = 'Waiting for connection...';
+                            }
                         }
                     } else if (data.type === 'qr') {
                         updateQRState('qr', data);

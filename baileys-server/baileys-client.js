@@ -39,6 +39,9 @@ class BaileysClient extends EventEmitter {
 
     async initialize() {
         try {
+            this.connectionState = 'connecting';
+            this.logger.info('Starting Baileys initialization...');
+            
             const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
             this.saveCreds = saveCreds;
             
