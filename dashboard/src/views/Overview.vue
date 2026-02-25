@@ -52,6 +52,7 @@
           <div class="stat-value" :class="dbStatusClass">
             {{ dbStatusText }}
           </div>
+          <small v-if="stats?.database_error" class="db-error">{{ stats.database_error }}</small>
         </template>
       </Card>
     </div>
@@ -98,8 +99,8 @@
           <div class="health-item">
             <span>Database</span>
             <Tag 
-              :value="dashboardStore.stats?.database_connected ? 'Connected' : 'Disconnected'"
-              :severity="dashboardStore.stats?.database_connected ? 'success' : 'danger'"
+              :value="dbStatusText"
+              :severity="dbTagSeverity"
             />
           </div>
         </template>
@@ -138,13 +139,20 @@ const whatsappStatusClass = computed(() => ({
 }))
 
 const dbStatusText = computed(() => {
-  return dashboardStore.stats?.database_connected ? 'Connected' : 'Disconnected'
+  if (!dashboardStore.stats) return 'Checking'
+  return dashboardStore.stats.database_connected ? 'Connected' : 'Disconnected'
 })
 
 const dbStatusClass = computed(() => ({
-  'status-connected': dashboardStore.stats?.database_connected,
-  'status-disconnected': !dashboardStore.stats?.database_connected
+  'status-connected': !!dashboardStore.stats?.database_connected,
+  'status-disconnected': !!dashboardStore.stats && !dashboardStore.stats.database_connected,
+  'status-connecting': !dashboardStore.stats
 }))
+
+const dbTagSeverity = computed(() => {
+  if (!dashboardStore.stats) return 'warning'
+  return dashboardStore.stats.database_connected ? 'success' : 'danger'
+})
 
 const formatTime = (timestamp: string) => {
   if (!timestamp) return ''
@@ -234,6 +242,15 @@ onMounted(() => {
 
 .status-disconnected {
   color: var(--red-500);
+}
+
+.db-error {
+  display: block;
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-color-secondary);
+  white-space: normal;
+  word-break: break-word;
 }
 
 .dashboard-sections {

@@ -1,7 +1,17 @@
 <template>
   <div class="app-container">
-    <AppSidebar :collapsed="sidebarCollapsed" @toggle="toggleSidebar" />
-    <div class="main-content" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+    <AppSidebar
+      :collapsed="sidebarCollapsed"
+      :mobile-open="mobileSidebarOpen"
+      @toggle="toggleSidebar"
+      @navigate="closeMobileSidebar"
+    />
+    <div
+      v-if="mobileSidebarOpen"
+      class="sidebar-overlay"
+      @click="closeMobileSidebar"
+    />
+    <div class="main-content" :class="{ 'sidebar-collapsed': sidebarCollapsed, 'mobile': isMobile }">
       <AppHeader @toggle-sidebar="toggleSidebar" />
       <main class="content-area">
         <router-view v-slot="{ Component }">
@@ -17,7 +27,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useWebSocket } from '@/composables/useWebSocket'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import AppHeader from '@/components/layout/AppHeader.vue'
@@ -25,20 +35,45 @@ import Toast from 'primevue/toast'
 import ConfirmDialog from 'primevue/confirmdialog'
 
 const sidebarCollapsed = ref(false)
+const mobileSidebarOpen = ref(false)
+const isMobile = ref(false)
 
 const toggleSidebar = () => {
+  if (isMobile.value) {
+    mobileSidebarOpen.value = !mobileSidebarOpen.value
+    return
+  }
   sidebarCollapsed.value = !sidebarCollapsed.value
+  localStorage.setItem('sidebar-collapsed', String(sidebarCollapsed.value))
+}
+
+const closeMobileSidebar = () => {
+  mobileSidebarOpen.value = false
+}
+
+const handleResize = () => {
+  isMobile.value = window.innerWidth <= 1024
+  if (!isMobile.value) {
+    mobileSidebarOpen.value = false
+  }
 }
 
 // Initialize WebSocket connection
 useWebSocket()
 
 onMounted(() => {
+  handleResize()
+  window.addEventListener('resize', handleResize)
+
   // Check for saved sidebar state
   const saved = localStorage.getItem('sidebar-collapsed')
   if (saved) {
     sidebarCollapsed.value = saved === 'true'
   }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleResize)
 })
 </script>
 
@@ -75,5 +110,22 @@ onMounted(() => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+.sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 900;
+}
+
+@media (max-width: 1024px) {
+  .main-content {
+    margin-left: 0;
+  }
+
+  .main-content.sidebar-collapsed {
+    margin-left: 0;
+  }
 }
 </style>

@@ -77,8 +77,20 @@ class ApiService {
 
   // WhatsApp
   async getBaileysStatus(): Promise<BaileysStatus> {
-    return this.fetch<{ data: BaileysStatus }>('/baileys/status')
-      .then(res => res.data)
+    return this.fetch<{ success?: boolean; data?: BaileysStatus; error?: string }>('/baileys/status')
+      .then(res => res.data || { state: 'unreachable', error: res.error || 'Baileys status unavailable' })
+  }
+
+  async getBaileysQr(): Promise<{ qrImage?: string; state?: string; user?: Record<string, any> }> {
+    return this.fetch<{ data: { qrImage?: string; state?: string; user?: Record<string, any> } }>('/baileys/qr')
+      .then(res => res.data || {})
+  }
+
+  async restartBaileys(): Promise<{ success: boolean; message: string }> {
+    return this.fetch<{ success: boolean; message: string }>(
+      '/baileys/restart',
+      { method: 'POST' }
+    )
   }
 
   async disconnectWhatsApp(): Promise<{ success: boolean; message: string }> {

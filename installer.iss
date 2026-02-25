@@ -101,14 +101,14 @@ Source: "INSTALL.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 ; Start Menu shortcuts
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--tray"
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autoprograms}\{#MyAppName}\{#MyAppName} (Console)"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autoprograms}\{#MyAppName}\Manage Auto-Start"; Filename: "{app}\manage-task.bat"
 Name: "{autoprograms}\{#MyAppName}\Configure Firewall"; Filename: "{app}\configure-firewall.bat"; Check: IsAdminInstallMode
 Name: "{autoprograms}\{#MyAppName}\User Guide"; Filename: "{app}\README.md"
 
 ; Desktop shortcut (optional, user can choose during install)
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--tray"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
 ; Post-installation: Run setup.py to configure the application
@@ -118,7 +118,7 @@ Filename: "{app}\python\python.exe"; Parameters: "{app}\setup.py --silent"; \
     StatusMsg: "Setting up Busy Whatsapp Bridge (this may take a few minutes)..."
 
 ; Launch the application after installation (optional, ask user)
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--tray"; \
+Filename: "{app}\{#MyAppExeName}"; \
     Description: "Launch Busy Whatsapp Bridge"; Flags: postinstall nowait skipifsilent unchecked
 
 ; Configure auto-start with Windows if selected

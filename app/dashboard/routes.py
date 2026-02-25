@@ -39,8 +39,8 @@ async def get_dashboard_stats():
     failed_today = today_counts['failed']
     sent_this_week = week_counts['sent']
     
-    # Check database connection
-    db_connected = db.test_connection()
+    # Check database connection with retry and explicit error context.
+    db_connected, db_error = db.test_connection_with_error()
     
     return {
         "system": {
@@ -49,6 +49,7 @@ async def get_dashboard_stats():
             "uptime": 0
         },
         "database_connected": db_connected,
+        "database_error": db_error,
         "queue": queue_stats,
         "whatsapp": whatsapp_status,
         "messages": {

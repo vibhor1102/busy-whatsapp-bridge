@@ -1,4 +1,4 @@
-import { createRouter, createWebHashHistory } from 'vue-router'
+import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
 import Overview from '@/views/Overview.vue'
 import WhatsAppManager from '@/views/WhatsAppManager.vue'
 import MessageQueue from '@/views/MessageQueue.vue'
@@ -7,7 +7,7 @@ import SystemControl from '@/views/SystemControl.vue'
 import Settings from '@/views/Settings.vue'
 import Reminders from '@/views/Reminders.vue'
 
-const routes = [
+const routes: RouteRecordRaw[] = [
   {
     path: '/',
     name: 'Overview',
@@ -51,6 +51,12 @@ const routes = [
     meta: { title: 'Settings', icon: 'pi pi-sliders-h' }
   }
 ]
+
+export const navRoutes = routes.map((route) => ({
+  path: route.path,
+  name: route.name,
+  meta: route.meta,
+}))
 
 const router = createRouter({
   history: createWebHashHistory(),

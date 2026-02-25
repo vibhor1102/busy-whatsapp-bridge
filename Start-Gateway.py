@@ -6,10 +6,8 @@ This is the primary executable entry point for the application.
 It locates the bundled Python virtual environment and runs the main application.
 
 Usage:
-    BusyWhatsappBridge.exe                    # Console mode
-    BusyWhatsappBridge.exe --tray            # System tray mode (recommended)
-    BusyWhatsappBridge.exe --headless        # Background mode
-    BusyWhatsappBridge.exe --version         # Show version
+    BusyWhatsappBridge.exe                    # Mandatory tray mode
+    BusyWhatsappBridge.exe --version          # Show version
 
 This file should be compiled to an .exe using PyInstaller for distribution.
 """
@@ -66,16 +64,16 @@ def run_setup_if_needed(program_dir: Path, silent: bool = False) -> bool:
     if not setup_script.exists():
         print("ERROR: setup.py not found!")
         return False
-    
+
     if not bundled_python.exists():
         print("ERROR: Bundled Python not found!")
         return False
-    
+
     try:
         args = [str(bundled_python), str(setup_script)]
         if silent:
             args.append("--silent")
-        
+
         result = subprocess.run(args, check=True)
         return result.returncode == 0
     except subprocess.CalledProcessError:
@@ -83,22 +81,30 @@ def run_setup_if_needed(program_dir: Path, silent: bool = False) -> bool:
         return False
 
 
+def cleanup_existing_runtime() -> None:
+    """Stop stale BusyWhatsappBridge runtime processes before startup."""
+    cleanup_cmd = (
+        "Get-CimInstance Win32_Process | "
+        "Where-Object { $_.CommandLine -match 'BusyWhatsappBridge' -and "
+        "$_.CommandLine -match 'run\\.py|baileys-server\\\\server\\.js|uvicorn app\\.main:app' } | "
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; "
+        "$ports = @(3001,8000); "
+        "foreach($port in $ports){ "
+        "Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | "
+        "Select-Object -ExpandProperty OwningProcess -Unique | "
+        "ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }"
+    )
+    subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cleanup_cmd],
+        capture_output=True,
+        text=True
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Busy Whatsapp Bridge - WhatsApp Integration for Busy Accounting",
         prog="BusyWhatsappBridge"
-    )
-    
-    parser.add_argument(
-        "--tray", "-t",
-        action="store_true",
-        help="Run in system tray mode (recommended for daily use)"
-    )
-    
-    parser.add_argument(
-        "--headless", "-H",
-        action="store_true",
-        help="Run in background without UI"
     )
     
     parser.add_argument(
@@ -172,16 +178,16 @@ def main():
     # Build command
     cmd = [str(python_exe), str(run_script)]
     
-    if args.tray:
-        cmd.append("--tray")
-    elif args.headless:
-        cmd.append("--headless")
-    
-    # Add any remaining arguments
+    # Filter out any legacy mode flags from pass-through arguments.
+    disallowed_mode_flags = {"--tray", "-t", "--headless", "-H"}
+    remaining = [arg for arg in remaining if arg not in disallowed_mode_flags]
     cmd.extend(remaining)
     
     # Run the application
     try:
+        # Ensure stale background instances don't block tray startup
+        cleanup_existing_runtime()
+
         # Change to program directory
         os.chdir(program_dir)
         

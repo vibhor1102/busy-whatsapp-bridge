@@ -7,6 +7,7 @@ const {
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const path = require('path');
+const fs = require('fs/promises');
 const EventEmitter = require('events');
 
 class BaileysClient extends EventEmitter {
@@ -33,11 +34,24 @@ class BaileysClient extends EventEmitter {
         this.maxReconnectAttempts = 10;
         this.reconnectDelay = 1000;
         this.isShuttingDown = false;
+        this.isInitializing = false;
         this.qrScanTimeout = null;
         this.lastQRReceived = null;
+        this.lastRecoveryAttempt = 0;
+        this.recoveryCooldownMs = 5000;
+        this.recoveryTimer = null;
+        this.isRestarting = false;
+        this.reconnectTimer = null;
+        this.socketGeneration = 0;
     }
 
     async initialize() {
+        if (this.isInitializing) {
+            this.logger.debug('Initialization already in progress, skipping duplicate call');
+            return;
+        }
+
+        this.isInitializing = true;
         try {
             this.connectionState = 'connecting';
             this.logger.info('Starting Baileys initialization...');
@@ -48,7 +62,16 @@ class BaileysClient extends EventEmitter {
             // Fetch latest WhatsApp web version
             const { version, isLatest } = await fetchLatestBaileysVersion();
             this.logger.info({ version, isLatest }, 'Fetched latest Baileys version');
-            
+
+            // Ensure only one active socket exists before creating a new one.
+            if (this.socket?.ws && typeof this.socket.ws.close === 'function') {
+                try {
+                    this.socket.ws.close();
+                } catch (error) {
+                    this.logger.debug({ error: error.message }, 'Failed to close previous socket');
+                }
+            }
+
             this.socket = makeWASocket({
                 version,
                 auth: state,
@@ -62,16 +85,45 @@ class BaileysClient extends EventEmitter {
                 defaultQueryTimeoutMs: 60000
             });
 
-            this.setupEventHandlers();
+            this.socketGeneration += 1;
+            this.setupEventHandlers(this.socketGeneration);
             this.logger.info('Baileys client initialized');
         } catch (error) {
             this.logger.error({ error: error.message }, 'Failed to initialize Baileys client');
             throw error;
+        } finally {
+            this.isInitializing = false;
         }
     }
 
-    setupEventHandlers() {
+    cancelReconnectTimer() {
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+    }
+
+    scheduleReconnect(delay) {
+        if (this.isShuttingDown || this.isRestarting) {
+            return;
+        }
+        this.cancelReconnectTimer();
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            if (this.isShuttingDown || this.isRestarting || this.connectionState === 'connected') {
+                return;
+            }
+            this.initialize().catch((error) => {
+                this.logger.error({ error: error.message }, 'Reconnect initialize failed');
+            });
+        }, delay);
+    }
+
+    setupEventHandlers(generation) {
         this.socket.ev.on('connection.update', async (update) => {
+            if (generation !== this.socketGeneration) {
+                return;
+            }
             const { connection, lastDisconnect, qr } = update;
 
             this.logger.debug({ connection, hasQR: !!qr, lastDisconnect }, 'Connection update received');
@@ -142,14 +194,17 @@ class BaileysClient extends EventEmitter {
                     );
                     
                     this.emit('reconnecting', { attempt: this.reconnectAttempts, delay });
-                    
-                    setTimeout(() => {
-                        this.initialize();
-                    }, delay);
+                    this.scheduleReconnect(delay);
                 } else if (statusCode === DisconnectReason.loggedOut) {
-                    this.logger.error('Device logged out. Session invalid. Please scan QR again.');
+                    if (this.isRestarting || errorMessage === 'Intentional Logout') {
+                        this.logger.info('Logged out during intentional restart/logout flow');
+                        return;
+                    }
+                    this.logger.error('Device logged out. Session invalid. Resetting session and preparing fresh QR.');
                     this.qrCode = null;
+                    this.connectionState = 'logged_out';
                     this.emit('logout');
+                    this.scheduleSessionRecovery('logged_out');
                 } else {
                     this.logger.error('Max reconnection attempts reached');
                     this.emit('max_reconnect_reached');
@@ -165,6 +220,8 @@ class BaileysClient extends EventEmitter {
                 this.connectionState = 'connected';
                 this.qrCode = null;
                 this.reconnectAttempts = 0;
+                this.cancelSessionRecovery();
+                this.cancelReconnectTimer();
                 
                 const user = this.socket.user;
                 this.logger.info(
@@ -177,6 +234,9 @@ class BaileysClient extends EventEmitter {
         });
 
         this.socket.ev.on('creds.update', () => {
+            if (generation !== this.socketGeneration) {
+                return;
+            }
             if (this.saveCreds) {
                 this.saveCreds();
                 this.logger.debug('Credentials updated and saved');
@@ -184,6 +244,9 @@ class BaileysClient extends EventEmitter {
         });
 
         this.socket.ev.on('messages.upsert', ({ messages, type }) => {
+            if (generation !== this.socketGeneration) {
+                return;
+            }
             if (type === 'notify') {
                 messages.forEach(msg => {
                     if (!msg.key.fromMe) {
@@ -207,6 +270,78 @@ class BaileysClient extends EventEmitter {
             user: this.socket?.user || null,
             reconnectAttempts: this.reconnectAttempts
         };
+    }
+
+    async clearAuthState() {
+        try {
+            await fs.rm(this.authDir, { recursive: true, force: true });
+            await fs.mkdir(this.authDir, { recursive: true });
+            this.logger.info({ authDir: this.authDir }, 'Cleared stale auth state');
+        } catch (error) {
+            this.logger.warn({ error: error.message }, 'Failed to clear auth state');
+        }
+    }
+
+    cancelSessionRecovery() {
+        if (this.recoveryTimer) {
+            clearTimeout(this.recoveryTimer);
+            this.recoveryTimer = null;
+        }
+    }
+
+    scheduleSessionRecovery(reason = 'unknown') {
+        if (this.isShuttingDown) {
+            return;
+        }
+        const now = Date.now();
+        if (now - this.lastRecoveryAttempt < this.recoveryCooldownMs) {
+            this.logger.debug({ reason }, 'Session recovery throttled');
+            return;
+        }
+
+        this.lastRecoveryAttempt = now;
+        this.cancelSessionRecovery();
+        this.emit('reconnecting', { attempt: this.reconnectAttempts + 1, delay: 1500, reason });
+
+        this.recoveryTimer = setTimeout(async () => {
+            this.recoveryTimer = null;
+            if (this.isShuttingDown || this.isInitializing || this.isRestarting) {
+                return;
+            }
+            if (!['logged_out', 'disconnected'].includes(this.connectionState)) {
+                this.logger.info({ state: this.connectionState }, 'Skipping session recovery because state changed');
+                return;
+            }
+            try {
+                await this.clearAuthState();
+                await this.initialize();
+            } catch (error) {
+                this.logger.error({ error: error.message }, 'Session recovery failed');
+            }
+        }, 1500);
+    }
+
+    async ensureQrAvailable() {
+        if (this.connectionState === 'connected') {
+            return { state: this.connectionState, qrAvailable: false };
+        }
+
+        const qr = this.getQRCode();
+        if (qr && !qr.isExpired) {
+            return { state: this.connectionState, qrAvailable: true };
+        }
+
+        if (this.connectionState === 'logged_out' || this.connectionState === 'disconnected') {
+            this.scheduleSessionRecovery('qr_requested');
+        } else if (!this.isInitializing && this.connectionState !== 'connecting') {
+            // Defensive re-init for unexpected stale states.
+            this.logger.info({ state: this.connectionState }, 'No QR available; reinitializing');
+            this.initialize().catch((error) => {
+                this.logger.error({ error: error.message }, 'Failed to reinitialize while ensuring QR');
+            });
+        }
+
+        return { state: this.connectionState, qrAvailable: false };
     }
 
     getQRCode() {
@@ -310,15 +445,25 @@ class BaileysClient extends EventEmitter {
         return cleaned + '@s.whatsapp.net';
     }
 
-    async disconnect() {
-        this.isShuttingDown = true;
+    async disconnect(forRestart = false) {
+        this.isShuttingDown = !forRestart;
+        this.isRestarting = forRestart;
+        this.cancelSessionRecovery();
+        this.cancelReconnectTimer();
         
         if (this.socket) {
             try {
-                await this.socket.end();
+                if (!forRestart && typeof this.socket.logout === 'function') {
+                    await this.socket.logout();
+                }
+                if (this.socket.ws && typeof this.socket.ws.close === 'function') {
+                    this.socket.ws.close();
+                }
                 this.logger.info('Disconnected from WhatsApp');
             } catch (error) {
                 this.logger.error({ error: error.message }, 'Error during disconnect');
+            } finally {
+                this.socket = null;
             }
         }
         
@@ -327,13 +472,16 @@ class BaileysClient extends EventEmitter {
     }
 
     async restart() {
-        this.isShuttingDown = false;
-        await this.disconnect();
-        
-        this.reconnectAttempts = 0;
-        await this.initialize();
-        
-        this.logger.info('Baileys client restarted');
+        try {
+            await this.disconnect(true);
+            this.reconnectAttempts = 0;
+            this.isShuttingDown = false;
+            this.connectionState = 'disconnected';
+            await this.initialize();
+            this.logger.info('Baileys client restarted');
+        } finally {
+            this.isRestarting = false;
+        }
     }
 }
 

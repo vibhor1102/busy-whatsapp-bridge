@@ -107,7 +107,7 @@ IF %ERRORLEVEL% NEQ 0 (
     echo.
     echo Trying alternative start method...
     echo.
-    start "Busy Whatsapp Bridge" "%~dp0Start-Gateway.py" --tray
+    start "Busy Whatsapp Bridge" "%~dp0Start-Gateway.py"
     echo Started! The tray icon should appear in a few seconds.
 )
 echo.

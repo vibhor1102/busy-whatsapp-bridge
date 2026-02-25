@@ -459,7 +459,7 @@ class MessageQueueDB:
             # Today's sent
             today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             cursor = conn.execute(
-                "SELECT COUNT(*) FROM message_history WHERE completed_at >= ?",
+                "SELECT COUNT(*) FROM message_history WHERE completed_at >= ? AND status = 'sent'",
                 (today,)
             )
             sent_today = cursor.fetchone()[0]

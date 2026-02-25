@@ -1,6 +1,7 @@
 import structlog
 import re
 from typing import Optional, Tuple
+from app.config import get_settings
 from app.database.connection import db
 from app.models.schemas import (
     InvoiceNotification, 
@@ -18,6 +19,7 @@ class BusyHandler:
     """Handler for Busy Accounting webhook notifications."""
     
     def __init__(self):
+        self.settings = get_settings()
         self.whatsapp_provider = get_whatsapp_provider()
     
     def _extract_pdf_url(self, msg: str, pdf_url: Optional[str]) -> Tuple[str, Optional[str]]:
@@ -110,7 +112,7 @@ class BusyHandler:
                 phone=notification.phone,
                 message=enhanced_message,
                 pdf_url=extracted_pdf_url,
-                provider="baileys",
+                provider=self.settings.WHATSAPP_PROVIDER,
                 source="busy"
             )
             

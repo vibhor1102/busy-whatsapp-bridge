@@ -15,7 +15,7 @@ export const useSystemStore = defineStore('system', () => {
   )
   
   const isBaileysRunning = computed(() =>
-    processes.value.some(p => p.name === 'baileys' && p.running)
+    baileysStatus.value !== null && baileysStatus.value.state !== 'unreachable'
   )
 
   // Actions

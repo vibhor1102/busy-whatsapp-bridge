@@ -46,6 +46,8 @@ class LedgerDataService:
     
     def __init__(self):
         self.db = db
+        self._financial_year_cache: Optional[FinancialYearInfo] = None
+        self._company_info_cache: Optional[CompanyInfo] = None
     
     def _validate_party_code(self, party_code: str) -> int:
         """
@@ -105,12 +107,14 @@ class LedgerDataService:
             return str(start_date.year)
         return f"{start_date.year}-{str(end_date.year)[-2:]}"
     
-    def get_financial_year(self) -> FinancialYearInfo:
+    def get_financial_year(self, force_refresh: bool = False) -> FinancialYearInfo:
         """
         Fetch financial year from Config table.
         
         Returns configured FY dates or auto-detects from transaction dates.
         """
+        if self._financial_year_cache and not force_refresh:
+            return self._financial_year_cache
         try:
             query = f"""
                 SELECT C1, C2, C3 
@@ -134,19 +138,25 @@ class LedgerDataService:
                         year_name=year_name
                     )
                     
-                    return FinancialYearInfo(
+                    info = FinancialYearInfo(
                         start_date=start_date,
                         end_date=end_date,
                         year_name=year_name
                     )
+                    self._financial_year_cache = info
+                    return info
                 
                 # Config is empty - try to auto-detect from transaction dates
                 logger.warning("financial_year_empty_in_db", rec_type=ConfigRecType.FINANCIAL_YEAR)
-                return self._auto_detect_financial_year()
+                info = self._auto_detect_financial_year()
+                self._financial_year_cache = info
+                return info
                 
         except Exception as e:
             logger.error("get_financial_year_error", error=str(e))
-            return self._auto_detect_financial_year()
+            info = self._auto_detect_financial_year()
+            self._financial_year_cache = info
+            return info
     
     def _auto_detect_financial_year(self) -> FinancialYearInfo:
         """
@@ -217,12 +227,14 @@ class LedgerDataService:
             year_name=year_name
         )
     
-    def get_company_info(self) -> CompanyInfo:
+    def get_company_info(self, force_refresh: bool = False) -> CompanyInfo:
         """
         Fetch company info from Config table.
         
         Returns minimal info if Config table is empty.
         """
+        if self._company_info_cache and not force_refresh:
+            return self._company_info_cache
         try:
             query = f"""
                 SELECT C1, C2, C3, C4, C5, C6 
@@ -235,7 +247,7 @@ class LedgerDataService:
                 row = cursor.fetchone()
                 
                 if row and row[0]:
-                    return CompanyInfo(
+                    info = CompanyInfo(
                         name=row[0],
                         address_line1=row[1],
                         address_line2=row[2],
@@ -243,13 +255,19 @@ class LedgerDataService:
                         address_line4=row[4],
                         gst_no=row[5]
                     )
+                    self._company_info_cache = info
+                    return info
                 else:
                     logger.warning("company_info_empty_in_db", rec_type=ConfigRecType.COMPANY_INFO)
-                    return CompanyInfo(name="Company")
+                    info = CompanyInfo(name="Company")
+                    self._company_info_cache = info
+                    return info
                     
         except Exception as e:
             logger.error("get_company_info_error", error=str(e))
-            return CompanyInfo(name="Company")
+            info = CompanyInfo(name="Company")
+            self._company_info_cache = info
+            return info
     
     def get_customer_info(self, party_code: str) -> CustomerInfo:
         """

@@ -1,5 +1,5 @@
 <template>
-  <aside class="sidebar" :class="{ collapsed: collapsed }">
+  <aside class="sidebar" :class="{ collapsed: collapsed, 'mobile-open': mobileOpen }">
     <div class="sidebar-header">
       <div class="logo">
         <i class="pi pi-whatsapp"></i>
@@ -18,7 +18,8 @@
         :key="route.path"
         :to="route.path"
         class="nav-item"
-        :class="{ active: $route.path === route.path }"
+        :class="{ active: isActiveRoute(route.path) }"
+        @click="$emit('navigate')"
       >
         <i :class="route.meta?.icon"></i>
         <span v-if="!collapsed" class="nav-text">{{ route.meta?.title }}</span>
@@ -50,19 +51,24 @@ import { useDashboardStore } from '@/stores/dashboard'
 import { useQueueStore } from '@/stores/queue'
 import Button from 'primevue/button'
 import Badge from 'primevue/badge'
-import routes from '@/router'
+import { navRoutes } from '@/router'
 
 const props = defineProps<{
   collapsed: boolean
+  mobileOpen: boolean
 }>()
 
 defineEmits<{
   toggle: []
+  navigate: []
 }>()
 
 const route = useRoute()
 const dashboardStore = useDashboardStore()
 const queueStore = useQueueStore()
+const routes = navRoutes
+
+const isActiveRoute = (path: string) => route.path === path
 
 const stats = computed(() => dashboardStore.stats)
 </script>
@@ -184,5 +190,21 @@ const stats = computed(() => dashboardStore.stats)
 .version {
   color: var(--text-color-secondary);
   font-size: 0.75rem;
+}
+
+@media (max-width: 1024px) {
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    width: 260px;
+  }
+
+  .sidebar.mobile-open {
+    transform: translateX(0);
+  }
+
+  .sidebar.collapsed {
+    width: 260px;
+  }
 }
 </style>

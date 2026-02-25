@@ -3,11 +3,9 @@
 Busy Whatsapp Bridge - Unified Runner
 ======================================
 
-The main entry point for the bridge. Supports multiple modes:
+The main entry point for the bridge.
 
-  python run.py           # Console mode (visible logs, all servers)
-  python run.py --tray    # System tray mode (hidden console, tray icon)
-  python run.py --headless # Background mode (no UI, logs to file)
+  python run.py           # Mandatory tray mode (default and only runtime mode)
 
 Features:
   - Real-time log visibility from all servers
@@ -22,13 +20,13 @@ import os
 import time
 import threading
 import signal
-import argparse
 import ctypes
+import getpass
+import re
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
 import queue
-import select
 
 try:
     import pystray
@@ -38,11 +36,18 @@ except ImportError:
     HAS_TRAY = False
 
 def get_log_dir() -> Path:
-    """Get log directory in install directory (overwritten on updates)."""
-    install_dir = Path(__file__).parent.absolute()
-    log_dir = install_dir / "logs"
+    """Get log directory in LocalAppData so Program Files installs remain writable."""
+    appdata = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+    log_dir = appdata / "BusyWhatsappBridge" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
+
+def get_config_file_path() -> Path:
+    """Get conf.json path in LocalAppData without importing app.config."""
+    appdata = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+    base_dir = appdata / "BusyWhatsappBridge"
+    base_dir.mkdir(parents=True, exist_ok=True)
+    return base_dir / "conf.json"
 
 LOG_DIR = get_log_dir()
 
@@ -52,9 +57,11 @@ SERVER_STATUS: Dict[str, Dict[str, Any]] = {
     'fastapi': {'running': False, 'pid': None, 'started': None}
 }
 SHUTDOWN_EVENT = threading.Event()
-TRAY_ICON: Optional[pystray.Icon] = None
+TRAY_ICON: Optional[Any] = None
+INSTANCE_MUTEX_HANDLE = None
 LOG_QUEUE: queue.Queue = queue.Queue()
 CONSOLE_MODE = True
+LAST_SIGINT_TS: Optional[float] = None
 
 ANSI_COLORS = {
     'reset': '\033[0m',
@@ -80,14 +87,17 @@ def timestamp() -> str:
 def log(prefix: str, message: str, color: str = 'white'):
     line = f"[{timestamp()}] [{prefix}] {message}"
     if CONSOLE_MODE:
-        print(f"{colorize(f'[{timestamp()}]', 'dim')} {colorize(f'[{prefix}]', color)} {message}")
+        print(
+            f"{colorize(f'[{timestamp()}]', 'dim')} {colorize(f'[{prefix}]', color)} {message}",
+            flush=True
+        )
     LOG_QUEUE.put(line)
 
 def log_raw(server: str, line: str):
     if CONSOLE_MODE:
         color = 'cyan' if server == 'baileys' else 'magenta'
         prefix = colorize(f"[{server}]", color)
-        print(f"{colorize(f'[{timestamp()}]', 'dim')} {prefix} {line.rstrip()}")
+        print(f"{colorize(f'[{timestamp()}]', 'dim')} {prefix} {line.rstrip()}", flush=True)
     LOG_QUEUE.put(f"[{timestamp()}] [{server}] {line.rstrip()}")
 
 def write_to_log_file():
@@ -146,9 +156,8 @@ def check_prerequisites() -> bool:
             return False
         log('SYSTEM', 'Baileys dependencies installed', 'green')
     
-    # Check for conf.json in AppData
-    from app.config import get_config_path
-    config_file = get_config_path()
+    # Check for conf.json in AppData without importing full app config in startup thread.
+    config_file = get_config_file_path()
     if not config_file.exists():
         example = Path(__file__).parent / 'conf.json.example'
         if example.exists():
@@ -169,9 +178,47 @@ def get_baileys_auth_dir() -> str:
     return str(auth_dir)
 
 
+def get_listening_pid(port: int) -> Optional[int]:
+    """Best-effort PID lookup for a listening TCP port on Windows."""
+    if sys.platform != 'win32':
+        return None
+    try:
+        result = subprocess.run(
+            ['netstat', '-ano', '-p', 'tcp'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        pattern = re.compile(rf'^\s*TCP\s+\S*:{port}\s+\S+\s+LISTENING\s+(\d+)\s*$')
+        for line in result.stdout.splitlines():
+            match = pattern.match(line)
+            if match:
+                return int(match.group(1))
+    except Exception:
+        pass
+    return None
+
+
+def is_http_server_ready(url: str, timeout: float = 2.0) -> bool:
+    """Check whether an HTTP endpoint responds successfully."""
+    try:
+        import httpx
+        response = httpx.get(url, timeout=timeout)
+        return response.status_code < 500
+    except Exception:
+        return False
+
+
 def start_baileys() -> bool:
     if SERVER_STATUS['baileys']['running']:
         log('BAILEYS', 'Already running', 'yellow')
+        return True
+
+    if is_http_server_ready('http://localhost:3001/status'):
+        existing_pid = get_listening_pid(3001)
+        SERVER_STATUS['baileys'] = {'running': True, 'pid': existing_pid, 'started': None}
+        log('BAILEYS', f'Using existing server on port 3001 (PID: {existing_pid})', 'green')
+        update_tray()
         return True
     
     baileys_dir = Path(__file__).parent / 'baileys-server'
@@ -221,6 +268,13 @@ def start_baileys() -> bool:
 def start_fastapi() -> bool:
     if SERVER_STATUS['fastapi']['running']:
         log('FASTAPI', 'Already running', 'yellow')
+        return True
+
+    if is_http_server_ready('http://localhost:8000/api/v1/health'):
+        existing_pid = get_listening_pid(8000)
+        SERVER_STATUS['fastapi'] = {'running': True, 'pid': existing_pid, 'started': None}
+        log('FASTAPI', f'Using existing server on port 8000 (PID: {existing_pid})', 'green')
+        update_tray()
         return True
     
     log('FASTAPI', 'Starting server...', 'magenta')
@@ -299,6 +353,21 @@ def stop_all():
     stop_server('baileys')
     stop_server('fastapi')
     log('SYSTEM', 'All servers stopped', 'green')
+
+
+def should_shutdown_on_interrupt() -> bool:
+    """
+    Require double Ctrl+C within 2 seconds to avoid accidental shutdowns
+    while copying terminal text in dev console mode.
+    """
+    global LAST_SIGINT_TS
+    now = time.time()
+    if LAST_SIGINT_TS and (now - LAST_SIGINT_TS) <= 2.0:
+        LAST_SIGINT_TS = None
+        return True
+    LAST_SIGINT_TS = now
+    log('SYSTEM', 'Press Ctrl+C again within 2 seconds to stop servers', 'yellow')
+    return False
 
 def wait_for_server(url: str, name: str, timeout: int = 30) -> bool:
     import httpx
@@ -384,7 +453,7 @@ def create_tray_menu():
     return pystray.Menu(
         pystray.MenuItem("Open Dashboard", lambda: open_url('http://localhost:8000/dashboard'), default=True),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Open QR Page", lambda: open_url('http://localhost:3001/qr/page')),
+        pystray.MenuItem("Open WhatsApp Page", lambda: open_url('http://localhost:8000/dashboard#/whatsapp')),
         pystray.MenuItem("Open API Docs", lambda: open_url('http://localhost:8000/docs')),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(
@@ -413,7 +482,7 @@ def show_status():
         pid = f" (PID: {status['pid']})" if status['pid'] else ""
         print(f"  {name.title()}: {state}{pid}")
     print("\n  Dashboard: http://localhost:8000/dashboard")
-    print("  QR Code:   http://localhost:3001/qr/page")
+    print("  WhatsApp:  http://localhost:8000/dashboard#/whatsapp")
     print("  API Docs:  http://localhost:8000/docs")
     print("="*60 + "\n")
 
@@ -423,20 +492,25 @@ def stop_tray():
         TRAY_ICON.stop()
 
 def ensure_single_instance() -> bool:
+    global INSTANCE_MUTEX_HANDLE
     if sys.platform != 'win32':
         return True
     
     try:
         kernel32 = ctypes.windll.kernel32
-        mutex = kernel32.CreateMutexW(None, False, "Global\\BusyWhatsappBridge_Instance")
+        user = "".join(c if c.isalnum() else "_" for c in getpass.getuser().lower())
+        session = "".join(c if c.isalnum() else "_" for c in os.environ.get("SESSIONNAME", "console").lower())
+        mutex_name = f"Local\\BusyWhatsappBridge_{user}_{session}"
+        mutex = kernel32.CreateMutexW(None, False, mutex_name)
+        INSTANCE_MUTEX_HANDLE = mutex
         if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
             kernel32.CloseHandle(mutex)
             print("\n" + "="*60)
             print("  BUSY WHATSAPP BRIDGE - ALREADY RUNNING")
             print("="*60)
-            print("\n  Check system tray for the green WhatsApp icon.")
-            print("  Right-click to access controls.\n")
-            input("Press Enter to close this window...")
+            print("\n  Another instance is already running in this user session.")
+            print("  If tray icon is hidden, check notification overflow.")
+            print(f"  Logs: {LOG_DIR}\n")
             return False
         return True
     except:
@@ -475,9 +549,10 @@ def run_console_mode():
     log('SYSTEM', 'Press Ctrl+C to stop all servers', 'yellow')
     
     def signal_handler(sig, frame):
-        print()
-        stop_all()
-        sys.exit(0)
+        if should_shutdown_on_interrupt():
+            print()
+            stop_all()
+            sys.exit(0)
     
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -492,33 +567,68 @@ def run_console_mode():
 
 def run_tray_mode():
     global CONSOLE_MODE, TRAY_ICON
-    CONSOLE_MODE = False
+    CONSOLE_MODE = os.environ.get('BWB_DEV_CONSOLE_LOGS', '').strip().lower() in {'1', 'true', 'yes', 'on'}
     
     if not HAS_TRAY:
         print("ERROR: pystray not installed. Run: pip install pystray pillow")
         return 1
     
-    if not check_prerequisites():
-        return 1
-    
-    threading.Thread(target=write_to_log_file, daemon=True).start()
-    
-    start_baileys()
-    time.sleep(2)
-    start_fastapi()
-    
     TRAY_ICON = pystray.Icon(
         "busy-whatsapp-bridge",
-        create_tray_icon(),
-        "Busy Whatsapp Bridge",
+        create_partial_icon(),
+        "Busy Whatsapp Bridge - Starting",
         create_tray_menu()
     )
     
+    def startup_sequence():
+        try:
+            threading.Thread(target=write_to_log_file, daemon=True).start()
+            log('TRAY', 'Tray mode startup initiated', 'yellow')
+
+            if not check_prerequisites():
+                log('TRAY', 'Startup failed prerequisites check', 'red')
+                update_tray()
+                return
+
+            start_baileys()
+            time.sleep(2)
+            start_fastapi()
+            update_tray()
+            log('TRAY', 'Tray mode ready', 'green')
+        except Exception as e:
+            import traceback
+            log('TRAY', f'Startup thread crashed: {e}', 'red')
+            log('TRAY', traceback.format_exc(), 'red')
+            update_tray()
+
     def on_exit():
         stop_all()
+
+    def signal_handler(sig, frame):
+        if not should_shutdown_on_interrupt():
+            return
+        log('SYSTEM', 'Interrupt received, shutting down...', 'yellow')
+        stop_all()
+        if TRAY_ICON:
+            try:
+                TRAY_ICON.stop()
+            except Exception:
+                pass
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     
     TRAY_ICON.on_exit = on_exit
-    TRAY_ICON.run()
+    threading.Thread(target=startup_sequence, daemon=True).start()
+
+    try:
+        TRAY_ICON.run()
+    except KeyboardInterrupt:
+        signal_handler(signal.SIGINT, None)
+        return 0
+    except Exception as e:
+        print(f"ERROR: Tray icon failed to start: {e}")
+        return 1
     
     return 0
 
@@ -537,36 +647,28 @@ def run_headless_mode():
     time.sleep(2)
     start_fastapi()
     
-    log('SYSTEM', 'Running in headless mode. Logs: logs/gateway_*.log', 'green')
-    
-    signal.pause()
+    log('SYSTEM', f'Running in headless mode. Logs: {LOG_DIR}\\gateway_*.log', 'green')
+
+    def signal_handler(sig, frame):
+        if should_shutdown_on_interrupt():
+            stop_all()
+            sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    try:
+        while not SHUTDOWN_EVENT.is_set():
+            time.sleep(1)
+    except KeyboardInterrupt:
+        stop_all()
     return 0
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Busy Whatsapp Bridge',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
-Modes:
-  (default)    Console mode - visible logs, interactive
-  --tray       System tray mode - hidden console, tray icon
-  --headless   Background mode - no UI, logs to file only
-'''
-    )
-    parser.add_argument('--tray', action='store_true', help='Run in system tray mode')
-    parser.add_argument('--headless', action='store_true', help='Run in headless mode (no UI)')
-    
-    args = parser.parse_args()
-    
     if not ensure_single_instance():
         return 1
-    
-    if args.tray:
-        return run_tray_mode()
-    elif args.headless:
-        return run_headless_mode()
-    else:
-        return run_console_mode()
+
+    return run_tray_mode()
 
 if __name__ == '__main__':
     sys.exit(main())

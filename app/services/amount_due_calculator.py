@@ -17,6 +17,7 @@ from app.constants.reminder_constants import (
     MASTER1_SALES_CREDIT_DAYS_COLUMN,
 )
 from app.database.connection import db
+from app.exceptions.ledger_exceptions import NoTransactionsError
 from app.models.reminder_schemas import AmountDueCalculation, PartyReminderInfo
 from app.services.ledger_data_service import ledger_data_service
 from app.services.reminder_config_service import reminder_config_service
@@ -122,7 +123,7 @@ class AmountDueCalculator:
             # Query Tran1 for sales transactions (VchType = 9)
             # Note: Sales increase Dr balance (customer owes more)
             query = """
-                SELECT SUM(ISNULL(t1.VchAmtBaseCur, 0)), COUNT(*)
+                SELECT SUM(IIF(t1.VchAmtBaseCur IS NULL, 0, t1.VchAmtBaseCur)), COUNT(*)
                 FROM Tran1 t1
                 INNER JOIN Tran2 t2 ON t1.VchCode = t2.VchCode
                 WHERE t2.MasterCode1 = ?
@@ -225,6 +226,13 @@ class AmountDueCalculator:
                 calculation_timestamp=datetime.now()
             )
             
+        except NoTransactionsError as e:
+            logger.debug(
+                "party_has_no_transactions",
+                party_code=party_code,
+                error=str(e)
+            )
+            raise
         except Exception as e:
             logger.error(
                 "error_calculating_amount_due",
@@ -237,7 +245,8 @@ class AmountDueCalculator:
     async def calculate_for_all_parties(
         self,
         min_amount_due: Decimal = Decimal("0.01"),
-        as_of_date: Optional[date] = None
+        as_of_date: Optional[date] = None,
+        max_parties: Optional[int] = None
     ) -> List[PartyReminderInfo]:
         """
         Calculate amount due for all parties with positive balance
@@ -268,7 +277,16 @@ class AmountDueCalculator:
             
             logger.info("total_parties_found", count=len(parties))
             
+            scanned_count = 0
             for party_row in parties:
+                scanned_count += 1
+                if max_parties and scanned_count > max_parties:
+                    logger.info(
+                        "party_scan_limit_reached",
+                        scanned_count=scanned_count - 1,
+                        max_parties=max_parties
+                    )
+                    break
                 try:
                     party_code = str(party_row[0])
                     party_name = party_row[1]
@@ -302,7 +320,9 @@ class AmountDueCalculator:
                         )
                         
                         eligible_parties.append(party_info)
-                        
+                except NoTransactionsError:
+                    logger.debug("party_skipped_no_transactions", party_code=party_code)
+                    continue
                 except Exception as e:
                     logger.warning(
                         "error_processing_party",

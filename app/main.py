@@ -125,9 +125,12 @@ async def lifespan(app: FastAPI):
                 message="Baileys server not running. Start it with: cd baileys-server && npm start"
             )
     
-    # Queue worker is NOT started automatically - requires manual trigger
-    # This prevents accidental message sending on startup
-    logger.info("message_queue_worker_manual_mode")
+    # Start queue worker automatically so webhook-queued messages are delivered.
+    try:
+        queue_service.start_worker()
+        logger.info("message_queue_worker_started")
+    except Exception as e:
+        logger.error("message_queue_worker_start_failed", error=str(e))
     
     # Initialize payment reminder scheduler
     try:
@@ -439,12 +442,9 @@ async def get_baileys_status():
 @app.get("/baileys/qr", tags=["Baileys"])
 async def baileys_qr_page():
     """
-    Redirect to Baileys QR code page for WhatsApp authentication.
-    
-    Opens a web page where users can scan QR code with WhatsApp mobile app.
+    Redirect to integrated dashboard WhatsApp page.
     """
-    baileys_url = getattr(settings, 'BAILEYS_SERVER_URL', 'http://localhost:3001')
-    return RedirectResponse(url=f"{baileys_url}/qr/page")
+    return RedirectResponse(url="/dashboard#/whatsapp")
 
 
 @app.get("/api/v1/baileys/qr", tags=["Baileys"])
@@ -462,9 +462,15 @@ async def get_baileys_qr():
                 f"{baileys_url}/qr",
                 timeout=5.0
             )
-            response.raise_for_status()
             data = response.json()
-            
+
+            # Treat transitional/no-QR states as non-fatal for dashboard polling.
+            if response.status_code >= 500:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Baileys QR upstream error: {response.status_code}"
+                )
+
             return {
                 "success": True,
                 "data": data.get("data", {})
@@ -687,6 +693,30 @@ async def disconnect_whatsapp():
             status_code=500,
             detail=f"Error disconnecting WhatsApp: {str(e)}"
         )
+
+
+@app.delete("/api/v1/whatsapp/session", tags=["WhatsApp"])
+async def clear_whatsapp_session():
+    """
+    Clear the active WhatsApp session using Baileys logout.
+    """
+    baileys_url = getattr(settings, 'BAILEYS_SERVER_URL', 'http://localhost:3001')
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{baileys_url}/logout",
+                timeout=10.0
+            )
+            if response.status_code == 200:
+                return {"success": True, "message": "WhatsApp session cleared"}
+            raise HTTPException(status_code=502, detail="Failed to clear WhatsApp session")
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Baileys server is not running")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Request to Baileys server timed out")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error clearing session: {str(e)}")
 
 
 @app.post("/api/v1/system/baileys/start", tags=["System"])

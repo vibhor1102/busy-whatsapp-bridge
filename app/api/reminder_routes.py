@@ -97,6 +97,7 @@ async def list_eligible_parties(
     sort_order: str = Query("desc", description="Sort order (asc/desc)"),
     filter_by: str = Query("all", description="Filter option"),
     min_amount: Optional[Decimal] = Query(None, description="Minimum amount due"),
+    limit: int = Query(50, ge=1, le=2000, description="Max parties to evaluate"),
 ):
     """Get all eligible parties with amount due > 0"""
     try:
@@ -105,7 +106,8 @@ async def list_eligible_parties(
         parties = await reminder_service.get_eligible_parties(
             min_amount_due=min_amt,
             search=search,
-            filter_by=filter_by
+            filter_by=filter_by,
+            limit=limit
         )
         
         # Sort parties
@@ -130,8 +132,8 @@ async def list_eligible_parties(
 async def get_party_details(party_code: str):
     """Get detailed information for a specific party"""
     try:
-        # Get party from eligible list
-        parties = await reminder_service.get_eligible_parties()
+        # Keep DB load bounded even for detail lookup.
+        parties = await reminder_service.get_eligible_parties(limit=100)
         party = next((p for p in parties if p.code == party_code), None)
         
         if not party:

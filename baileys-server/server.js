@@ -78,10 +78,17 @@ app.get('/status', (req, res) => {
 
 app.get('/qr', async (req, res) => {
     try {
-        const qrData = client.getQRCode();
-        
+        let qrData = client.getQRCode();
+        let status = client.getStatus();
+
         if (!qrData || qrData.isExpired) {
-            const status = client.getStatus();
+            await client.ensureQrAvailable();
+            await new Promise(resolve => setTimeout(resolve, 800));
+            qrData = client.getQRCode();
+            status = client.getStatus();
+        }
+
+        if (!qrData || qrData.isExpired) {
             if (status.state === 'connected') {
                 return res.json({
                     success: true,
@@ -92,10 +99,15 @@ app.get('/qr', async (req, res) => {
                     }
                 });
             }
-            return res.status(404).json({
-                success: false,
-                error: qrData?.isExpired ? 'QR code expired, generating new one...' : 'QR code not available. Connection may be in progress.',
-                data: status
+            return res.json({
+                success: true,
+                message: qrData?.isExpired ? 'QR expired, regenerating...' : 'QR not ready yet, retry shortly',
+                data: {
+                    state: status.state,
+                    qrImage: null,
+                    qrAvailable: false,
+                    reconnectAttempts: status.reconnectAttempts || 0
+                }
             });
         }
 
@@ -111,6 +123,7 @@ app.get('/qr', async (req, res) => {
         res.json({
             success: true,
             data: {
+                state: 'qr_ready',
                 qrImage: qrImage,
                 timestamp: qrData.timestamp,
                 expiresIn: qrData.expiresIn,
@@ -499,6 +512,22 @@ app.post('/restart', async (req, res) => {
         });
     } catch (error) {
         console.error('[ERROR] Failed to restart:', error.message);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+app.post('/logout', async (req, res) => {
+    try {
+        await client.disconnect();
+        res.json({
+            success: true,
+            message: 'Logged out successfully'
+        });
+    } catch (error) {
+        console.error('[ERROR] Failed to logout:', error.message);
         res.status(500).json({
             success: false,
             error: error.message

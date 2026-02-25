@@ -251,7 +251,7 @@ class TaskSchedulerManager:
   <Actions Context="Author">
     <Exec>
       <Command>{python_path}</Command>
-      <Arguments>{script_path} --tray</Arguments>
+      <Arguments>{script_path}</Arguments>
       <WorkingDirectory>{working_dir}</WorkingDirectory>
     </Exec>
   </Actions>

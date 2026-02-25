@@ -7,6 +7,13 @@
         @click="$emit('toggle-sidebar')"
       />
       <Breadcrumb :model="breadcrumbs" class="header-breadcrumb" />
+      <div class="quick-links">
+        <router-link to="/" class="quick-link">Overview</router-link>
+        <router-link to="/whatsapp" class="quick-link">WhatsApp</router-link>
+        <router-link to="/queue" class="quick-link">Queue</router-link>
+        <router-link to="/reminders" class="quick-link">Reminders</router-link>
+        <router-link to="/settings" class="quick-link">Settings</router-link>
+      </div>
     </div>
     
     <div class="header-right">
@@ -56,6 +63,7 @@ import { useRoute } from 'vue-router'
 import { useDashboardStore } from '@/stores/dashboard'
 import { useSystemStore } from '@/stores/system'
 import { useQueueStore } from '@/stores/queue'
+import { api } from '@/services/api'
 import Button from 'primevue/button'
 import Breadcrumb from 'primevue/breadcrumb'
 import Tag from 'primevue/tag'
@@ -90,11 +98,13 @@ const baileysSeverity = computed(() => {
 })
 
 const dbStatus = computed(() => {
-  return dashboardStore.stats?.database_connected ? 'DB Connected' : 'DB Disconnected'
+  if (!dashboardStore.stats) return 'DB Checking'
+  return dashboardStore.stats.database_connected ? 'DB Connected' : 'DB Disconnected'
 })
 
 const dbSeverity = computed(() => {
-  return dashboardStore.stats?.database_connected ? 'success' : 'danger'
+  if (!dashboardStore.stats) return 'warning'
+  return dashboardStore.stats.database_connected ? 'success' : 'danger'
 })
 
 const queueStatus = computed(() => {
@@ -113,10 +123,14 @@ const queueSeverity = computed(() => {
 
 const refreshData = async () => {
   dashboardStore.setLoading(true)
-  // Refresh logic here
-  setTimeout(() => {
+  try {
+    const stats = await api.getDashboardStats()
+    dashboardStore.setStats(stats)
+    queueStore.setStats(stats.queue)
+    systemStore.setBaileysStatus(stats.whatsapp)
+  } finally {
     dashboardStore.setLoading(false)
-  }, 1000)
+  }
 }
 
 const toggleTheme = () => {
@@ -143,6 +157,7 @@ const toggleTheme = () => {
   display: flex;
   align-items: center;
   gap: 1rem;
+  min-width: 0;
 }
 
 .header-breadcrumb {
@@ -155,6 +170,29 @@ const toggleTheme = () => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.quick-links {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: 0.5rem;
+  overflow-x: auto;
+}
+
+.quick-link {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  text-decoration: none;
+  color: var(--text-color-secondary);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.quick-link.router-link-active {
+  color: var(--primary-color);
+  border-color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 8%, transparent);
 }
 
 .status-indicators {
@@ -170,5 +208,15 @@ const toggleTheme = () => {
 
 .status-tag :deep(.p-tag-icon) {
   font-size: 0.75rem;
+}
+
+@media (max-width: 1024px) {
+  .status-indicators {
+    display: none;
+  }
+
+  .quick-links {
+    display: none;
+  }
 }
 </style>

@@ -54,7 +54,8 @@ class ReminderService:
         self,
         min_amount_due: Decimal = Decimal("0.01"),
         search: Optional[str] = None,
-        filter_by: str = "all"
+        filter_by: str = "all",
+        limit: int = 50
     ) -> List[PartyReminderInfo]:
         """
         Get all parties eligible for reminders (amount_due > 0)
@@ -74,7 +75,10 @@ class ReminderService:
         )
         
         # Calculate amount due for all parties
-        parties = await self.calculator.calculate_for_all_parties(min_amount_due)
+        parties = await self.calculator.calculate_for_all_parties(
+            min_amount_due=min_amount_due,
+            max_parties=max(1, min(int(limit), 2000))
+        )
         
         # Enrich with config data
         config = self.config_service.get_config()
@@ -106,7 +110,8 @@ class ReminderService:
         logger.info(
             "eligible_parties_fetched",
             total_count=len(parties),
-            filter_by=filter_by
+            filter_by=filter_by,
+            limit=limit
         )
         
         return parties
@@ -155,7 +160,7 @@ class ReminderService:
             self.config_service.update_party_config(party_code, party_config)
         
         # Re-fetch to get updated data
-        parties = await self.get_eligible_parties()
+        parties = await self.get_eligible_parties(limit=100)
         party = next((p for p in parties if p.code == party_code), None)
         
         if party is None:
@@ -365,7 +370,7 @@ class ReminderService:
     async def get_stats(self) -> ReminderStats:
         """Get reminder system statistics"""
         # Get all eligible parties
-        eligible_parties = await self.get_eligible_parties()
+        eligible_parties = await self.get_eligible_parties(limit=100)
         
         # Count enabled parties
         enabled_count = sum(1 for p in eligible_parties if p.permanent_enabled)

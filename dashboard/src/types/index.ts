@@ -27,7 +27,7 @@ export interface Message {
 }
 
 export interface BaileysStatus {
-  state: 'connected' | 'qr_ready' | 'disconnected' | 'reconnecting' | 'unreachable'
+  state: 'connected' | 'qr_ready' | 'disconnected' | 'connecting' | 'reconnecting' | 'logged_out' | 'unreachable'
   user?: {
     id: string
     name: string
@@ -46,6 +46,7 @@ export interface SystemStats {
 export interface DashboardStats {
   system: SystemStats
   database_connected: boolean
+  database_error?: string | null
   queue: QueueStats
   whatsapp: BaileysStatus
   messages: {
