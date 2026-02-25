@@ -275,6 +275,13 @@ class CreateBatchRequest(BaseModel):
     template_id: str = Field(..., description="Template to use")
     schedule_for: Optional[datetime] = Field(None, description="When to send (None = immediate)")
 
+    @field_validator('party_codes')
+    @classmethod
+    def validate_party_codes(cls, v: List[str]) -> List[str]:
+        if not v:
+            raise ValueError('party_codes cannot be empty')
+        return v
+
 
 class UpdatePartyRequest(BaseModel):
     """Request body for updating party configuration"""

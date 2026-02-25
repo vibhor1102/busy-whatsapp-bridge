@@ -9,6 +9,8 @@ Coordinates all reminder operations including:
 - Tracking reminder history
 """
 import asyncio
+import os
+import tempfile
 import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -279,19 +281,29 @@ class ReminderService:
                     
                     # Queue message
                     if party_info.phone:
-                        # Save PDF to temp location and get URL
-                        pdf_path = f"/tmp/ledger_{party_code}_{batch_id}.pdf"
+                        # Save PDF to temp location
+                        temp_dir = tempfile.gettempdir()
+                        pdf_path = os.path.join(temp_dir, f"ledger_{party_code}_{batch_id}.pdf")
                         with open(pdf_path, 'wb') as f:
                             f.write(pdf_bytes)
                         
                         # Queue for sending
-                        message_db.enqueue(
-                            phone=party_info.phone,
-                            message=message,
-                            pdf_url=pdf_path,  # In production, this should be a public URL
-                            provider=config.default_provider,
-                            source="payment_reminder"
-                        )
+                        try:
+                            message_db.enqueue_message(
+                                phone=party_info.phone,
+                                message=message,
+                                pdf_path=pdf_path,
+                                provider=config.default_provider,
+                                source="payment_reminder"
+                            )
+                        finally:
+                            # Clean up temp file after queuing
+                            try:
+                                if os.path.exists(pdf_path):
+                                    os.remove(pdf_path)
+                            except Exception as cleanup_error:
+                                logger.warning("failed_to_cleanup_temp_pdf", 
+                                             path=pdf_path, error=str(cleanup_error))
                         
                         results[party_code] = {
                             "status": "queued",

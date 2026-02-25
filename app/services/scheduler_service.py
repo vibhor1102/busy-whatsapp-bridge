@@ -3,7 +3,8 @@ Scheduler Service
 
 Manages scheduled reminder jobs using APScheduler.
 """
-from datetime import datetime
+import os
+from datetime import datetime, timedelta
 from typing import Optional
 
 import structlog
@@ -13,6 +14,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.models.reminder_schemas import ScheduleConfig
 from app.services.reminder_config_service import reminder_config_service
 from app.constants.reminder_constants import DAYS_OF_WEEK
+from app.config import get_local_appdata_path
 
 logger = structlog.get_logger()
 
@@ -24,6 +26,27 @@ class ReminderSchedulerService:
         self.scheduler: Optional[AsyncIOScheduler] = None
         self.job_id = "payment_reminder_job"
         self.is_running = False
+        self._last_run_file = get_local_appdata_path() / "scheduler_last_run.txt"
+    
+    def _get_last_run_time(self) -> Optional[datetime]:
+        """Get the last time the scheduler ran from file."""
+        try:
+            if self._last_run_file.exists():
+                with open(self._last_run_file, 'r') as f:
+                    timestamp = f.read().strip()
+                    if timestamp:
+                        return datetime.fromisoformat(timestamp)
+        except Exception as e:
+            logger.warning("failed_to_read_last_run_time", error=str(e))
+        return None
+    
+    def _set_last_run_time(self, run_time: datetime):
+        """Save the last run time to file."""
+        try:
+            with open(self._last_run_file, 'w') as f:
+                f.write(run_time.isoformat())
+        except Exception as e:
+            logger.warning("failed_to_write_last_run_time", error=str(e))
     
     async def initialize(self):
         """Initialize and start the scheduler if enabled"""
@@ -89,6 +112,23 @@ class ReminderSchedulerService:
             time=schedule.time
         )
     
+    async def _check_biweekly_run(self) -> bool:
+        """
+        Check if bi-weekly reminder should run based on last run timestamp.
+        Stores and checks last run time to maintain consistent 14-day intervals.
+        """
+        last_run = self._get_last_run_time()
+        
+        if last_run:
+            days_since_last_run = (datetime.now() - last_run).days
+            should_run = days_since_last_run >= 14
+            logger.info("biweekly_check", days_since=days_since_last_run, should_run=should_run)
+            return should_run
+        else:
+            # First run - allow it
+            logger.info("biweekly_first_run")
+            return True
+    
     async def _run_scheduled_reminders(self):
         """Job callback - runs scheduled reminders"""
         logger.info("running_scheduled_reminders")
@@ -100,11 +140,13 @@ class ReminderSchedulerService:
             # Check if bi-weekly and correct week
             config = reminder_config_service.get_config()
             if config.schedule.frequency == "biweekly":
-                # Check if this is an even week (bi-weekly)
-                current_week = datetime.now().isocalendar()[1]
-                if current_week % 2 != 0:
-                    logger.info("skipping_biweekly_reminder_odd_week", week=current_week)
+                # Use proper 14-day interval check instead of ISO week
+                if not await self._check_biweekly_run():
+                    logger.info("skipping_biweekly_reminder_not_due")
                     return
+                
+                # Record this run time
+                self._set_last_run_time(datetime.now())
             
             # Get all enabled parties
             eligible_parties = await reminder_service.get_eligible_parties()
@@ -140,12 +182,15 @@ class ReminderSchedulerService:
             )
     
     async def start_scheduler(self):
-        """Start the scheduler"""
+        """Start the scheduler manually (ignores config enabled setting)"""
         if self.scheduler is None:
-            await self.initialize()
-            return
+            # Create scheduler without config-based auto-start
+            self.scheduler = AsyncIOScheduler()
         
         if not self.is_running:
+            # Load config and schedule job regardless of config.schedule.enabled
+            config = reminder_config_service.get_config()
+            await self._schedule_job(config.schedule)
             self.scheduler.start()
             self.is_running = True
             logger.info("scheduler_started_manually")

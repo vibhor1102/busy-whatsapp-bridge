@@ -228,7 +228,7 @@
           >
             <Column style="width: 3rem">
               <template #body="{ data }">
-                <Checkbox v-model="data.temp_enabled" :binary="true" @change="updateTempSelection(data)" />
+                <Checkbox :modelValue="true" :binary="true" @update:modelValue="() => toggleSelection(data.code)" />
               </template>
             </Column>
             <Column field="name" header="Party Name" sortable>
@@ -252,13 +252,13 @@
             <Column header="Permanent" style="width: 120px">
               <template #body="{ data }">
                 <ToggleButton
-                  v-model="data.permanent_enabled"
+                  :modelValue="data.permanent_enabled"
                   onIcon="pi pi-check"
                   offIcon="pi pi-times"
                   onLabel="On"
                   offLabel="Off"
                   class="p-button-sm"
-                  @change="updatePermanentSelection(data)"
+                  @update:modelValue="(val) => updatePermanentSelection(data.code, val)"
                 />
               </template>
             </Column>
@@ -289,7 +289,7 @@
           >
             <Column style="width: 3rem">
               <template #body="{ data }">
-                <Checkbox v-model="data.temp_enabled" :binary="true" @change="updateTempSelection(data)" />
+                <Checkbox :modelValue="false" :binary="true" @update:modelValue="() => toggleSelection(data.code)" />
               </template>
             </Column>
             <Column field="name" header="Party Name" sortable>
@@ -313,13 +313,13 @@
             <Column header="Permanent" style="width: 120px">
               <template #body="{ data }">
                 <ToggleButton
-                  v-model="data.permanent_enabled"
+                  :modelValue="data.permanent_enabled"
                   onIcon="pi pi-check"
                   offIcon="pi pi-times"
                   onLabel="On"
                   offLabel="Off"
                   class="p-button-sm"
-                  @change="updatePermanentSelection(data)"
+                  @update:modelValue="(val) => updatePermanentSelection(data.code, val)"
                 />
               </template>
             </Column>
@@ -344,14 +344,14 @@
         label="Send Now"
         icon="pi pi-send"
         class="p-button-primary p-button-lg"
-        :disabled="selectedTempCount === 0"
+        :disabled="selectedTempCount === 0 || !selectedTemplateId"
         @click="confirmSend"
       />
       <Button
         label="Schedule for Later"
         icon="pi pi-calendar"
         class="p-button-outlined p-button-lg ml-3"
-        :disabled="selectedTempCount === 0"
+        :disabled="selectedTempCount === 0 || !selectedTemplateId"
         @click="showScheduleDialog = true"
       />
       <Button
@@ -426,7 +426,7 @@ const toast = useToast()
 // State
 const loading = ref(false)
 const parties = ref<PartyReminderInfo[]>([])
-const config = ref<ReminderConfig>({} as ReminderConfig)
+const config = ref<ReminderConfig | null>(null)
 const templates = ref<MessageTemplate[]>([])
 const selectedTemplateId = ref<string>('')
 const stats = ref<ReminderStats | null>(null)
@@ -441,6 +441,9 @@ const sortBy = ref('amount_due')
 const filterBy = ref('all')
 const scheduleDate = ref(new Date())
 const scheduleTime = ref('10:00')
+
+// Selection state - separate from party data to avoid mutating computed
+const tempSelections = ref<Set<string>>(new Set())
 
 // Options
 const frequencyOptions = [
@@ -520,11 +523,11 @@ const filteredParties = computed(() => {
 })
 
 const selectedParties = computed(() => {
-  return filteredParties.value.filter(p => p.temp_enabled)
+  return filteredParties.value.filter(p => tempSelections.value.has(p.code))
 })
 
 const unselectedParties = computed(() => {
-  return filteredParties.value.filter(p => !p.temp_enabled)
+  return filteredParties.value.filter(p => !tempSelections.value.has(p.code))
 })
 
 const selectedTempCount = computed(() => selectedParties.value.length)
@@ -581,7 +584,12 @@ const loadTemplates = async () => {
   try {
     templates.value = await api.getTemplates()
   } catch (error) {
-    console.error('Failed to load templates:', error)
+    toast.add({
+      severity: 'error',
+      summary: 'Error',
+      detail: 'Failed to load templates',
+      life: 3000,
+    })
   }
 }
 
@@ -604,20 +612,27 @@ const onTemplateChange = async () => {
   }
 }
 
-const updateTempSelection = (party: PartyReminderInfo) => {
-  // Temp selection is stored in memory only
-  // No API call needed
+const toggleSelection = (partyCode: string) => {
+  if (tempSelections.value.has(partyCode)) {
+    tempSelections.value.delete(partyCode)
+  } else {
+    tempSelections.value.add(partyCode)
+  }
 }
 
-const updatePermanentSelection = async (party: PartyReminderInfo) => {
+const updatePermanentSelection = async (partyCode: string, enabled: boolean) => {
+  const party = parties.value.find(p => p.code === partyCode)
+  if (!party) return
+
   try {
-    await api.updatePartyConfig(party.code, {
-      enabled: party.permanent_enabled,
+    await api.updatePartyConfig(partyCode, {
+      enabled: enabled,
     })
+    party.permanent_enabled = enabled
     toast.add({
       severity: 'success',
       summary: 'Success',
-      detail: `${party.name} ${party.permanent_enabled ? 'enabled' : 'disabled'} permanently`,
+      detail: `${party.name} ${enabled ? 'enabled' : 'disabled'} permanently`,
       life: 2000,
     })
   } catch (error) {
@@ -627,17 +642,15 @@ const updatePermanentSelection = async (party: PartyReminderInfo) => {
       detail: 'Failed to update party configuration',
       life: 3000,
     })
-    // Revert the change
-    party.permanent_enabled = !party.permanent_enabled
   }
 }
 
 const selectAll = () => {
-  filteredParties.value.forEach(p => p.temp_enabled = true)
+  filteredParties.value.forEach(p => tempSelections.value.add(p.code))
 }
 
 const deselectAll = () => {
-  filteredParties.value.forEach(p => p.temp_enabled = false)
+  tempSelections.value.clear()
 }
 
 const generateLedger = async (partyCode: string) => {
@@ -679,7 +692,7 @@ const sendReminders = async () => {
     })
     
     // Reset selections
-    parties.value.forEach(p => p.temp_enabled = false)
+    tempSelections.value.clear()
     
     // Refresh stats
     loadData()
@@ -710,7 +723,7 @@ const scheduleReminders = async () => {
     })
     
     showScheduleDialog.value = false
-    parties.value.forEach(p => p.temp_enabled = false)
+    tempSelections.value.clear()
   } catch (error) {
     toast.add({
       severity: 'error',
@@ -722,7 +735,6 @@ const scheduleReminders = async () => {
 }
 
 const exportCsv = () => {
-  // TODO: Implement CSV export
   toast.add({
     severity: 'info',
     summary: 'Info',
@@ -732,6 +744,7 @@ const exportCsv = () => {
 }
 
 const saveSchedule = async () => {
+  if (!config.value) return
   try {
     await api.updateScheduleConfig(config.value.schedule)
     toast.add({

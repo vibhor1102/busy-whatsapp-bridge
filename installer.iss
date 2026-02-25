@@ -9,7 +9,7 @@
 
 #define MyAppName "Busy Whatsapp Bridge"
 #define MyAppVersion "0.0.1"
-#define MyAppPublisher "Busy Software Solutions"
+#define MyAppPublisher "vibhor1102"
 #define MyAppURL "https://github.com/vibhor1102/busy-whatsapp-bridge"
 #define MyAppExeName "BusyWhatsappBridge.exe"
 #define MyAppAssocName MyAppName + " File"
@@ -50,9 +50,9 @@ VersionInfoVersion={#MyAppVersion}
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 6.1; Check: not IsAdminInstallMode
-Name: "autostart"; Description: "Start automatically on Windows login"; GroupDescription: "Startup options:"; Flags: unchecked
+Name: "autostart"; Description: "Start automatically on Windows login"; GroupDescription: "Startup options:"; Flags: checkedonce
 
 [Dirs]
 ; Only apply users-modify for user installs (not admin installs)
@@ -121,7 +121,15 @@ Filename: "{app}\python\python.exe"; Parameters: "{app}\setup.py --silent"; \
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--tray"; \
     Description: "Launch Busy Whatsapp Bridge"; Flags: postinstall nowait skipifsilent unchecked
 
+; Configure auto-start with Windows if selected
+Filename: "{app}\manage-task.bat"; Parameters: "install"; \
+    Description: "Configure auto-start"; Flags: runhidden; Tasks: autostart
+
 [UninstallRun]
+; Remove Task Scheduler task if it exists
+Filename: "schtasks"; Parameters: "/delete /tn \"BusyWhatsappBridge_AutoStart\" /f"; \
+    RunOnceId: "RemoveTask"; Flags: runhidden
+
 ; Run uninstall script before removing files
 Filename: "{app}\python\python.exe"; Parameters: "{app}\uninstall.py --silent"; \
     RunOnceId: "CleanUp"; Flags: runhidden

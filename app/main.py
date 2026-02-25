@@ -125,9 +125,9 @@ async def lifespan(app: FastAPI):
                 message="Baileys server not running. Start it with: cd baileys-server && npm start"
             )
     
-    # Start message queue worker
-    queue_service.start_worker()
-    logger.info("message_queue_worker_started")
+    # Queue worker is NOT started automatically - requires manual trigger
+    # This prevents accidental message sending on startup
+    logger.info("message_queue_worker_manual_mode")
     
     # Initialize payment reminder scheduler
     try:
@@ -623,6 +623,31 @@ async def get_pending_messages(
         "count": len(messages),
         "messages": messages
     }
+
+
+@app.post("/api/v1/queue/process", tags=["Queue"])
+async def process_queue_manually(batch_size: int = Query(10, ge=1, le=100)):
+    """
+    Manually trigger processing of queued messages.
+    
+    Requires explicit confirmation to prevent accidental sending.
+    Returns count of messages processed.
+    """
+    try:
+        # Process one batch
+        processed = await queue_service.process_queue_batch(batch_size=batch_size)
+        
+        return {
+            "success": True,
+            "processed": processed,
+            "message": f"Processed {processed} messages from queue"
+        }
+    except Exception as e:
+        logger.error("queue_processing_failed", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process queue: {str(e)}"
+        )
 
 
 @app.post("/api/v1/whatsapp/disconnect", tags=["WhatsApp"])

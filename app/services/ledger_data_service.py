@@ -797,12 +797,12 @@ class LedgerDataService:
         
         for entry in entries:
             if entry.is_debit:
-                # Dr = Sales or Payments = INCREASE Dr balance (more they owe us)
-                running_balance -= entry.amount
+                # Dr = Sales = Customer owes us more (INCREASE Dr balance)
+                running_balance += entry.amount
                 total_debits += entry.amount
             else:
-                # Cr = Receipts or Purchases = DECREASE Dr balance (they paid us)
-                running_balance += entry.amount
+                # Cr = Receipts = Customer paid us (DECREASE Dr balance)
+                running_balance -= entry.amount
                 total_credits += entry.amount
             
             entry.balance = running_balance
@@ -844,7 +844,7 @@ class LedgerDataService:
         total_debits, total_credits = self.calculate_balances(opening_balance, entries)
         
         # Calculate closing balance
-        closing_balance = opening_balance - total_debits + total_credits
+        closing_balance = opening_balance + total_debits - total_credits
         
         logger.info(
             "ledger_report_generated",

@@ -18,8 +18,8 @@ logger = structlog.get_logger()
 class TemplateService:
     """Service for rendering message templates"""
     
-    # Regex to find template variables like {variable_name}
-    VARIABLE_PATTERN = re.compile(r'\{([a-zA-Z_][a-zA-Z0-9_]*)\}')
+    # Regex to find template variables: {variable_name} or {{number}}
+    VARIABLE_PATTERN = re.compile(r'\{\{?([a-zA-Z_][a-zA-Z0-9_]*|\d+)\}??}')
     
     def __init__(self):
         self.config_service = reminder_config_service

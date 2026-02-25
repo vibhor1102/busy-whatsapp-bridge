@@ -214,7 +214,7 @@ async def calculate_amount_due(
 # Batch Operations Endpoints
 # ============================================
 
-@router.post("/send")
+@router.post("/batch")
 async def send_reminders(request: CreateBatchRequest):
     """Send reminders to selected parties immediately"""
     try:
@@ -223,13 +223,13 @@ async def send_reminders(request: CreateBatchRequest):
             template_id=request.template_id,
             sent_by="manual"
         )
-        
+
         return {
             "status": "success",
             "batch_id": batch_id,
             "message": f"Reminders queued for {len(request.party_codes)} parties"
         }
-        
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -386,7 +386,7 @@ async def preview_template(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/templates/{template_id}/activate")
+@router.post("/templates/{template_id}/active")
 async def set_active_template(template_id: str):
     """Set a template as the active (default) template"""
     try:
@@ -395,7 +395,7 @@ async def set_active_template(template_id: str):
             "status": "success",
             "message": f"Template {template_id} is now active"
         }
-        
+
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

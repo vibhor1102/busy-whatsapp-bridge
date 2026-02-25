@@ -13,14 +13,6 @@ export default defineConfig({
     outDir: 'dist',
     assetsDir: 'assets',
     emptyOutDir: true,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          'primevue': ['primevue'],
-          'charts': ['chart.js', 'vue-chartjs'],
-        },
-      },
-    },
   },
   server: {
     port: 3000,

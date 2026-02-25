@@ -50,8 +50,9 @@ MAX_TEMPLATES = 6
 DEFAULT_TEMPLATE_ID = "standard"
 TEMPLATE_VARIABLES = [
     "customer_name",
-    "company_name", 
+    "company_name",
     "amount_due",
+    "currency_symbol",
     "credit_days",
     "contact_phone",
     "party_code",

@@ -59,14 +59,14 @@ class AmountDueCalculator:
         party_code_int = self._validate_party_code(party_code)
         
         try:
-            query = f"""
-                SELECT {MASTER1_SALES_CREDIT_DAYS_COLUMN}
+            query = """
+                SELECT I2
                 FROM Master1
-                WHERE Code = {party_code_int} AND MasterType = 2
+                WHERE Code = ? AND MasterType = 2
             """
             
             with self.db.get_cursor() as cursor:
-                cursor.execute(query)
+                cursor.execute(query, (party_code_int,))
                 row = cursor.fetchone()
                 
                 if row and row[0] and row[0] > 0:
@@ -121,18 +121,18 @@ class AmountDueCalculator:
         try:
             # Query Tran1 for sales transactions (VchType = 9)
             # Note: Sales increase Dr balance (customer owes more)
-            query = f"""
-                SELECT SUM(t1.VchAmtBaseCur), COUNT(*)
+            query = """
+                SELECT SUM(ISNULL(t1.VchAmtBaseCur, 0)), COUNT(*)
                 FROM Tran1 t1
                 INNER JOIN Tran2 t2 ON t1.VchCode = t2.VchCode
-                WHERE t2.MasterCode1 = {party_code_int}
+                WHERE t2.MasterCode1 = ?
                 AND t1.VchType = 9
-                AND t1.Date >= #{start_date.strftime('%m/%d/%Y')}#
-                AND t1.Date <= #{as_of_date.strftime('%m/%d/%Y')}#
+                AND t1.Date >= ?
+                AND t1.Date <= ?
             """
             
             with self.db.get_cursor() as cursor:
-                cursor.execute(query)
+                cursor.execute(query, (party_code_int, start_date, as_of_date))
                 row = cursor.fetchone()
                 
                 if row and row[0]:

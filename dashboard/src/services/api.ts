@@ -5,7 +5,15 @@ import type {
   LogEntry,
   ProcessStatus,
   SystemResources,
-  BaileysStatus 
+  BaileysStatus,
+  ReminderConfig,
+  ScheduleConfig,
+  PartyReminderInfo,
+  PartyConfig,
+  AmountDueCalculation,
+  MessageTemplate,
+  ReminderStats,
+  SchedulerStatus
 } from '@/types'
 
 const API_BASE = '/api/v1'
@@ -208,7 +216,7 @@ class ApiService {
     partyCodes: string[],
     templateId: string
   ): Promise<{ status: string; batch_id: string; message: string }> {
-    return this.fetch<{ status: string; batch_id: string; message: string }>('/reminders/send', {
+    return this.fetch<{ status: string; batch_id: string; message: string }>('/reminders/batch', {
       method: 'POST',
       body: JSON.stringify({ party_codes: partyCodes, template_id: templateId }),
     })
@@ -281,7 +289,7 @@ class ApiService {
   }
 
   async setActiveTemplate(templateId: string): Promise<{ success: boolean; message: string }> {
-    return this.fetch<{ success: boolean; message: string }>(`/reminders/templates/${templateId}/activate`, {
+    return this.fetch<{ success: boolean; message: string }>(`/reminders/templates/${templateId}/active`, {
       method: 'POST',
     })
   }

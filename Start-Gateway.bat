@@ -6,8 +6,8 @@ SET "SCRIPT_DIR=%~dp0"
 SET "VENV_PYTHON=%SCRIPT_DIR%venv\Scripts\python.exe"
 
 IF EXIST "%VENV_PYTHON%" (
-    REM Use bundled Python from virtual environment
-    "%VENV_PYTHON%" "%~dp0run.py" %*
+    REM Use bundled Python from virtual environment with tray icon by default
+    "%VENV_PYTHON%" "%~dp0run.py" --tray %*
 ) ELSE (
     echo [ERROR] Virtual environment not found!
     echo.
