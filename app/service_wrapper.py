@@ -15,7 +15,6 @@ BASE_DIR = Path(__file__).parent.parent.absolute()
 sys.path.insert(0, str(BASE_DIR))
 
 from app.main import app
-from app.config import get_appdata_path
 import uvicorn
 
 
@@ -42,8 +41,8 @@ class BusyWhatsappBridgeService(win32serviceutil.ServiceFramework):
         
     def setup_logging(self):
         """Configure logging for Windows service."""
-        # Use AppData for logs instead of Program Files
-        log_dir = get_appdata_path() / "logs"
+        # Use install directory for logs (overwritten on updates)
+        log_dir = BASE_DIR / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
 
         # File handler with rotation

@@ -84,12 +84,12 @@ This is a **portable bundled distribution** with Python and all dependencies inc
 - `setup-bundled.bat` - First-time setup (creates venv, configures)
 - `manage-task.bat` - Task Scheduler menu (enable/disable auto-start)
 - `build-release.bat` - Creates distribution package
-- `Start-Gateway.bat` - Main launcher (uses bundled Python)
+- `Start-Gateway.py` - Main launcher (uses bundled Python)
 
 **Auto-Start via Task Scheduler:**
 ```bash
 ./manage-task.bat              # Menu: enable/disable auto-start
-./Start-Gateway.bat --tray     # Manual start with tray icon
+./Start-Gateway.py --tray     # Manual start with tray icon
 ```
 
 ---

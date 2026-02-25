@@ -38,6 +38,11 @@ get-pip.py
 # One-time migration script (delete after use)
 migrate-to-appdata.py
 
+# Installer downloads
+innosetup.exe
+*.exe
+BusyWhatsappBridge-*-Setup.exe
+
 # Configuration files (user-specific, stored in AppData)
 # Note: conf.json is stored in %LOCALAPPDATA%\BusyWhatsappBridge\
 # and should not be committed to version control

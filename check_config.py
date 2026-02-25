@@ -6,39 +6,59 @@ from pathlib import Path
 # Add project to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from app.config import get_appdata_path, get_config_path
+from app.config import get_local_appdata_path, get_roaming_appdata_path, get_config_path
 
 # Get paths using centralized functions
-appdata = get_appdata_path()
+local_appdata = get_local_appdata_path()
+roaming_appdata = get_roaming_appdata_path()
 config_file = get_config_path()
 
-print(f"AppData Path: {appdata.parent}")
-print(f"Config Dir: {appdata}")
-print(f"Config File: {config_file}")
-print(f"Config Dir Exists: {appdata.exists()}")
-print(f"Config File Exists: {config_file.exists()}")
+print("Busy Whatsapp Bridge Configuration Check")
+print("=" * 50)
+print()
 
-if appdata.exists():
-    print(f"\nFiles in config dir:")
-    for f in appdata.iterdir():
+print("ROAMING CONFIG (User-specific, follows user):")
+print(f"  Directory: {roaming_appdata}")
+print(f"  Config File: {config_file}")
+print(f"  Exists: {roaming_appdata.exists()}")
+print(f"  Config Exists: {config_file.exists()}")
+print()
+
+print("LOCAL DATA (Machine-specific, not roamed):")
+print(f"  Directory: {local_appdata}")
+print(f"  Exists: {local_appdata.exists()}")
+print()
+
+if roaming_appdata.exists():
+    print("Files in roaming config dir:")
+    for f in roaming_appdata.iterdir():
         if f.is_dir():
             print(f"  - {f.name}/")
         else:
             print(f"  - {f.name}")
-    
-    # Check data directory
-    data_dir = appdata / "data"
-    if data_dir.exists():
-        print(f"\nFiles in data/:")
-        for f in data_dir.iterdir():
+    print()
+
+if local_appdata.exists():
+    print("Files in local data dir:")
+    for f in local_appdata.iterdir():
+        if f.is_dir():
+            print(f"  - {f.name}/")
+            # List contents of subdirectories
+            if f.name in ['data', 'auth']:
+                for subf in f.iterdir():
+                    print(f"      - {subf.name}")
+        else:
             print(f"  - {f.name}")
-    
-    # Check logs directory
-    logs_dir = appdata / "logs"
-    if logs_dir.exists():
-        print(f"\nFiles in logs/:")
-        for f in logs_dir.iterdir():
-            print(f"  - {f.name}")
-else:
-    print("\nConfig directory does NOT exist yet")
-    print("It will be created when the application first runs")
+    print()
+
+# Check install dir logs
+install_dir = Path(__file__).parent
+logs_dir = install_dir / "logs"
+if logs_dir.exists():
+    print("Files in install logs dir:")
+    for f in logs_dir.iterdir():
+        print(f"  - {f.name}")
+    print()
+
+print("=" * 50)
+print("Check complete!")

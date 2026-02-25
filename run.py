@@ -38,9 +38,9 @@ except ImportError:
     HAS_TRAY = False
 
 def get_log_dir() -> Path:
-    """Get log directory in AppData."""
-    appdata = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
-    log_dir = appdata / "BusyWhatsappBridge" / "logs"
+    """Get log directory in install directory (overwritten on updates)."""
+    install_dir = Path(__file__).parent.absolute()
+    log_dir = install_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
 

@@ -178,7 +178,7 @@ def main() -> int:
     
     # Check server
     if not check_server():
-        print(f"\n{Colors.RED}Make sure to run Start-Gateway.bat first!{Colors.RESET}")
+        print(f"\n{Colors.RED}Make sure to run Start-Gateway.py first!{Colors.RESET}")
         print("\nPress any key to exit...")
         if sys.platform == 'win32':
             import msvcrt

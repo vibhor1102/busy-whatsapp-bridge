@@ -5,11 +5,11 @@ from typing import Optional
 from functools import lru_cache
 from pydantic import BaseModel, Field
 
+from app.version import get_version
+
 
 class ServerSettings(BaseModel):
-    """Server configuration."""
-    app_name: str = "Busy Whatsapp Bridge"
-    app_version: str = "0.0.1"
+    """Server runtime configuration (user-configurable)."""
     debug: bool = False
     host: str = "0.0.0.0"
     port: int = 8000
@@ -61,21 +61,18 @@ class ReminderSettings(BaseModel):
 
 
 class Settings(BaseModel):
-    """Application configuration."""
+    """Application configuration (user-configurable settings only)."""
+    
+    # App metadata - hardcoded, not configurable
+    APP_NAME: str = "Busy Whatsapp Bridge"
+    APP_VERSION: str = Field(default_factory=get_version)
+    
     server: ServerSettings = Field(default_factory=ServerSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     whatsapp: WhatsAppSettings = Field(default_factory=WhatsAppSettings)
     baileys: BaileysSettings = Field(default_factory=BaileysSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     reminders: ReminderSettings = Field(default_factory=ReminderSettings)
-
-    @property
-    def APP_NAME(self) -> str:
-        return self.server.app_name
-    
-    @property
-    def APP_VERSION(self) -> str:
-        return self.server.app_version
     
     @property
     def DEBUG(self) -> bool:
@@ -163,7 +160,7 @@ class Settings(BaseModel):
     
     @property
     def REMINDER_CONFIG_PATH(self) -> str:
-        return str(get_appdata_path() / "data" / "reminder_config.json")
+        return str(get_roaming_appdata_path() / "data" / "reminder_config.json")
     
     @property
     def REMINDER_SCHEDULE_ENABLED(self) -> bool:
@@ -207,17 +204,25 @@ class Settings(BaseModel):
         )
 
 
-def get_appdata_path() -> Path:
-    """Get the AppData base directory for Busy Whatsapp Bridge."""
+def get_local_appdata_path() -> Path:
+    """Get the Local AppData directory for machine-specific data (databases, auth)."""
     appdata = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+    data_dir = appdata / "BusyWhatsappBridge"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir
+
+
+def get_roaming_appdata_path() -> Path:
+    """Get the Roaming AppData directory for user configuration."""
+    appdata = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
     config_dir = appdata / "BusyWhatsappBridge"
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir
 
 
 def get_config_path() -> Path:
-    """Get the configuration file path in AppData."""
-    return get_appdata_path() / "conf.json"
+    """Get the configuration file path in Roaming AppData."""
+    return get_roaming_appdata_path() / "conf.json"
 
 
 def load_settings() -> Settings:

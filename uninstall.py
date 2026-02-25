@@ -22,9 +22,15 @@ def get_program_dir() -> Path:
     return Path(__file__).parent.absolute()
 
 
-def get_appdata_dir() -> Path:
-    """Get the AppData directory."""
+def get_local_appdata_dir() -> Path:
+    """Get the Local AppData directory for machine-specific data."""
     appdata = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+    return appdata / "BusyWhatsappBridge"
+
+
+def get_roaming_appdata_dir() -> Path:
+    """Get the Roaming AppData directory for user configuration."""
+    appdata = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
     return appdata / "BusyWhatsappBridge"
 
 
@@ -75,18 +81,31 @@ def remove_shortcuts():
     """Remove desktop and start menu shortcuts."""
     print("Removing shortcuts...")
     
-    # Desktop shortcut
+    # Desktop shortcuts (multiple possible names)
     desktop = Path.home() / "Desktop"
-    shortcut = desktop / "Busy Whatsapp Bridge.lnk"
-    if shortcut.exists():
-        shortcut.unlink()
-        print("  Desktop shortcut removed")
+    desktop_shortcuts = [
+        "Busy Whatsapp Bridge.lnk",
+        "Busy Whatsapp Bridge (Tray).lnk",
+        "WhatsApp Bridge.lnk",  # Legacy name
+        "WhatsApp Bridge (Tray).lnk",  # Legacy name
+    ]
     
-    # Start Menu
-    start_menu = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming')) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Busy Whatsapp Bridge"
-    if start_menu.exists():
-        shutil.rmtree(start_menu)
-        print("  Start Menu folder removed")
+    for shortcut_name in desktop_shortcuts:
+        shortcut = desktop / shortcut_name
+        if shortcut.exists():
+            shortcut.unlink()
+            print(f"  Desktop shortcut removed: {shortcut_name}")
+    
+    # Start Menu - check both user and all-users locations
+    start_menu_paths = [
+        Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming')) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Busy Whatsapp Bridge",
+        Path(os.environ.get('PROGRAMDATA', Path.home().parent / 'ProgramData')) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Busy Whatsapp Bridge",
+    ]
+    
+    for start_menu in start_menu_paths:
+        if start_menu.exists():
+            shutil.rmtree(start_menu)
+            print(f"  Start Menu folder removed: {start_menu}")
 
 
 def remove_program_files(program_dir: Path):
@@ -131,7 +150,8 @@ def main():
     args = parser.parse_args()
     
     program_dir = get_program_dir()
-    appdata_dir = get_appdata_dir()
+    local_appdata_dir = get_local_appdata_dir()
+    roaming_appdata_dir = get_roaming_appdata_dir()
     
     print("=" * 60)
     print("Busy Whatsapp Bridge Uninstaller")
@@ -146,7 +166,8 @@ def main():
         if args.purge:
             print("WARNING: --purge flag specified!")
             print("This will ALSO delete all user data including:")
-            print(f"  {appdata_dir}")
+            print(f"  Config (Roaming): {roaming_appdata_dir}")
+            print(f"  Data (Local): {local_appdata_dir}")
             print()
             response = input("Are you sure? Type 'yes' to continue: ")
             if response.lower() != 'yes':
@@ -154,7 +175,8 @@ def main():
                 return 1
         else:
             print("User data will be preserved at:")
-            print(f"  {appdata_dir}")
+            print(f"  Config (Roaming): {roaming_appdata_dir}")
+            print(f"  Data (Local): {local_appdata_dir}")
             print()
             response = input("Continue with uninstall? [Y/n]: ")
             if response and response.lower() not in ('y', 'yes'):
@@ -168,7 +190,10 @@ def main():
     remove_task_scheduler_entry()
     remove_shortcuts()
     remove_program_files(program_dir)
-    remove_appdata(appdata_dir, purge=args.purge)
+    
+    # Remove both roaming (config) and local (data) AppData
+    remove_appdata(roaming_appdata_dir, purge=args.purge)
+    remove_appdata(local_appdata_dir, purge=args.purge)
     
     print()
     print("=" * 60)
@@ -178,9 +203,10 @@ def main():
     if not args.purge:
         print()
         print("Your data has been preserved at:")
-        print(f"  {appdata_dir}")
+        print(f"  Config (Roaming): {roaming_appdata_dir}")
+        print(f"  Data (Local): {local_appdata_dir}")
         print()
-        print("To completely remove all traces, delete this folder manually.")
+        print("To completely remove all traces, delete these folders manually.")
     
     return 0
 

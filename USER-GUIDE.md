@@ -2,7 +2,7 @@
 
 ## One-Click Startup
 
-Double-click **`Start-Gateway.bat`**
+Double-click **`Start-Gateway.py`**
 
 That's it! The tray icon appears near your clock.
 
@@ -48,6 +48,6 @@ Right-click the green icon for menu options:
 
 | File | Purpose |
 |------|---------|
-| `Start-Gateway.bat` | **Run this** - Main launcher |
+| `Start-Gateway.py` | **Run this** - Main launcher |
 | `gateway-manager.py` | Tray manager (auto-runs) |
 | `.env` | Your settings (database path, etc.) |

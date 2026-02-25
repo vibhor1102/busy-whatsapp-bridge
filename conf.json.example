@@ -1,7 +1,5 @@
 {
   "server": {
-    "app_name": "Busy Whatsapp Bridge",
-    "app_version": "0.0.1",
     "debug": false,
     "host": "0.0.0.0",
     "port": 8000

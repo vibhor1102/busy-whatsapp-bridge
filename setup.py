@@ -102,19 +102,25 @@ class SetupManager:
         
         # Paths
         self.program_dir = SCRIPT_DIR
-        self.appdata_dir = self._get_appdata_dir()
+        self.local_appdata_dir = self._get_local_appdata_dir()  # For machine-specific data
+        self.roaming_config_dir = self._get_roaming_config_dir()  # For user config
         self.venv_dir = self.program_dir / "venv"
         self.python_dir = self.program_dir / "python"
         self.config_template = self.program_dir / "conf.json.example"
-        self.config_file = self.appdata_dir / "conf.json"
-        self.version_file = self.appdata_dir / ".version"
+        self.config_file = self.roaming_config_dir / "conf.json"
+        self.version_file = self.roaming_config_dir / ".version"
         
         # Current version from code
         self.current_version = get_version()
         
-    def _get_appdata_dir(self) -> Path:
-        """Get AppData directory for Busy Whatsapp Bridge."""
+    def _get_local_appdata_dir(self) -> Path:
+        """Get Local AppData directory for machine-specific data (databases, auth)."""
         appdata = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+        return appdata / "BusyWhatsappBridge"
+    
+    def _get_roaming_config_dir(self) -> Path:
+        """Get Roaming AppData directory for user configuration."""
+        appdata = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
         return appdata / "BusyWhatsappBridge"
     
     def _detect_state(self) -> Dict:
@@ -130,9 +136,9 @@ class SetupManager:
             'has_config': self.config_file.exists(),
         }
         
-        # Check if AppData has existing data
-        if self.appdata_dir.exists():
-            state['has_data'] = any(self.appdata_dir.iterdir())
+        # Check if Local AppData has existing data
+        if self.local_appdata_dir.exists():
+            state['has_data'] = any(self.local_appdata_dir.iterdir())
         
         # Check installed version
         if self.version_file.exists():
@@ -170,7 +176,7 @@ class SetupManager:
             return None
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        backup_dir = self.appdata_dir / "backups"
+        backup_dir = self.roaming_config_dir / "backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
         
         if path.is_file():
@@ -274,7 +280,7 @@ class SetupManager:
         self.logger.info("Setting up configuration...")
         
         try:
-            self.appdata_dir.mkdir(parents=True, exist_ok=True)
+            self.roaming_config_dir.mkdir(parents=True, exist_ok=True)
             
             if not self.config_template.exists():
                 self.logger.warning("Config template not found, using defaults")
@@ -359,7 +365,7 @@ class SetupManager:
                 spec.loader.exec_module(module)
                 
                 if hasattr(module, 'migrate'):
-                    module.migrate(self.appdata_dir, self.logger)
+                    module.migrate(self.roaming_config_dir, self.logger)
                     self.logger.success(f"Migration {from_ver} -> {to_ver} completed")
                 else:
                     self.logger.warning(f"Migration file missing 'migrate' function")
@@ -449,13 +455,14 @@ class SetupManager:
     
     def run(self) -> bool:
         """Main setup entry point."""
-        # Initialize logger
-        log_dir = self.appdata_dir / "logs"
+        # Initialize logger - logs go to install directory (overwritten on updates)
+        log_dir = self.program_dir / "logs"
         self.logger = SetupLogger(log_dir)
         
         self.logger.info(f"Starting setup v{self.current_version}")
         self.logger.info(f"Program directory: {self.program_dir}")
-        self.logger.info(f"AppData directory: {self.appdata_dir}")
+        self.logger.info(f"Roaming config directory: {self.roaming_config_dir}")
+        self.logger.info(f"Local data directory: {self.local_appdata_dir}")
         
         try:
             # Detect state

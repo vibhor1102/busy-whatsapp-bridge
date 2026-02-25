@@ -114,7 +114,7 @@ echo Your Busy Whatsapp Bridge is ready to use!
 echo.
 echo Quick Start:
 echo   1. Edit configuration: notepad "%CONFIG_FILE%"
-echo   2. Start manually: Start-Gateway.bat --tray
+echo   2. Start manually: Start-Gateway.py --tray
 echo   3. Enable auto-start: manage-task.bat
 echo.
 echo All data is stored in: %CONFIG_DIR%
