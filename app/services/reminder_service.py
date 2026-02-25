@@ -215,15 +215,20 @@ class ReminderService:
             # Generate ledger report
             report = ledger_data_service.generate_ledger_report(party_code)
             
-            # Generate PDF
-            pdf_bytes = ledger_pdf_service.generate_pdf(report)
-            
+            # Generate PDF to disk, then read bytes for API response.
+            pdf_path = self._ledger_dir / f"ledger_{party_code}_preview.pdf"
+            ledger_pdf_service.generate(report=report, output_path=str(pdf_path))
+
+            with open(pdf_path, 'rb') as f:
+                pdf_bytes = f.read()
+
             logger.info(
                 "ledger_pdf_generated",
                 party_code=party_code,
+                output_path=str(pdf_path),
                 size_bytes=len(pdf_bytes)
             )
-            
+
             return pdf_bytes
             
         except Exception as e:
