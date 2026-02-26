@@ -21,8 +21,15 @@ export interface Message {
   error_message?: string
   created_at: string
   updated_at: string
+  completed_at?: string
   sent_at?: string
   message_id?: string
+  delivery_status?: 'accepted' | 'sent' | 'delivered' | 'read' | 'failed' | 'unknown'
+  delivery_updated_at?: string
+  delivered_at?: string
+  read_at?: string
+  failed_at?: string
+  recipient_waid?: string
   source: string
 }
 
@@ -152,6 +159,12 @@ export interface ReminderConfig {
   last_updated: string
   default_credit_days: number
   default_provider: string
+  currency_symbol: string
+  company?: {
+    name: string
+    contact_phone: string
+    address?: string
+  }
   schedule: ScheduleConfig
   parties: Record<string, PartyConfig>
   templates: MessageTemplate[]
@@ -170,6 +183,45 @@ export interface ReminderStats {
   last_scheduler_run?: string
   next_scheduler_run?: string
   scheduler_status: 'running' | 'stopped' | 'paused'
+}
+
+export interface ReminderSnapshotStatus {
+  has_snapshot: boolean
+  last_refreshed_at?: string
+  duration_ms: number
+  row_count: number
+  nonzero_count: number
+  error_count: number
+  source_db_path_hash?: string
+}
+
+export interface MetaWebhookStatusError {
+  created_at: string
+  source_ip?: string
+  stage: string
+  error_message: string
+}
+
+export interface MetaWebhookStatus {
+  verified_config: boolean
+  last_verify_at?: string
+  last_verify_mode?: string
+  last_verify_source_ip?: string
+  last_webhook_post_at?: string
+  last_webhook_post_source_ip?: string
+  last_webhook_delivery_status_seen?: string
+  last_webhook_updates: number
+  stale_callbacks?: boolean
+  callback_staleness_minutes?: number
+  recent_errors: MetaWebhookStatusError[]
+}
+
+export interface PaginatedPartyReminderResponse {
+  items: PartyReminderInfo[]
+  total: number
+  offset: number
+  limit: number
+  has_more: boolean
 }
 
 export interface SchedulerStatus {

@@ -1,8 +1,8 @@
-from fastapi import FastAPI, HTTPException, Query, Depends, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Depends, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -14,7 +14,7 @@ import shutil
 import re
 import uuid
 
-from app.config import get_settings, get_config_path, get_local_appdata_path, load_settings, save_settings, Settings
+from app.config import get_settings, get_config_path, get_config_details, get_local_appdata_path, load_settings, save_settings, Settings
 from app.models.schemas import (
     InvoiceNotification,
     PartyDetails,
@@ -25,6 +25,7 @@ from app.database.connection import db
 from app.database.message_queue import message_db
 from app.services.busy_handler import busy_handler
 from app.services.queue_service import queue_service
+from app.services.reminder_config_service import reminder_config_service
 from app.websocket import ws_manager, WebSocketMessage
 from app.dashboard.routes import router as dashboard_router
 from app.api.reminder_routes import router as reminder_router
@@ -72,6 +73,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan context manager."""
     # Startup
     settings = get_settings()
+    config_details = get_config_details()
     logger.info(
         "application_startup",
         app_name=settings.APP_NAME,
@@ -79,6 +81,12 @@ async def lifespan(app: FastAPI):
         debug=settings.DEBUG,
         whatsapp_provider=settings.WHATSAPP_PROVIDER
     )
+    if config_details.get("meta_webhook_token_mismatch"):
+        logger.warning(
+            "meta_webhook_token_mismatch_detected",
+            roaming_path=config_details.get("roaming_path"),
+            local_path=config_details.get("local_path"),
+        )
     
     # Test database connection on startup
     db_status = db.test_connection()
@@ -543,6 +551,10 @@ async def get_queue_status():
 async def get_message_history(
     phone: Optional[str] = Query(None, description="Filter by phone number"),
     status: Optional[str] = Query(None, description="Filter by status (sent/failed)"),
+    source: Optional[str] = Query(None, description="Filter by source (busy/payment_reminder/api)"),
+    delivery_status: Optional[str] = Query(None, description="Filter by delivery lifecycle (accepted/sent/delivered/read/failed)"),
+    from_time: Optional[datetime] = Query(None, description="Filter completed_at >= from_time (ISO datetime)"),
+    to_time: Optional[datetime] = Query(None, description="Filter completed_at <= to_time (ISO datetime)"),
     limit: int = Query(100, ge=1, le=500, description="Number of results"),
     offset: int = Query(0, ge=0, description="Offset for pagination")
 ):
@@ -554,6 +566,10 @@ async def get_message_history(
     history = message_db.get_message_history(
         phone=phone,
         status=status,
+        source=source,
+        delivery_status=delivery_status,
+        from_time=from_time,
+        to_time=to_time,
         limit=limit,
         offset=offset
     )
@@ -564,6 +580,153 @@ async def get_message_history(
         "offset": offset,
         "messages": history
     }
+
+
+@app.get("/api/v1/whatsapp/meta/webhook", tags=["WhatsApp"])
+async def verify_meta_webhook(
+    request: Request,
+    hub_mode: Optional[str] = Query(None, alias="hub.mode"),
+    hub_verify_token: Optional[str] = Query(None, alias="hub.verify_token"),
+    hub_challenge: Optional[str] = Query(None, alias="hub.challenge"),
+):
+    """
+    Meta webhook verification endpoint.
+
+    Configure this URL in Meta App dashboard and set matching verify token in conf.json:
+    whatsapp.meta_webhook_verify_token
+    """
+    expected_token = settings.META_WEBHOOK_VERIFY_TOKEN
+    if hub_mode == "subscribe" and expected_token and hub_verify_token == expected_token:
+        message_db.record_meta_webhook_verify(
+            success=True,
+            mode=hub_mode,
+            source_ip=(request.client.host if request.client else None),
+        )
+        logger.info("meta_webhook_verified")
+        return HTMLResponse(content=str(hub_challenge or ""), status_code=200)
+
+    message_db.record_meta_webhook_verify(
+        success=False,
+        mode=hub_mode,
+        source_ip=(request.client.host if request.client else None),
+    )
+    logger.warning(
+        "meta_webhook_verify_failed",
+        mode=hub_mode,
+        has_expected_token=bool(expected_token),
+    )
+    raise HTTPException(status_code=403, detail="Meta webhook verification failed")
+
+
+@app.post("/api/v1/whatsapp/meta/webhook", tags=["WhatsApp"])
+async def receive_meta_webhook(request: Request):
+    """
+    Receive asynchronous Meta delivery status updates and reconcile message history.
+    """
+    try:
+        payload = await request.json()
+    except Exception as e:
+        message_db.record_meta_webhook_error(
+            source_ip=(request.client.host if request.client else None),
+            stage="json_parse",
+            error_message=str(e),
+        )
+        logger.error("meta_webhook_invalid_json", error=str(e))
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    logger.info(
+        "meta_webhook_post_received",
+        source_ip=(request.client.host if request.client else None),
+    )
+    updates = 0
+    last_status_seen: Optional[str] = None
+    entries = payload.get("entry", []) if isinstance(payload, dict) else []
+    for entry in entries:
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            statuses = value.get("statuses", [])
+            for status_item in statuses:
+                message_id = status_item.get("id")
+                delivery_status = status_item.get("status")
+                last_status_seen = delivery_status or last_status_seen
+                recipient_id = status_item.get("recipient_id")
+                error_text = None
+                errors = status_item.get("errors") or []
+                if errors:
+                    first_error = errors[0]
+                    parts = [
+                        str(first_error.get("title") or "").strip(),
+                        str(first_error.get("details") or "").strip(),
+                    ]
+                    error_text = " | ".join([p for p in parts if p])
+                    if first_error.get("code") is not None:
+                        error_text = f"[{first_error.get('code')}] {error_text}".strip()
+
+                event_time = None
+                ts_raw = status_item.get("timestamp")
+                if ts_raw:
+                    try:
+                        event_time = datetime.fromtimestamp(int(ts_raw))
+                    except Exception:
+                        event_time = None
+
+                try:
+                    changed = message_db.update_delivery_status(
+                        message_id=message_id,
+                        delivery_status=delivery_status or "unknown",
+                        error_message=error_text,
+                        recipient_waid=recipient_id,
+                        provider="meta",
+                        event_time=event_time,
+                        raw_payload=status_item,
+                    )
+                    if changed:
+                        updates += 1
+                        logger.info(
+                            "meta_delivery_status_applied",
+                            message_id=message_id,
+                            delivery_status=(delivery_status or "unknown"),
+                        )
+                except Exception as e:
+                    message_db.record_meta_webhook_error(
+                        source_ip=(request.client.host if request.client else None),
+                        stage="status_apply",
+                        error_message=str(e),
+                        payload=status_item,
+                    )
+                    logger.error(
+                        "meta_delivery_status_apply_failed",
+                        message_id=message_id,
+                        delivery_status=(delivery_status or "unknown"),
+                        error=str(e),
+                    )
+
+    message_db.record_meta_webhook_post(
+        source_ip=(request.client.host if request.client else None),
+        last_status=last_status_seen,
+        updates=updates,
+    )
+    logger.info("meta_webhook_processed", updates=updates)
+    return {"success": True, "updates": updates}
+
+
+@app.get("/api/v1/whatsapp/meta/webhook/status", tags=["WhatsApp"])
+async def get_meta_webhook_status():
+    """Get Meta webhook diagnostics and recent processing errors."""
+    status = message_db.get_meta_webhook_status(error_limit=8)
+    last_post_at = status.get("last_webhook_post_at")
+    stale_threshold_minutes = 15
+    status["stale_callbacks"] = False
+    status["callback_staleness_minutes"] = None
+    if last_post_at:
+        try:
+            dt = datetime.fromisoformat(str(last_post_at))
+            delta = datetime.now() - dt
+            status["callback_staleness_minutes"] = int(delta.total_seconds() // 60)
+            status["stale_callbacks"] = delta > timedelta(minutes=stale_threshold_minutes)
+        except Exception:
+            pass
+    return status
 
 
 @app.get("/api/v1/queue/dead-letter", tags=["Queue"])
@@ -874,6 +1037,13 @@ async def get_settings_endpoint():
     """
     Get current configuration settings (safe values only).
     """
+    db_connected, db_error = db.test_connection_with_error()
+    reminder_provider_configured = None
+    try:
+        reminder_provider_configured = reminder_config_service.get_config().default_provider
+    except Exception:
+        reminder_provider_configured = None
+
     return {
         "APP_NAME": settings.APP_NAME,
         "APP_VERSION": settings.APP_VERSION,
@@ -881,9 +1051,21 @@ async def get_settings_endpoint():
         "HOST": settings.HOST,
         "PORT": settings.PORT,
         "WHATSAPP_PROVIDER": settings.WHATSAPP_PROVIDER,
+        "WHATSAPP_DEFAULT_COUNTRY_CODE": settings.WHATSAPP_DEFAULT_COUNTRY_CODE,
         "BAILEYS_SERVER_URL": settings.BAILEYS_SERVER_URL,
         "BAILEYS_ENABLED": settings.BAILEYS_ENABLED,
+        "META_WEBHOOK_CONFIGURED": bool(settings.META_WEBHOOK_VERIFY_TOKEN),
+        "REMINDER_PROVIDER_CONFIGURED": reminder_provider_configured,
         "LOG_LEVEL": settings.LOG_LEVEL,
+        "config": get_config_details(),
+        "database": {
+            "bds_file_path": settings.BDS_FILE_PATH,
+            "password_configured": bool(settings.BDS_PASSWORD),
+            "test": {
+                "connected": db_connected,
+                "error": db_error,
+            },
+        },
     }
 
 
@@ -896,6 +1078,8 @@ async def get_config_file():
         "content": {
             "whatsapp": {
                 "provider": settings.WHATSAPP_PROVIDER,
+                "default_country_code": settings.WHATSAPP_DEFAULT_COUNTRY_CODE,
+                "meta_webhook_configured": bool(settings.META_WEBHOOK_VERIFY_TOKEN),
             },
             "baileys": {
                 "server_url": settings.BAILEYS_SERVER_URL,
@@ -907,17 +1091,20 @@ async def get_config_file():
             "database": {
                 "bds_file_path": settings.BDS_FILE_PATH,
             }
-        }
+        },
+        "config_meta": get_config_details(),
     }
 
 
 class ConfigUpdateRequest(BaseModel):
     """Validatable settings update request."""
     whatsapp_provider: Optional[str] = Field(None, pattern="^(baileys|meta|webhook|evolution)$")
+    whatsapp_default_country_code: Optional[str] = Field(None, pattern="^\\d{1,4}$")
     baileys_server_url: Optional[str] = Field(None, pattern="^https?://")
     baileys_enabled: Optional[bool] = None
     log_level: Optional[str] = Field(None, pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
     bds_file_path: Optional[str] = None
+    meta_webhook_verify_token: Optional[str] = None
 
 
 @app.put("/api/v1/settings/config", tags=["Settings"])
@@ -937,6 +1124,10 @@ async def update_config_file(request: ConfigUpdateRequest):
         
         if 'whatsapp_provider' in update_data:
             current_settings.whatsapp.provider = update_data['whatsapp_provider']
+        if 'whatsapp_default_country_code' in update_data:
+            current_settings.whatsapp.default_country_code = update_data['whatsapp_default_country_code']
+        if 'meta_webhook_verify_token' in update_data:
+            current_settings.whatsapp.meta_webhook_verify_token = update_data['meta_webhook_verify_token']
         if 'baileys_server_url' in update_data:
             current_settings.baileys.server_url = update_data['baileys_server_url']
         if 'baileys_enabled' in update_data:

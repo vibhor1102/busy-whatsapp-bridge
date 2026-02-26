@@ -105,16 +105,23 @@ class MessageQueueService:
             result = await provider.send_message(wa_message)
             
             if result.success:
+                delivery_status = result.delivery_status
+                if not delivery_status:
+                    delivery_status = "accepted" if provider_name == "meta" else "delivered"
                 # Mark as sent
                 message_db.mark_message_sent(
                     queue_id=queue_id,
                     message_id=result.message_id or f"msg_{queue_id}",
-                    provider=provider_name
+                    provider=provider_name,
+                    delivery_status=delivery_status,
+                    resolved_phone=result.normalized_to,
                 )
                 logger.info(
                     "queue_message_sent",
                     queue_id=queue_id,
-                    message_id=result.message_id
+                    message_id=result.message_id,
+                    delivery_status=delivery_status,
+                    phone=result.normalized_to or phone,
                 )
                 self._cleanup_local_media(pdf_url)
                 return True

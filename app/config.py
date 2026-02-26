@@ -1,5 +1,6 @@
 import json
 import os
+import logging
 from pathlib import Path
 from typing import Optional
 from functools import lru_cache
@@ -7,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.version import get_version
 
+logger = logging.getLogger(__name__)
 
 class ServerSettings(BaseModel):
     """Server runtime configuration (user-configurable)."""
@@ -29,6 +31,8 @@ class WhatsAppSettings(BaseModel):
     meta_phone_number_id: Optional[str] = None
     meta_access_token: Optional[str] = None
     meta_business_id: Optional[str] = None
+    meta_webhook_verify_token: Optional[str] = None
+    default_country_code: str = "91"
     webhook_url: Optional[str] = None
     webhook_auth_token: Optional[str] = None
 
@@ -117,6 +121,14 @@ class Settings(BaseModel):
     @property
     def META_BUSINESS_ID(self) -> Optional[str]:
         return self.whatsapp.meta_business_id
+
+    @property
+    def META_WEBHOOK_VERIFY_TOKEN(self) -> Optional[str]:
+        return self.whatsapp.meta_webhook_verify_token
+
+    @property
+    def WHATSAPP_DEFAULT_COUNTRY_CODE(self) -> str:
+        return self.whatsapp.default_country_code
     
     @property
     def WEBHOOK_URL(self) -> Optional[str]:
@@ -221,8 +233,72 @@ def get_roaming_appdata_path() -> Path:
 
 
 def get_config_path() -> Path:
-    """Get the configuration file path in Roaming AppData."""
-    return get_roaming_appdata_path() / "conf.json"
+    """Resolve effective configuration path with explicit precedence."""
+    roaming = get_roaming_appdata_path() / "conf.json"
+    local = get_local_appdata_path() / "conf.json"
+
+    if roaming.exists() and local.exists():
+        try:
+            roaming_data = roaming.read_text(encoding="utf-8", errors="ignore")
+            local_data = local.read_text(encoding="utf-8", errors="ignore")
+            if roaming_data != local_data:
+                logger.warning(
+                    "Both Roaming and Local conf.json exist; using Roaming path. "
+                    "Update/migrate Local copy if unintended.",
+                    extra={"roaming_path": str(roaming), "local_path": str(local)},
+                )
+        except Exception:
+            logger.warning(
+                "Both Roaming and Local conf.json exist; using Roaming path.",
+                extra={"roaming_path": str(roaming), "local_path": str(local)},
+            )
+    if roaming.exists():
+        return roaming
+    if local.exists():
+        logger.warning(
+            "Falling back to Local conf.json because Roaming conf.json is missing.",
+            extra={"local_path": str(local)},
+        )
+        return local
+    return roaming
+
+
+def get_config_details() -> dict:
+    """Return effective and alternate config locations for diagnostics."""
+    effective = get_config_path()
+    roaming = get_roaming_appdata_path() / "conf.json"
+    local = get_local_appdata_path() / "conf.json"
+    roaming_token_configured = False
+    local_token_configured = False
+    token_mismatch = False
+    try:
+        if roaming.exists():
+            roaming_data = json.loads(roaming.read_text(encoding="utf-8", errors="ignore"))
+            roaming_token = (roaming_data.get("whatsapp", {}) or {}).get("meta_webhook_verify_token")
+            roaming_token_configured = bool(str(roaming_token or "").strip())
+        else:
+            roaming_token = None
+        if local.exists():
+            local_data = json.loads(local.read_text(encoding="utf-8", errors="ignore"))
+            local_token = (local_data.get("whatsapp", {}) or {}).get("meta_webhook_verify_token")
+            local_token_configured = bool(str(local_token or "").strip())
+        else:
+            local_token = None
+        if roaming.exists() and local.exists():
+            token_mismatch = (str(roaming_token or "").strip() != str(local_token or "").strip())
+    except Exception:
+        pass
+    return {
+        "effective_path": str(effective),
+        "effective_source": "roaming" if effective == roaming else "local",
+        "roaming_path": str(roaming),
+        "roaming_exists": roaming.exists(),
+        "local_path": str(local),
+        "local_exists": local.exists(),
+        "meta_webhook_token_mismatch": token_mismatch,
+        "roaming_meta_webhook_token_configured": roaming_token_configured,
+        "local_meta_webhook_token_configured": local_token_configured,
+    }
 
 
 def load_settings() -> Settings:

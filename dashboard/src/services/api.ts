@@ -12,7 +12,10 @@ import type {
   AmountDueCalculation,
   MessageTemplate,
   ReminderStats,
-  SchedulerStatus
+  SchedulerStatus,
+  PaginatedPartyReminderResponse,
+  ReminderSnapshotStatus,
+  MetaWebhookStatus,
 } from '@/types'
 
 const API_BASE = '/api/v1'
@@ -206,15 +209,45 @@ class ApiService {
     search?: string,
     sortBy: string = 'amount_due',
     sortOrder: string = 'desc',
-    filterBy: string = 'all'
-  ): Promise<PartyReminderInfo[]> {
+    filterBy: string = 'all',
+    offset: number = 0,
+    limit: number = 100,
+    includeZero: boolean = false
+  ): Promise<PaginatedPartyReminderResponse> {
     const params = new URLSearchParams()
     if (search) params.append('search', search)
     params.append('sort_by', sortBy)
     params.append('sort_order', sortOrder)
     params.append('filter_by', filterBy)
+    params.append('offset', offset.toString())
+    params.append('limit', limit.toString())
+    params.append('include_zero', includeZero ? 'true' : 'false')
     
-    return this.fetch<PartyReminderInfo[]>(`/reminders/parties?${params}`)
+    return this.fetch<PaginatedPartyReminderResponse>(`/reminders/parties?${params}`)
+  }
+
+  async getReminderSnapshotStatus(): Promise<ReminderSnapshotStatus> {
+    return this.fetch<ReminderSnapshotStatus>('/reminders/snapshot/status')
+  }
+
+  async refreshReminderSnapshot(): Promise<ReminderSnapshotStatus> {
+    return this.fetch<ReminderSnapshotStatus>('/reminders/snapshot/refresh', {
+      method: 'POST',
+    })
+  }
+
+  async getMetaWebhookStatus(): Promise<MetaWebhookStatus> {
+    return this.fetch<MetaWebhookStatus>('/whatsapp/meta/webhook/status')
+  }
+
+  async getReminderHistory(
+    deliveryStatus?: string,
+    limit: number = 10
+  ): Promise<Message[]> {
+    const params = new URLSearchParams()
+    if (deliveryStatus) params.append('delivery_status', deliveryStatus)
+    params.append('limit', limit.toString())
+    return this.fetch<{ items: Message[] }>(`/reminders/history?${params}`).then((res) => res.items)
   }
 
   async getPartyDetails(partyCode: string): Promise<PartyReminderInfo> {

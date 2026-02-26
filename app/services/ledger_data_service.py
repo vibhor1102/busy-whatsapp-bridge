@@ -5,6 +5,7 @@ Refactored for universality - works with any Busy database configuration.
 import structlog
 from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import List, Optional, Dict, Tuple
 
 from app.database.connection import db
@@ -100,6 +101,29 @@ class LedgerDataService:
             attempted_formats=DATE_FORMATS
         )
         return date.today()
+
+    def _try_parse_date_strict(self, date_value) -> Optional[date]:
+        """
+        Strict date parsing: returns None if value is not a valid date.
+        Does not log warnings for non-date config noise.
+        """
+        if isinstance(date_value, datetime):
+            return date_value.date()
+        if isinstance(date_value, date):
+            return date_value
+        if date_value is None:
+            return None
+
+        raw = str(date_value).strip()
+        if not raw:
+            return None
+
+        for fmt in DATE_FORMATS:
+            try:
+                return datetime.strptime(raw, fmt).date()
+            except ValueError:
+                continue
+        return None
     
     def _calculate_year_name(self, start_date: date, end_date: date) -> str:
         """Calculate financial year name (e.g., '2024-25')."""
@@ -145,9 +169,15 @@ class LedgerDataService:
                     )
                     self._financial_year_cache = info
                     return info
-                
-                # Config is empty - try to auto-detect from transaction dates
-                logger.warning("financial_year_empty_in_db", rec_type=ConfigRecType.FINANCIAL_YEAR)
+
+                # Config(RecType=7) missing/empty - attempt dynamic Config scan.
+                dynamic_fy = self._detect_financial_year_from_config_rows()
+                if dynamic_fy:
+                    self._financial_year_cache = dynamic_fy
+                    return dynamic_fy
+
+                # Final fallback: detect from transactions.
+                logger.info("financial_year_config_missing_auto_detecting", rec_type=ConfigRecType.FINANCIAL_YEAR)
                 info = self._auto_detect_financial_year()
                 self._financial_year_cache = info
                 return info
@@ -157,6 +187,52 @@ class LedgerDataService:
             info = self._auto_detect_financial_year()
             self._financial_year_cache = info
             return info
+
+    def _detect_financial_year_from_config_rows(self) -> Optional[FinancialYearInfo]:
+        """
+        Try to discover financial year from any Config row that contains
+        parseable date range in C1/C2 even when RecType mapping differs.
+        """
+        try:
+            with self.db.get_cursor() as cursor:
+                cursor.execute("SELECT C1, C2, C3, RecType FROM Config")
+                candidates: List[Tuple[date, date, str, int]] = []
+                for row in cursor.fetchall():
+                    c1, c2, c3, rec_type = row[0], row[1], row[2], int(row[3] or 0)
+                    if not c1 or not c2:
+                        continue
+                    start_date = self._try_parse_date_strict(c1)
+                    end_date = self._try_parse_date_strict(c2)
+                    if not start_date or not end_date:
+                        continue
+                    if end_date < start_date:
+                        continue
+                    # Ignore placeholder epoch-ish rows.
+                    if start_date.year < 1950 or end_date.year < 1950:
+                        continue
+                    year_name = c3 if c3 else self._calculate_year_name(start_date, end_date)
+                    candidates.append((start_date, end_date, year_name, rec_type))
+
+                if not candidates:
+                    return None
+
+                # Prefer the most recent financial window.
+                start_date, end_date, year_name, rec_type = max(candidates, key=lambda x: x[1])
+                logger.info(
+                    "financial_year_detected_from_config_scan",
+                    rec_type=rec_type,
+                    start_date=start_date,
+                    end_date=end_date,
+                    year_name=year_name,
+                )
+                return FinancialYearInfo(
+                    start_date=start_date,
+                    end_date=end_date,
+                    year_name=year_name,
+                )
+        except Exception as e:
+            logger.debug("financial_year_config_scan_failed", error=str(e))
+            return None
     
     def _auto_detect_financial_year(self) -> FinancialYearInfo:
         """
@@ -176,12 +252,13 @@ class LedgerDataService:
                     min_date = self._parse_date(row[0])
                     max_date = self._parse_date(row[1])
                     
-                    # Determine FY based on Indian convention (Apr-Mar)
-                    # Adjust if your region uses different FY
-                    if min_date.month >= 4:
-                        fy_start = date(min_date.year, 4, 1)
+                    # Determine active FY from LATEST transaction date (not earliest).
+                    # Using min_date can anchor to stale historical years.
+                    anchor_date = max_date
+                    if anchor_date.month >= 4:
+                        fy_start = date(anchor_date.year, 4, 1)
                     else:
-                        fy_start = date(min_date.year - 1, 4, 1)
+                        fy_start = date(anchor_date.year - 1, 4, 1)
                     
                     fy_end = date(fy_start.year + 1, 3, 31)
                     year_name = self._calculate_year_name(fy_start, fy_end)
@@ -192,7 +269,8 @@ class LedgerDataService:
                         end_date=fy_end,
                         year_name=year_name,
                         min_transaction_date=min_date,
-                        max_transaction_date=max_date
+                        max_transaction_date=max_date,
+                        anchor_date=anchor_date,
                     )
                     
                     return FinancialYearInfo(
@@ -258,16 +336,41 @@ class LedgerDataService:
                     self._company_info_cache = info
                     return info
                 else:
-                    logger.warning("company_info_empty_in_db", rec_type=ConfigRecType.COMPANY_INFO)
-                    info = CompanyInfo(name="Company")
+                    fallback_name = self._detect_company_name_fallback()
+                    logger.info("company_info_missing_using_fallback", rec_type=ConfigRecType.COMPANY_INFO, fallback_name=fallback_name)
+                    info = CompanyInfo(name=fallback_name)
                     self._company_info_cache = info
                     return info
                     
         except Exception as e:
             logger.error("get_company_info_error", error=str(e))
-            info = CompanyInfo(name="Company")
+            info = CompanyInfo(name=self._detect_company_name_fallback())
             self._company_info_cache = info
             return info
+
+    def _detect_company_name_fallback(self) -> str:
+        """
+        Best-effort company name when Config rec-type mapping is unavailable.
+        Priority:
+        1) Locks.CompanyName (if populated)
+        2) DB filename stem
+        3) Generic fallback
+        """
+        try:
+            with self.db.get_cursor() as cursor:
+                cursor.execute("SELECT TOP 1 CompanyName FROM Locks")
+                row = cursor.fetchone()
+                if row and row[0] and str(row[0]).strip():
+                    return str(row[0]).strip()
+        except Exception:
+            pass
+
+        db_path = getattr(self.db.settings, "BDS_FILE_PATH", "") or ""
+        if db_path:
+            stem = Path(db_path).stem.strip()
+            if stem:
+                return stem
+        return "Company"
     
     def get_customer_info(self, party_code: str) -> CustomerInfo:
         """

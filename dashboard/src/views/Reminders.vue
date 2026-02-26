@@ -1,17 +1,28 @@
 <template>
   <div class="reminders-page">
-    <!-- Header -->
     <div class="page-header">
       <div class="header-content">
         <h1>Payment Reminders</h1>
         <p class="subtitle">Send automated payment reminders with attached ledgers</p>
+        <div class="snapshot-meta" v-if="snapshotStatus">
+          <span v-if="snapshotStatus.has_snapshot">
+            Last refreshed: {{ formatDateTime(snapshotStatus.last_refreshed_at) }}
+          </span>
+          <span v-else>
+            Snapshot not generated yet
+          </span>
+          <span>
+            Rows: {{ snapshotStatus.row_count }} | Due &gt; 0: {{ snapshotStatus.nonzero_count }}
+          </span>
+        </div>
       </div>
       <div class="header-actions">
         <Button
-          icon="pi pi-refresh"
+          label="Refresh Snapshot"
+          icon="pi pi-sync"
           class="p-button-outlined"
-          @click="refreshData"
-          :loading="loading"
+          @click="refreshSnapshot"
+          :loading="snapshotRefreshing"
         />
         <Button
           icon="pi pi-cog"
@@ -24,8 +35,95 @@
     <Message v-if="loadError" severity="warn" :closable="false" class="mb-3">
       {{ loadError }}
     </Message>
+    <Message v-if="metaHealth?.stale_callbacks" severity="warn" :closable="false" class="mb-3">
+      Webhook configured but no recent Meta callback in the last
+      {{ metaHealth.callback_staleness_minutes ?? 'many' }} minutes.
+      Check tunnel stability and Meta webhook subscription.
+    </Message>
 
-    <!-- Stats Cards -->
+    <Card class="meta-health mb-4">
+      <template #title>
+        <div class="flex justify-content-between align-items-center">
+          <span>Meta Delivery Health</span>
+          <Button
+            icon="pi pi-refresh"
+            class="p-button-text p-button-sm"
+            @click="loadMetaHealth"
+          />
+        </div>
+      </template>
+      <template #content>
+        <div class="health-grid">
+          <div class="health-item">
+            <label>Webhook Configured</label>
+            <span :class="metaHealth?.verified_config ? 'text-green-500' : 'text-orange-500'">
+              {{ metaHealth?.verified_config ? 'Yes' : 'No' }}
+            </span>
+          </div>
+          <div class="health-item">
+            <label>Last Verify</label>
+            <span>{{ formatDateTime(metaHealth?.last_verify_at) }}</span>
+          </div>
+          <div class="health-item">
+            <label>Last Callback</label>
+            <span>{{ formatDateTime(metaHealth?.last_webhook_post_at) }}</span>
+          </div>
+          <div class="health-item">
+            <label>Last Status Seen</label>
+            <span>{{ metaHealth?.last_webhook_delivery_status_seen || 'N/A' }}</span>
+          </div>
+          <div class="health-item">
+            <label>Reminder Provider</label>
+            <span>{{ settingsInfo?.REMINDER_PROVIDER_CONFIGURED || 'N/A' }}</span>
+          </div>
+          <div class="health-item">
+            <label>Token State</label>
+            <span>{{ settingsInfo?.META_WEBHOOK_CONFIGURED ? 'Configured' : 'Missing' }}</span>
+          </div>
+        </div>
+
+        <div class="runbook mt-3">
+          <h4>Quick Setup (5 steps)</h4>
+          <ol>
+            <li>Start tunnel to <code>http://localhost:8000</code> (prefer ngrok/cloudflared).</li>
+            <li>Set callback URL in Meta: <code>{{ webhookCallbackUrl }}</code>.</li>
+            <li>Set verify token to configured value in app settings.</li>
+            <li>Subscribe only <code>messages</code> webhook field.</li>
+            <li>Send one test reminder and confirm transition beyond <code>accepted</code>.</li>
+          </ol>
+          <p class="text-muted">
+            Note: <code>loca.lt</code> is not recommended for webhook callbacks due to interstitial/password behavior.
+          </p>
+          <div class="runbook-actions">
+            <Button
+              label="Copy Callback URL"
+              icon="pi pi-copy"
+              class="p-button-outlined p-button-sm"
+              @click="copyToClipboard(webhookCallbackUrl, 'Callback URL copied')"
+            />
+            <Button
+              label="Copy Status Command"
+              icon="pi pi-copy"
+              class="p-button-outlined p-button-sm ml-2"
+              @click="copyToClipboard(historyCommand, 'Command copied')"
+            />
+          </div>
+        </div>
+
+        <div class="recent-transitions mt-3">
+          <h4>Recent Delivery Transitions</h4>
+          <ul v-if="recentTransitions.length > 0">
+            <li v-for="item in recentTransitions" :key="item.id">
+              <code>{{ item.phone }}</code> ->
+              <strong>{{ item.delivery_status || 'unknown' }}</strong>
+              at {{ formatDateTime(item.delivery_updated_at || item.completed_at) }}
+            </li>
+          </ul>
+          <p v-else class="text-muted">No recent reminder delivery transitions yet.</p>
+        </div>
+      </template>
+    </Card>
+
     <div class="stats-grid">
       <Card class="stat-card">
         <template #content>
@@ -47,15 +145,12 @@
       </Card>
       <Card class="stat-card">
         <template #content>
-          <div class="stat-value" :class="schedulerStatusClass">
-            {{ schedulerStatusText }}
-          </div>
+          <div class="stat-value" :class="schedulerStatusClass">{{ schedulerStatusText }}</div>
           <div class="stat-label">Scheduler Status</div>
         </template>
       </Card>
     </div>
 
-    <!-- Configuration Panel -->
     <Card v-if="showConfigPanel" class="config-panel mb-4">
       <template #title>
         <div class="flex justify-content-between align-items-center">
@@ -93,12 +188,7 @@
             </div>
             <div class="field">
               <label>Time</label>
-              <InputMask
-                v-model="config.schedule.time"
-                mask="99:99"
-                placeholder="HH:MM"
-                @blur="saveSchedule"
-              />
+              <InputMask v-model="config.schedule.time" mask="99:99" placeholder="HH:MM" @blur="saveSchedule" />
             </div>
           </div>
           <div class="config-section">
@@ -118,246 +208,147 @@
                 @click="stopScheduler"
                 :disabled="!schedulerStatus?.is_running"
               />
-              <Button
-                label="Trigger Now"
-                icon="pi pi-send"
-                class="p-button-primary"
-                @click="triggerManualRun"
-              />
+              <Button label="Trigger Now" icon="pi pi-send" class="p-button-primary" @click="triggerManualRun" />
             </div>
           </div>
         </div>
       </template>
     </Card>
 
-    <!-- Template Selector -->
     <Card class="template-panel mb-4">
       <template #title>
         <div class="flex justify-content-between align-items-center">
           <span>Message Template</span>
-          <div class="flex gap-2">
-            <Button
-              icon="pi pi-pencil"
-              label="Edit Templates"
-              class="p-button-outlined p-button-sm"
-              @click="showTemplateEditor = true"
-            />
-          </div>
+          <Button
+            icon="pi pi-pencil"
+            label="Edit Templates"
+            class="p-button-outlined p-button-sm"
+            @click="showTemplateEditor = true"
+          />
         </div>
       </template>
       <template #content>
-        <div class="template-selector">
-          <Dropdown
-            v-model="selectedTemplateId"
-            :options="templates"
-            optionLabel="name"
-            optionValue="id"
-            placeholder="Select Template"
-            class="w-full md:w-30rem"
-            @change="onTemplateChange"
-          />
-          <div v-if="selectedTemplate" class="template-preview mt-3">
-            <label>Preview:</label>
-            <div class="preview-box">
-              <pre>{{ selectedTemplate.content }}</pre>
-            </div>
+        <Dropdown
+          v-model="selectedTemplateId"
+          :options="templates"
+          optionLabel="name"
+          optionValue="id"
+          placeholder="Select Template"
+          class="w-full md:w-30rem"
+          @change="onTemplateChange"
+        />
+        <div v-if="selectedTemplate" class="template-preview mt-3">
+          <label>Preview:</label>
+          <div class="preview-box">
+            <pre>{{ selectedTemplate.content }}</pre>
           </div>
         </div>
       </template>
     </Card>
 
-    <!-- Party Selection -->
     <Card class="party-selection">
       <template #title>
-        <div class="flex flex-wrap justify-content-between align-items-center gap-2">
-          <span>Party Selection ({{ filteredParties.length }} eligible)</span>
-          <div class="flex flex-wrap gap-2">
+        <div class="table-toolbar">
+          <span>Party Selection ({{ totalRecords }} total)</span>
+          <div class="table-toolbar-right">
             <span class="p-input-icon-left">
               <i class="pi pi-search" />
-              <InputText
-                v-model="searchQuery"
-                placeholder="Search parties..."
-                class="p-inputtext-sm"
-              />
+              <InputText v-model="searchQuery" placeholder="Search parties..." class="p-inputtext-sm" />
             </span>
-            <Dropdown
-              v-model="sortBy"
-              :options="sortOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Sort by"
-              class="p-dropdown-sm"
-            />
             <Dropdown
               v-model="filterBy"
               :options="filterOptions"
               optionLabel="label"
               optionValue="value"
-              placeholder="Filter"
               class="p-dropdown-sm"
             />
+            <div class="zero-toggle">
+              <label>Show zero/unavailable</label>
+              <InputSwitch v-model="includeZero" />
+            </div>
           </div>
         </div>
       </template>
       <template #content>
-        <div v-if="loadingParties" class="empty-state">
-          <i class="pi pi-spin pi-spinner empty-icon"></i>
-          <h4>Loading Parties...</h4>
-          <p>Reading customer balances from Busy. This can take a few seconds.</p>
-        </div>
-
-        <div v-else-if="filteredParties.length === 0" class="empty-state">
-          <i class="pi pi-inbox empty-icon"></i>
-          <h4>No Eligible Parties Found</h4>
-          <p>
-            No parties currently match reminder criteria (amount due, filters, and DB data).
-            Try changing filters or refresh after verifying Busy data and credit-day rules.
-          </p>
-        </div>
-
         <div class="selection-actions mb-3">
+          <Button label="Select Page" icon="pi pi-check-square" class="p-button-outlined p-button-sm" @click="selectPage" />
           <Button
-            label="Select All"
-            icon="pi pi-check-square"
-            class="p-button-outlined p-button-sm"
-            @click="selectAll"
-          />
-          <Button
-            label="Deselect All"
+            label="Deselect Page"
             icon="pi pi-minus-square"
             class="p-button-outlined p-button-sm ml-2"
-            @click="deselectAll"
+            @click="deselectPage"
           />
+          <Button label="Clear All" icon="pi pi-times" class="p-button-text p-button-sm ml-2" @click="clearAllSelections" />
           <span class="ml-3 text-muted">
             Selected: {{ selectedTempCount }} parties ({{ formatCurrency(selectedTotalAmount) }})
           </span>
         </div>
 
-        <!-- Selected Parties Group -->
-        <div v-if="selectedParties.length > 0" class="party-group">
-          <h4 class="group-title">
-            <i class="pi pi-check-circle text-green-500"></i>
-            Selected for This Batch ({{ selectedParties.length }})
-          </h4>
-          <DataTable
-            :value="selectedParties"
-            class="p-datatable-sm"
-            stripedRows
-            responsiveLayout="scroll"
-          >
-            <Column style="width: 3rem">
-              <template #body="{ data }">
-                <Checkbox :modelValue="true" :binary="true" @update:modelValue="() => toggleSelection(data.code)" />
-              </template>
-            </Column>
-            <Column field="name" header="Party Name" sortable>
-              <template #body="{ data }">
-                <div class="party-name">
-                  <span class="font-medium">{{ data.name }}</span>
-                  <span class="text-xs text-secondary">Code: {{ data.code }}</span>
-                </div>
-              </template>
-            </Column>
-            <Column field="amount_due_formatted" header="Amount Due" sortable style="width: 150px">
-              <template #body="{ data }">
-                <span class="amount-due">{{ data.amount_due_formatted }}</span>
-              </template>
-            </Column>
-            <Column field="sales_credit_days" header="Credit" sortable style="width: 100px">
-              <template #body="{ data }">
-                <span class="credit-days">{{ data.sales_credit_days }}d</span>
-              </template>
-            </Column>
-            <Column header="Permanent" style="width: 120px">
-              <template #body="{ data }">
-                <ToggleButton
-                  :modelValue="data.permanent_enabled"
-                  onIcon="pi pi-check"
-                  offIcon="pi pi-times"
-                  onLabel="On"
-                  offLabel="Off"
-                  class="p-button-sm"
-                  @update:modelValue="(val) => updatePermanentSelection(data.code, val)"
-                />
-              </template>
-            </Column>
-            <Column header="Actions" style="width: 120px">
-              <template #body="{ data }">
-                <Button
-                  icon="pi pi-file-pdf"
-                  class="p-button-text p-button-sm"
-                  @click="generateLedger(data.code)"
-                  tooltip="Generate Ledger"
-                />
-              </template>
-            </Column>
-          </DataTable>
-        </div>
-
-        <!-- Unselected Parties Group -->
-        <div v-if="unselectedParties.length > 0" class="party-group mt-4">
-          <h4 class="group-title">
-            <i class="pi pi-circle text-gray-400"></i>
-            Not Selected ({{ unselectedParties.length }})
-          </h4>
-          <DataTable
-            :value="unselectedParties"
-            class="p-datatable-sm"
-            stripedRows
-            responsiveLayout="scroll"
-          >
-            <Column style="width: 3rem">
-              <template #body="{ data }">
-                <Checkbox :modelValue="false" :binary="true" @update:modelValue="() => toggleSelection(data.code)" />
-              </template>
-            </Column>
-            <Column field="name" header="Party Name" sortable>
-              <template #body="{ data }">
-                <div class="party-name">
-                  <span class="font-medium">{{ data.name }}</span>
-                  <span class="text-xs text-secondary">Code: {{ data.code }}</span>
-                </div>
-              </template>
-            </Column>
-            <Column field="amount_due_formatted" header="Amount Due" sortable style="width: 150px">
-              <template #body="{ data }">
-                <span class="amount-due">{{ data.amount_due_formatted }}</span>
-              </template>
-            </Column>
-            <Column field="sales_credit_days" header="Credit" sortable style="width: 100px">
-              <template #body="{ data }">
-                <span class="credit-days">{{ data.sales_credit_days }}d</span>
-              </template>
-            </Column>
-            <Column header="Permanent" style="width: 120px">
-              <template #body="{ data }">
-                <ToggleButton
-                  :modelValue="data.permanent_enabled"
-                  onIcon="pi pi-check"
-                  offIcon="pi pi-times"
-                  onLabel="On"
-                  offLabel="Off"
-                  class="p-button-sm"
-                  @update:modelValue="(val) => updatePermanentSelection(data.code, val)"
-                />
-              </template>
-            </Column>
-            <Column header="Actions" style="width: 120px">
-              <template #body="{ data }">
-                <Button
-                  icon="pi pi-file-pdf"
-                  class="p-button-text p-button-sm"
-                  @click="generateLedger(data.code)"
-                  tooltip="Generate Ledger"
-                />
-              </template>
-            </Column>
-          </DataTable>
-        </div>
+        <DataTable
+          :value="parties"
+          :loading="loadingParties"
+          :lazy="true"
+          :paginator="true"
+          :rows="rows"
+          :totalRecords="totalRecords"
+          :first="first"
+          :sortField="sortBy"
+          :sortOrder="sortOrder === 'asc' ? 1 : -1"
+          @page="onPage"
+          @sort="onSort"
+          class="p-datatable-sm"
+          stripedRows
+          responsiveLayout="scroll"
+        >
+          <Column style="width: 3rem">
+            <template #body="{ data }">
+              <Checkbox
+                :modelValue="isSelected(data.code)"
+                :binary="true"
+                @update:modelValue="(checked) => toggleSelection(data, !!checked)"
+              />
+            </template>
+          </Column>
+          <Column field="name" header="Party Name" sortable>
+            <template #body="{ data }">
+              <div class="party-name">
+                <span class="font-medium">{{ data.name }}</span>
+                <span class="text-xs text-secondary">Code: {{ data.code }}</span>
+              </div>
+            </template>
+          </Column>
+          <Column field="amount_due" header="Amount Due" sortable style="width: 170px">
+            <template #body="{ data }">
+              <span class="amount-due">{{ data.amount_due_formatted }}</span>
+            </template>
+          </Column>
+          <Column field="sales_credit_days" header="Credit" sortable style="width: 110px">
+            <template #body="{ data }">
+              <span class="credit-days">{{ data.sales_credit_days }}d</span>
+            </template>
+          </Column>
+          <Column header="Permanent" style="width: 130px">
+            <template #body="{ data }">
+              <ToggleButton
+                :modelValue="data.permanent_enabled"
+                onIcon="pi pi-check"
+                offIcon="pi pi-times"
+                onLabel="On"
+                offLabel="Off"
+                class="p-button-sm"
+                @update:modelValue="(val) => updatePermanentSelection(data.code, !!val)"
+              />
+            </template>
+          </Column>
+          <Column header="Actions" style="width: 110px">
+            <template #body="{ data }">
+              <Button icon="pi pi-file-pdf" class="p-button-text p-button-sm" @click="generateLedger(data.code)" />
+            </template>
+          </Column>
+        </DataTable>
       </template>
     </Card>
 
-    <!-- Action Buttons -->
     <div class="action-bar">
       <Button
         label="Send Now"
@@ -373,21 +364,10 @@
         :disabled="selectedTempCount === 0 || !selectedTemplateId"
         @click="showScheduleDialog = true"
       />
-      <Button
-        label="Export CSV"
-        icon="pi pi-download"
-        class="p-button-outlined p-button-lg ml-3"
-        @click="exportCsv"
-      />
+      <Button label="Export CSV" icon="pi pi-download" class="p-button-outlined p-button-lg ml-3" @click="exportCsv" />
     </div>
 
-    <!-- Schedule Dialog -->
-    <Dialog
-      v-model:visible="showScheduleDialog"
-      header="Schedule Reminders"
-      modal
-      :style="{ width: '450px' }"
-    >
+    <Dialog v-model:visible="showScheduleDialog" header="Schedule Reminders" modal :style="{ width: '450px' }">
       <div class="schedule-form">
         <div class="field">
           <label>Schedule Date</label>
@@ -409,27 +389,19 @@
       </template>
     </Dialog>
 
-    <!-- Template Editor Dialog -->
-    <Dialog
-      v-model:visible="showTemplateEditor"
-      header="Message Templates"
-      modal
-      maximizable
-      :style="{ width: '800px', height: '600px' }"
-    >
+    <Dialog v-model:visible="showTemplateEditor" header="Message Templates" modal maximizable :style="{ width: '800px', height: '600px' }">
       <TemplateEditor @close="showTemplateEditor = false" @saved="loadTemplates" />
     </Dialog>
 
-    <!-- Confirmation Dialog -->
     <ConfirmDialog />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import Button from 'primevue/button'
-import Card from 'primevue/card'
 import Calendar from 'primevue/calendar'
+import Card from 'primevue/card'
 import Checkbox from 'primevue/checkbox'
 import Column from 'primevue/column'
 import ConfirmDialog from 'primevue/confirmdialog'
@@ -443,44 +415,57 @@ import Message from 'primevue/message'
 import ToggleButton from 'primevue/togglebutton'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
-import { api } from '@/services/api'
-import type { 
-  PartyReminderInfo, 
-  ReminderConfig, 
-  MessageTemplate, 
-  ReminderStats,
-  SchedulerStatus 
-} from '@/types'
+import type { DataTablePageEvent, DataTableSortEvent } from 'primevue/datatable'
 import TemplateEditor from '@/components/TemplateEditor.vue'
+import { api } from '@/services/api'
+import type {
+  Message as QueueMessage,
+  MetaWebhookStatus,
+  MessageTemplate,
+  PartyReminderInfo,
+  ReminderConfig,
+  ReminderSnapshotStatus,
+  ReminderStats,
+  SchedulerStatus,
+} from '@/types'
 
 const confirm = useConfirm()
 const toast = useToast()
 
-// State
 const loading = ref(false)
 const loadingParties = ref(false)
+const snapshotRefreshing = ref(false)
 const loadError = ref('')
-const parties = ref<PartyReminderInfo[]>([])
+
 const config = ref<ReminderConfig | null>(null)
 const templates = ref<MessageTemplate[]>([])
-const selectedTemplateId = ref<string>('')
+const selectedTemplateId = ref('')
 const stats = ref<ReminderStats | null>(null)
 const schedulerStatus = ref<SchedulerStatus | null>(null)
+const snapshotStatus = ref<ReminderSnapshotStatus | null>(null)
+const metaHealth = ref<MetaWebhookStatus | null>(null)
+const settingsInfo = ref<Record<string, any> | null>(null)
+const recentTransitions = ref<QueueMessage[]>([])
 
-// UI State
+const parties = ref<PartyReminderInfo[]>([])
+const totalRecords = ref(0)
+const first = ref(0)
+const rows = ref(100)
+const sortBy = ref('amount_due')
+const sortOrder = ref<'asc' | 'desc'>('desc')
+const filterBy = ref('all')
+const includeZero = ref(false)
+const searchQuery = ref('')
+
 const showConfigPanel = ref(false)
 const showTemplateEditor = ref(false)
 const showScheduleDialog = ref(false)
-const searchQuery = ref('')
-const sortBy = ref('amount_due')
-const filterBy = ref('all')
 const scheduleDate = ref(new Date())
 const scheduleTime = ref('10:00')
 
-// Selection state - separate from party data to avoid mutating computed
 const tempSelections = ref<Set<string>>(new Set())
+const selectedAmounts = ref<Map<string, number>>(new Map())
 
-// Options
 const frequencyOptions = [
   { label: 'Weekly', value: 'weekly' },
   { label: 'Bi-weekly', value: 'biweekly' },
@@ -496,75 +481,20 @@ const dayOptions = [
   { label: 'Saturday', value: 6 },
 ]
 
-const sortOptions = [
-  { label: 'Amount Due', value: 'amount_due' },
-  { label: 'Name', value: 'name' },
-  { label: 'Credit Days', value: 'credit_days' },
-  { label: 'Code', value: 'code' },
-]
-
 const filterOptions = [
   { label: 'All', value: 'all' },
   { label: 'Enabled', value: 'enabled' },
   { label: 'Disabled', value: 'disabled' },
 ]
 
-// Computed
-const selectedTemplate = computed(() => {
-  return templates.value.find(t => t.id === selectedTemplateId.value)
-})
-
-const filteredParties = computed(() => {
-  let result = parties.value
-
-  // Search filter
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    result = result.filter(p => 
-      p.name.toLowerCase().includes(query) ||
-      p.code.toLowerCase().includes(query) ||
-      (p.phone && p.phone.toLowerCase().includes(query))
-    )
-  }
-
-  // Status filter
-  if (filterBy.value === 'enabled') {
-    result = result.filter(p => p.permanent_enabled)
-  } else if (filterBy.value === 'disabled') {
-    result = result.filter(p => !p.permanent_enabled)
-  }
-
-  // Sort
-  result = [...result].sort((a, b) => {
-    switch (sortBy.value) {
-      case 'amount_due':
-        return b.amount_due - a.amount_due
-      case 'name':
-        return a.name.localeCompare(b.name)
-      case 'credit_days':
-        return a.sales_credit_days - b.sales_credit_days
-      case 'code':
-        return a.code.localeCompare(b.code)
-      default:
-        return 0
-    }
-  })
-
-  return result
-})
-
-const selectedParties = computed(() => {
-  return filteredParties.value.filter(p => tempSelections.value.has(p.code))
-})
-
-const unselectedParties = computed(() => {
-  return filteredParties.value.filter(p => !tempSelections.value.has(p.code))
-})
-
-const selectedTempCount = computed(() => selectedParties.value.length)
-
+const selectedTemplate = computed(() => templates.value.find((t) => t.id === selectedTemplateId.value))
+const selectedTempCount = computed(() => tempSelections.value.size)
 const selectedTotalAmount = computed(() => {
-  return selectedParties.value.reduce((sum, p) => sum + p.amount_due, 0)
+  let total = 0
+  selectedAmounts.value.forEach((v) => {
+    total += v
+  })
+  return total
 })
 
 const schedulerStatusText = computed(() => {
@@ -577,100 +507,198 @@ const schedulerStatusClass = computed(() => {
   return schedulerStatus.value.is_running ? 'text-green-500' : 'text-red-500'
 })
 
-// Methods
-const loadData = async () => {
-  loading.value = true
+const webhookCallbackUrl = computed(() => `${window.location.origin}/api/v1/whatsapp/meta/webhook`)
+const historyCommand = `Invoke-RestMethod "http://localhost:8000/api/v1/queue/history?source=payment_reminder&limit=20"`
+
+function isSelected(code: string): boolean {
+  return tempSelections.value.has(code)
+}
+
+function toggleSelection(party: PartyReminderInfo, checked: boolean): void {
+  if (checked) {
+    tempSelections.value.add(party.code)
+    selectedAmounts.value.set(party.code, Number(party.amount_due || 0))
+  } else {
+    tempSelections.value.delete(party.code)
+    selectedAmounts.value.delete(party.code)
+  }
+}
+
+function selectPage(): void {
+  parties.value.forEach((p) => {
+    tempSelections.value.add(p.code)
+    selectedAmounts.value.set(p.code, Number(p.amount_due || 0))
+  })
+}
+
+function deselectPage(): void {
+  parties.value.forEach((p) => {
+    tempSelections.value.delete(p.code)
+    selectedAmounts.value.delete(p.code)
+  })
+}
+
+function clearAllSelections(): void {
+  tempSelections.value.clear()
+  selectedAmounts.value.clear()
+}
+
+function formatCurrency(amount: number): string {
+  const symbol = config.value?.currency_symbol || '₹'
+  return `${symbol}${new Intl.NumberFormat('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount)}`
+}
+
+function formatDateTime(value?: string): string {
+  if (!value) return 'N/A'
+  const dt = new Date(value)
+  if (Number.isNaN(dt.getTime())) return value
+  return dt.toLocaleString()
+}
+
+async function loadPartiesPage(newFirst = first.value): Promise<void> {
+  loadingParties.value = true
   loadError.value = ''
-
   try {
-    // Load lightweight metadata first to avoid stressing Access with parallel heavy scans.
-    const [configResult, templatesResult, schedulerResult] = await Promise.allSettled([
-      api.getReminderConfig(),
-      api.getTemplates(),
-      api.getSchedulerStatus(),
-    ])
+    const page = await api.getEligibleParties(
+      searchQuery.value || undefined,
+      sortBy.value,
+      sortOrder.value,
+      filterBy.value,
+      newFirst,
+      rows.value,
+      includeZero.value
+    )
+    parties.value = page.items
+    totalRecords.value = page.total
+    first.value = page.offset
 
-    if (configResult.status === 'fulfilled') {
-      config.value = configResult.value
+    // Keep amount cache up-to-date for selections already made.
+    for (const p of page.items) {
+      if (tempSelections.value.has(p.code)) {
+        selectedAmounts.value.set(p.code, Number(p.amount_due || 0))
+      }
+    }
+  } catch {
+    parties.value = []
+    totalRecords.value = 0
+    loadError.value = 'Failed to load parties from snapshot. Refresh snapshot and retry.'
+  } finally {
+    loadingParties.value = false
+  }
+}
+
+async function loadMetaData(): Promise<void> {
+  const [configResult, templatesResult, schedulerResult, statsResult, snapResult, settingsResult] = await Promise.allSettled([
+    api.getReminderConfig(),
+    api.getTemplates(),
+    api.getSchedulerStatus(),
+    api.getReminderStats(),
+    api.getReminderSnapshotStatus(),
+    api.getSettings(),
+  ])
+
+  if (configResult.status === 'fulfilled') {
+    config.value = configResult.value
+    if (!selectedTemplateId.value) {
       selectedTemplateId.value = configResult.value.active_template_id
     }
-
-    if (templatesResult.status === 'fulfilled') {
-      templates.value = templatesResult.value
-      if (!selectedTemplateId.value && templatesResult.value.length > 0) {
-        selectedTemplateId.value = templatesResult.value[0].id
-      }
+  }
+  if (templatesResult.status === 'fulfilled') {
+    templates.value = templatesResult.value
+    if (!selectedTemplateId.value && templates.value.length > 0) {
+      selectedTemplateId.value = templates.value[0].id
     }
+  }
+  if (schedulerResult.status === 'fulfilled') {
+    schedulerStatus.value = schedulerResult.value
+  }
+  if (statsResult.status === 'fulfilled') {
+    stats.value = statsResult.value
+  }
+  if (snapResult.status === 'fulfilled') {
+    snapshotStatus.value = snapResult.value
+  }
+  if (settingsResult.status === 'fulfilled') {
+    settingsInfo.value = settingsResult.value
+  }
+}
 
-    if (schedulerResult.status === 'fulfilled') {
-      schedulerStatus.value = schedulerResult.value
-    }
+async function loadMetaHealth(): Promise<void> {
+  const [healthResult, transitionsResult] = await Promise.allSettled([
+    api.getMetaWebhookStatus(),
+    api.getReminderHistory(undefined, 3),
+  ])
 
-    loadingParties.value = true
-    try {
-      const partiesData = await api.getEligibleParties()
-      parties.value = partiesData
+  if (healthResult.status === 'fulfilled') {
+    metaHealth.value = healthResult.value
+  }
 
-      if (tempSelections.value.size === 0) {
-        const preselected = partiesData.filter((p) => p.permanent_enabled).map((p) => p.code)
-        tempSelections.value = new Set(preselected)
-      }
+  if (transitionsResult.status === 'fulfilled') {
+    recentTransitions.value = transitionsResult.value
+  }
+}
 
-      const totalAmount = partiesData.reduce((sum, p) => sum + p.amount_due, 0)
-      const enabledCount = partiesData.filter((p) => p.permanent_enabled).length
-      stats.value = {
-        total_parties: partiesData.length,
-        eligible_parties: partiesData.length,
-        enabled_parties: enabledCount,
-        reminders_sent_today: 0,
-        reminders_sent_this_week: 0,
-        reminders_sent_this_month: 0,
-        total_amount_due: totalAmount,
-        average_amount_due: partiesData.length > 0 ? totalAmount / partiesData.length : 0,
-        last_scheduler_run: null,
-        next_scheduler_run: null,
-        scheduler_status: schedulerStatus.value?.is_running ? 'running' : 'stopped',
-      } as ReminderStats
-    } catch (error) {
-      parties.value = []
-      stats.value = {
-        total_parties: 0,
-        eligible_parties: 0,
-        enabled_parties: 0,
-        reminders_sent_today: 0,
-        reminders_sent_this_week: 0,
-        reminders_sent_this_month: 0,
-        total_amount_due: 0,
-        average_amount_due: 0,
-        last_scheduler_run: null,
-        next_scheduler_run: null,
-        scheduler_status: schedulerStatus.value?.is_running ? 'running' : 'stopped',
-      } as ReminderStats
-      loadError.value = 'Could not fetch eligible parties from Busy database. Check DB path/password and try Refresh.'
-    } finally {
-      loadingParties.value = false
-    }
-  } catch (error) {
-    loadError.value = 'Failed to load reminders data. Please refresh.'
-    toast.add({
-      severity: 'error',
-      summary: 'Error',
-      detail: 'Failed to load data',
-      life: 3000,
-    })
+async function loadData(): Promise<void> {
+  loading.value = true
+  try {
+    await Promise.all([loadMetaData(), loadMetaHealth()])
+    await loadPartiesPage(0)
   } finally {
     loading.value = false
   }
 }
 
-const refreshData = () => {
-  loadData()
+async function refreshSnapshot(): Promise<void> {
+  snapshotRefreshing.value = true
+  try {
+    snapshotStatus.value = await api.refreshReminderSnapshot()
+    await Promise.all([loadMetaData(), loadMetaHealth(), loadPartiesPage(0)])
+    toast.add({
+      severity: 'success',
+      summary: 'Snapshot Refreshed',
+      detail: `Computed ${snapshotStatus.value.row_count} parties in ${snapshotStatus.value.duration_ms} ms`,
+      life: 3000,
+    })
+  } catch {
+    toast.add({
+      severity: 'error',
+      summary: 'Refresh Failed',
+      detail: 'Could not refresh reminder snapshot',
+      life: 3000,
+    })
+  } finally {
+    snapshotRefreshing.value = false
+  }
 }
 
-const loadTemplates = async () => {
+function onPage(event: DataTablePageEvent): void {
+  rows.value = event.rows
+  loadPartiesPage(event.first)
+}
+
+function onSort(event: DataTableSortEvent): void {
+  sortBy.value = (event.sortField as string) || 'amount_due'
+  sortOrder.value = event.sortOrder === 1 ? 'asc' : 'desc'
+  loadPartiesPage(0)
+}
+
+watch([filterBy, includeZero], () => {
+  loadPartiesPage(0)
+})
+
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+watch(searchQuery, () => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => loadPartiesPage(0), 300)
+})
+
+async function loadTemplates(): Promise<void> {
   try {
     templates.value = await api.getTemplates()
-  } catch (error) {
+  } catch {
     toast.add({
       severity: 'error',
       summary: 'Error',
@@ -680,7 +708,7 @@ const loadTemplates = async () => {
   }
 }
 
-const onTemplateChange = async () => {
+async function onTemplateChange(): Promise<void> {
   try {
     await api.setActiveTemplate(selectedTemplateId.value)
     toast.add({
@@ -689,7 +717,7 @@ const onTemplateChange = async () => {
       detail: 'Active template updated',
       life: 2000,
     })
-  } catch (error) {
+  } catch {
     toast.add({
       severity: 'error',
       summary: 'Error',
@@ -699,30 +727,18 @@ const onTemplateChange = async () => {
   }
 }
 
-const toggleSelection = (partyCode: string) => {
-  if (tempSelections.value.has(partyCode)) {
-    tempSelections.value.delete(partyCode)
-  } else {
-    tempSelections.value.add(partyCode)
-  }
-}
-
-const updatePermanentSelection = async (partyCode: string, enabled: boolean) => {
-  const party = parties.value.find(p => p.code === partyCode)
-  if (!party) return
-
+async function updatePermanentSelection(partyCode: string, enabled: boolean): Promise<void> {
   try {
-    await api.updatePartyConfig(partyCode, {
-      permanent_enabled: enabled,
-    })
-    party.permanent_enabled = enabled
-    toast.add({
-      severity: 'success',
-      summary: 'Success',
-      detail: `${party.name} ${enabled ? 'enabled' : 'disabled'} permanently`,
-      life: 2000,
-    })
-  } catch (error) {
+    await api.updatePartyConfig(partyCode, { permanent_enabled: enabled })
+    const idx = parties.value.findIndex((p) => p.code === partyCode)
+    if (idx >= 0) {
+      parties.value[idx].permanent_enabled = enabled
+    }
+    if (stats.value) {
+      stats.value.enabled_parties += enabled ? 1 : -1
+      if (stats.value.enabled_parties < 0) stats.value.enabled_parties = 0
+    }
+  } catch {
     toast.add({
       severity: 'error',
       summary: 'Error',
@@ -732,20 +748,12 @@ const updatePermanentSelection = async (partyCode: string, enabled: boolean) => 
   }
 }
 
-const selectAll = () => {
-  filteredParties.value.forEach(p => tempSelections.value.add(p.code))
-}
-
-const deselectAll = () => {
-  tempSelections.value.clear()
-}
-
-const generateLedger = async (partyCode: string) => {
+async function generateLedger(partyCode: string): Promise<void> {
   try {
     const blob = await api.generateLedgerPdf(partyCode)
     const url = window.URL.createObjectURL(blob)
     window.open(url, '_blank')
-  } catch (error) {
+  } catch {
     toast.add({
       severity: 'error',
       summary: 'Error',
@@ -755,7 +763,7 @@ const generateLedger = async (partyCode: string) => {
   }
 }
 
-const confirmSend = () => {
+function confirmSend(): void {
   confirm.require({
     message: `Are you sure you want to send reminders to ${selectedTempCount.value} parties?`,
     header: 'Send Reminders',
@@ -766,24 +774,19 @@ const confirmSend = () => {
   })
 }
 
-const sendReminders = async () => {
+async function sendReminders(): Promise<void> {
   try {
-    const partyCodes = selectedParties.value.map(p => p.code)
+    const partyCodes = Array.from(tempSelections.value)
     const result = await api.sendReminders(partyCodes, selectedTemplateId.value)
-    
     toast.add({
       severity: 'success',
       summary: 'Success',
       detail: result.message,
       life: 3000,
     })
-    
-    // Reset selections
-    tempSelections.value.clear()
-    
-    // Refresh stats
-    loadData()
-  } catch (error) {
+    clearAllSelections()
+    await loadMetaData()
+  } catch {
     toast.add({
       severity: 'error',
       summary: 'Error',
@@ -793,12 +796,12 @@ const sendReminders = async () => {
   }
 }
 
-const scheduleReminders = async () => {
+async function scheduleReminders(): Promise<void> {
   try {
     if (!scheduleTime.value || !/^\d{2}:\d{2}$/.test(scheduleTime.value)) {
       throw new Error('Enter schedule time in HH:MM format')
     }
-    const partyCodes = selectedParties.value.map(p => p.code)
+    const partyCodes = Array.from(tempSelections.value)
     const scheduleDateTime = new Date(scheduleDate.value)
     const [hours, minutes] = scheduleTime.value.split(':').map(Number)
     if (hours > 23 || minutes > 59) {
@@ -809,18 +812,16 @@ const scheduleReminders = async () => {
     if (scheduleDateTime <= new Date()) {
       throw new Error('Schedule time must be in the future')
     }
-    
+
     const result = await api.scheduleReminders(partyCodes, selectedTemplateId.value, scheduleDateTime)
-    
     toast.add({
       severity: 'success',
       summary: 'Success',
       detail: result.message,
       life: 3000,
     })
-    
     showScheduleDialog.value = false
-    tempSelections.value.clear()
+    clearAllSelections()
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to schedule reminders'
     toast.add({
@@ -832,7 +833,7 @@ const scheduleReminders = async () => {
   }
 }
 
-const exportCsv = () => {
+function exportCsv(): void {
   toast.add({
     severity: 'info',
     summary: 'Info',
@@ -841,17 +842,11 @@ const exportCsv = () => {
   })
 }
 
-const saveSchedule = async () => {
+async function saveSchedule(): Promise<void> {
   if (!config.value) return
   try {
     await api.updateScheduleConfig(config.value.schedule)
-    toast.add({
-      severity: 'success',
-      summary: 'Success',
-      detail: 'Schedule configuration saved',
-      life: 2000,
-    })
-  } catch (error) {
+  } catch {
     toast.add({
       severity: 'error',
       summary: 'Error',
@@ -861,17 +856,11 @@ const saveSchedule = async () => {
   }
 }
 
-const startScheduler = async () => {
+async function startScheduler(): Promise<void> {
   try {
     await api.startScheduler()
-    toast.add({
-      severity: 'success',
-      summary: 'Success',
-      detail: 'Scheduler started',
-      life: 2000,
-    })
     schedulerStatus.value = await api.getSchedulerStatus()
-  } catch (error) {
+  } catch {
     toast.add({
       severity: 'error',
       summary: 'Error',
@@ -881,17 +870,11 @@ const startScheduler = async () => {
   }
 }
 
-const stopScheduler = async () => {
+async function stopScheduler(): Promise<void> {
   try {
     await api.stopScheduler()
-    toast.add({
-      severity: 'success',
-      summary: 'Success',
-      detail: 'Scheduler stopped',
-      life: 2000,
-    })
     schedulerStatus.value = await api.getSchedulerStatus()
-  } catch (error) {
+  } catch {
     toast.add({
       severity: 'error',
       summary: 'Error',
@@ -901,7 +884,7 @@ const stopScheduler = async () => {
   }
 }
 
-const triggerManualRun = async () => {
+async function triggerManualRun(): Promise<void> {
   try {
     const result = await api.triggerManualRun()
     toast.add({
@@ -910,7 +893,7 @@ const triggerManualRun = async () => {
       detail: result.message,
       life: 3000,
     })
-  } catch (error) {
+  } catch {
     toast.add({
       severity: 'error',
       summary: 'Error',
@@ -920,12 +903,23 @@ const triggerManualRun = async () => {
   }
 }
 
-const formatCurrency = (amount: number): string => {
-  const symbol = config.value?.currency_symbol || '₹'
-  return `${symbol}${new Intl.NumberFormat('en-IN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount)}`
+async function copyToClipboard(text: string, successMessage: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text)
+    toast.add({
+      severity: 'success',
+      summary: 'Copied',
+      detail: successMessage,
+      life: 2000,
+    })
+  } catch {
+    toast.add({
+      severity: 'warn',
+      summary: 'Clipboard',
+      detail: 'Could not copy to clipboard',
+      life: 2500,
+    })
+  }
 }
 
 onMounted(() => {
@@ -946,12 +940,66 @@ onMounted(() => {
 }
 
 .header-content h1 {
-  margin: 0 0 0.5rem 0;
+  margin: 0 0 0.4rem 0;
 }
 
 .subtitle {
   color: var(--text-color-secondary);
   margin: 0;
+}
+
+.snapshot-meta {
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 1rem;
+  font-size: 0.85rem;
+  color: var(--text-color-secondary);
+}
+
+.meta-health .health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+
+.meta-health .health-item {
+  display: flex;
+  justify-content: space-between;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.9rem;
+}
+
+.meta-health .health-item label {
+  color: var(--text-color-secondary);
+}
+
+.runbook {
+  border: 1px dashed var(--surface-border);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.runbook h4,
+.recent-transitions h4 {
+  margin: 0 0 0.5rem 0;
+}
+
+.runbook ol {
+  margin: 0.4rem 0 0.6rem 1rem;
+  padding: 0;
+}
+
+.runbook-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.recent-transitions ul {
+  margin: 0;
+  padding-left: 1rem;
 }
 
 .stats-grid {
@@ -1025,29 +1073,32 @@ onMounted(() => {
   margin: 0;
 }
 
-.party-selection {
-  margin-bottom: 1.5rem;
+.table-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.table-toolbar-right {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.zero-toggle {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--text-color-secondary);
 }
 
 .selection-actions {
   display: flex;
   align-items: center;
   padding: 0.5rem 0;
-}
-
-.party-group {
-  border: 1px solid var(--surface-border);
-  border-radius: 6px;
-  padding: 1rem;
-}
-
-.group-title {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0 0 1rem 0;
-  font-size: 1rem;
-  font-weight: 600;
 }
 
 .party-name {
@@ -1097,44 +1148,19 @@ onMounted(() => {
   color: var(--text-color-secondary);
 }
 
-.empty-state {
-  border: 1px dashed var(--surface-border);
-  border-radius: 8px;
-  padding: 1.25rem;
-  text-align: center;
-  margin-bottom: 1rem;
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.empty-icon {
-  font-size: 1.5rem;
-  margin-bottom: 0.5rem;
-  color: var(--text-color-secondary);
-}
-
-.empty-state h4 {
-  margin: 0 0 0.35rem;
-}
-
-.empty-state p {
-  margin: 0;
-  color: var(--text-color-secondary);
-  font-size: 0.92rem;
-}
-
 @media (max-width: 768px) {
   .config-grid {
     grid-template-columns: 1fr;
   }
-  
+
   .stats-grid {
     grid-template-columns: 1fr 1fr;
   }
-  
+
   .action-bar {
     flex-direction: column;
   }
-  
+
   .action-bar button {
     width: 100%;
     margin-left: 0 !important;

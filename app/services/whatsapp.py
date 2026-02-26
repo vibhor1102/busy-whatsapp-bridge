@@ -1,9 +1,11 @@
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Optional
 import httpx
 import structlog
 from app.config import get_settings
 from app.models.schemas import WhatsAppMessage, WhatsAppResponse
+from app.utils.phone import normalize_phone_e164, to_wa_id
 
 logger = structlog.get_logger()
 
@@ -25,6 +27,7 @@ class EvolutionProvider(WhatsAppProvider):
         self.api_url = getattr(self.settings, 'EVOLUTION_API_URL', 'http://localhost:8080')
         self.api_key = getattr(self.settings, 'EVOLUTION_API_KEY', '')
         self.instance_name = getattr(self.settings, 'EVOLUTION_INSTANCE_NAME', 'default')
+        self.default_country_code = self.settings.WHATSAPP_DEFAULT_COUNTRY_CODE
         
         # Ensure api_url doesn't end with /
         self.api_url = self.api_url.rstrip('/')
@@ -35,8 +38,7 @@ class EvolutionProvider(WhatsAppProvider):
             if not self.api_key:
                 raise ValueError("Evolution API key not configured")
             
-            # Clean phone number
-            to_number = message.to.replace("whatsapp:", "").replace("+", "")
+            to_number = to_wa_id(message.to, self.default_country_code)
             
             # Check if instance exists
             headers = {
@@ -105,6 +107,8 @@ class EvolutionProvider(WhatsAppProvider):
                 return WhatsAppResponse(
                     success=True,
                     message_id=result.get("key", {}).get("id", "evolution_msg"),
+                    delivery_status="delivered",
+                    normalized_to=normalize_phone_e164(message.to, self.default_country_code),
                     error=None
                 )
                 
@@ -126,13 +130,42 @@ class EvolutionProvider(WhatsAppProvider):
 
 class MetaProvider(WhatsAppProvider):
     """Meta Business API (Facebook/WhatsApp Cloud API) integration."""
+    _warned_missing_webhook = False
     
     def __init__(self):
         self.settings = get_settings()
         self.api_version = self.settings.META_API_VERSION
         self.phone_number_id = self.settings.META_PHONE_NUMBER_ID
         self.access_token = self.settings.META_ACCESS_TOKEN
+        self.default_country_code = self.settings.WHATSAPP_DEFAULT_COUNTRY_CODE
         self.base_url = f"https://graph.facebook.com/{self.api_version}"
+
+        if not self.settings.META_WEBHOOK_VERIFY_TOKEN and not MetaProvider._warned_missing_webhook:
+            logger.warning(
+                "meta_webhook_verify_token_not_configured",
+                message="Delivery/read status tracking will stay at API-accepted state until webhook is configured.",
+            )
+            MetaProvider._warned_missing_webhook = True
+
+    async def _upload_media(self, client: httpx.AsyncClient, file_path: str) -> str:
+        """Upload a local media file to Meta and return media id."""
+        upload_url = f"{self.base_url}/{self.phone_number_id}/media"
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Media file not found: {file_path}")
+
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        with path.open("rb") as f:
+            files = {"file": (path.name, f, "application/pdf")}
+            data = {"messaging_product": "whatsapp", "type": "application/pdf"}
+            response = await client.post(upload_url, headers=headers, data=data, files=files, timeout=60.0)
+            response.raise_for_status()
+            result = response.json()
+
+        media_id = result.get("id")
+        if not media_id:
+            raise ValueError("Meta media upload succeeded but no media id was returned")
+        return media_id
     
     async def send_message(self, message: WhatsAppMessage) -> WhatsAppResponse:
         """Send message via Meta WhatsApp Cloud API."""
@@ -141,32 +174,37 @@ class MetaProvider(WhatsAppProvider):
                 raise ValueError("Meta credentials not configured")
             
             url = f"{self.base_url}/{self.phone_number_id}/messages"
-            
-            # Clean phone number (remove whatsapp: prefix if present)
-            to_number = message.to.replace("whatsapp:", "")
-            if not to_number.startswith("+"):
-                to_number = f"+{to_number}"
+
+            to_e164 = normalize_phone_e164(message.to, self.default_country_code)
+            to_wa = to_wa_id(to_e164, self.default_country_code)
             
             # Build message payload
             payload = {
                 "messaging_product": "whatsapp",
                 "recipient_type": "individual",
-                "to": to_number,
+                "to": to_wa,
                 "type": "text",
                 "text": {"body": message.body}
             }
             
-            # If media URL provided, send as document
+            # If media URL provided, send as document. For local files, upload to Meta first.
             if message.media_url:
+                document_payload = {"caption": message.body[:1024]}  # Meta caption limit
+                media_ref = str(message.media_url).strip()
+                if media_ref.lower().startswith("http://") or media_ref.lower().startswith("https://"):
+                    document_payload["link"] = media_ref
+                else:
+                    # Local file path workflow for reminders with generated PDFs.
+                    async with httpx.AsyncClient() as client:
+                        media_id = await self._upload_media(client, media_ref)
+                    document_payload["id"] = media_id
+
                 payload = {
                     "messaging_product": "whatsapp",
                     "recipient_type": "individual",
-                    "to": to_number,
+                    "to": to_wa,
                     "type": "document",
-                    "document": {
-                        "link": message.media_url,
-                        "caption": message.body[:1024]  # Meta caption limit
-                    }
+                    "document": document_payload,
                 }
             
             headers = {
@@ -186,19 +224,28 @@ class MetaProvider(WhatsAppProvider):
                 result = response.json()
                 
                 logger.info(
-                    "meta_message_sent",
+                    "meta_message_accepted",
                     message_id=result.get("messages", [{}])[0].get("id"),
-                    to=message.to
+                    to_input=message.to,
+                    to_normalized=to_e164
                 )
                 
                 return WhatsAppResponse(
                     success=True,
                     message_id=result.get("messages", [{}])[0].get("id"),
+                    delivery_status="accepted",
+                    normalized_to=to_e164,
                     error=None
                 )
                 
         except httpx.HTTPError as e:
-            logger.error("meta_http_error", to=message.to, error=str(e))
+            response_text = ""
+            try:
+                if e.response is not None:
+                    response_text = e.response.text
+            except Exception:
+                response_text = ""
+            logger.error("meta_http_error", to=message.to, error=str(e), response_body=response_text)
             return WhatsAppResponse(
                 success=False,
                 message_id=None,
@@ -255,6 +302,7 @@ class WebhookProvider(WhatsAppProvider):
                 return WhatsAppResponse(
                     success=True,
                     message_id=None,
+                    delivery_status="delivered",
                     error=None
                 )
                 
@@ -281,6 +329,7 @@ class BaileysProvider(WhatsAppProvider):
         self.settings = get_settings()
         self.server_url = getattr(self.settings, 'BAILEYS_SERVER_URL', 'http://localhost:3001')
         self.server_url = self.server_url.rstrip('/')
+        self.default_country_code = self.settings.WHATSAPP_DEFAULT_COUNTRY_CODE
     
     async def _check_connection(self) -> bool:
         """Check if Baileys server is connected to WhatsApp."""
@@ -307,7 +356,7 @@ class BaileysProvider(WhatsAppProvider):
                     "Please scan QR code at /baileys/qr endpoint"
                 )
             
-            to_number = message.to.replace("whatsapp:", "").replace("+", "")
+            to_number = to_wa_id(message.to, self.default_country_code)
             
             if message.media_url:
                 endpoint = f"{self.server_url}/send-media"
@@ -355,6 +404,8 @@ class BaileysProvider(WhatsAppProvider):
                 return WhatsAppResponse(
                     success=True,
                     message_id=result.get("data", {}).get("messageId"),
+                    delivery_status="delivered",
+                    normalized_to=normalize_phone_e164(message.to, self.default_country_code),
                     error=None
                 )
                 

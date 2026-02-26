@@ -21,6 +21,8 @@ import structlog
 
 from app.models.reminder_schemas import (
     PartyReminderInfo,
+    PaginatedPartyReminderResponse,
+    ReminderSnapshotStatus,
     ReminderConfig,
     ScheduleConfig,
     MessageTemplate,
@@ -91,41 +93,62 @@ async def update_schedule_config(schedule: ScheduleConfig):
 # Party Management Endpoints
 # ============================================
 
-@router.get("/parties", response_model=List[PartyReminderInfo])
+@router.get("/parties", response_model=PaginatedPartyReminderResponse)
 async def list_eligible_parties(
     search: Optional[str] = Query(None, description="Search by name or code"),
     sort_by: str = Query("amount_due", description="Sort field"),
     sort_order: str = Query("desc", description="Sort order (asc/desc)"),
     filter_by: str = Query("all", description="Filter option"),
     min_amount: Optional[Decimal] = Query(None, description="Minimum amount due"),
-    limit: int = Query(50, ge=1, le=2000, description="Max parties to evaluate"),
+    include_zero: bool = Query(False, description="Include zero/negative due rows"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
+    limit: int = Query(100, ge=1, le=5000, description="Page size"),
 ):
-    """Get all eligible parties with amount due > 0"""
+    """Get debtor parties for reminders, with optional minimum amount filter."""
     try:
-        min_amt = min_amount or Decimal("0.01")
-        
-        parties = await reminder_service.get_eligible_parties(
+        # Default hides non-positive dues unless include_zero=true.
+        if min_amount is not None:
+            min_amt = min_amount
+        elif include_zero:
+            min_amt = None
+        else:
+            min_amt = Decimal("0.01")
+
+        page = reminder_service.get_eligible_parties_page(
             min_amount_due=min_amt,
             search=search,
             filter_by=filter_by,
-            limit=limit
+            include_zero=include_zero,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            offset=offset,
+            limit=limit,
         )
-        
-        # Sort parties
-        reverse = sort_order.lower() == "desc"
-        if sort_by == "amount_due":
-            parties.sort(key=lambda x: x.amount_due, reverse=reverse)
-        elif sort_by == "name":
-            parties.sort(key=lambda x: x.name.lower(), reverse=reverse)
-        elif sort_by == "credit_days":
-            parties.sort(key=lambda x: x.sales_credit_days, reverse=reverse)
-        elif sort_by == "code":
-            parties.sort(key=lambda x: x.code, reverse=reverse)
-        
-        return parties
+        return PaginatedPartyReminderResponse(**page)
         
     except Exception as e:
         logger.error("list_parties_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/snapshot/status", response_model=ReminderSnapshotStatus)
+async def get_snapshot_status():
+    """Return current reminder snapshot freshness and row counts."""
+    try:
+        return ReminderSnapshotStatus(**reminder_service.get_snapshot_status())
+    except Exception as e:
+        logger.error("get_snapshot_status_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/snapshot/refresh", response_model=ReminderSnapshotStatus)
+async def refresh_snapshot():
+    """Recompute exact amount-due snapshot for all debtor parties."""
+    try:
+        status = reminder_service.refresh_snapshot()
+        return ReminderSnapshotStatus(**status)
+    except Exception as e:
+        logger.error("refresh_snapshot_error", error=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -622,16 +645,33 @@ async def get_reminder_stats():
 
 @router.get("/history")
 async def get_reminder_history(
+    status: Optional[str] = Query(None, description="Filter by status (sent/failed)"),
+    delivery_status: Optional[str] = Query(None, description="Filter by delivery status (accepted/sent/delivered/read/failed)"),
+    from_time: Optional[datetime] = Query(None, description="Filter completed_at >= from_time (ISO datetime)"),
+    to_time: Optional[datetime] = Query(None, description="Filter completed_at <= to_time (ISO datetime)"),
     limit: int = Query(100, description="Number of records to return"),
     offset: int = Query(0, description="Offset for pagination")
 ):
     """Get reminder sending history"""
-    # TODO: Implement history tracking
+    from app.database.message_queue import message_db
+
+    items = message_db.get_message_history(
+        source="payment_reminder",
+        status=status,
+        delivery_status=delivery_status,
+        from_time=from_time,
+        to_time=to_time,
+        limit=limit,
+        offset=offset,
+    )
+    totals = message_db.get_message_counts_by_source(source="payment_reminder")
+
     return {
-        "items": [],
-        "total": 0,
+        "items": items,
+        "total": len(items),
         "limit": limit,
-        "offset": offset
+        "offset": offset,
+        "counts": totals,
     }
 
 

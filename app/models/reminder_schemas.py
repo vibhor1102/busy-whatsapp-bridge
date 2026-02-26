@@ -231,7 +231,9 @@ class ReminderHistory(BaseModel):
     message_content: str = Field(..., description="Actual message content sent")
     amount_due: Decimal = Field(..., description="Amount due at time of sending")
     
-    status: Literal["queued", "sent", "delivered", "failed"] = Field(..., description="Message status")
+    status: Literal["queued", "accepted", "sent", "delivered", "read", "failed"] = Field(
+        ..., description="Message status"
+    )
     error_message: Optional[str] = Field(None, description="Error message if failed")
     whatsapp_message_id: Optional[str] = Field(None, description="WhatsApp message ID from Meta")
 
@@ -267,6 +269,26 @@ class PartyListRequest(BaseModel):
         description="Filter option"
     )
     min_amount_due: Optional[Decimal] = Field(None, description="Minimum amount due filter")
+
+
+class PaginatedPartyReminderResponse(BaseModel):
+    """Paginated response envelope for reminder parties."""
+    items: List[PartyReminderInfo] = Field(default_factory=list)
+    total: int = Field(default=0)
+    offset: int = Field(default=0)
+    limit: int = Field(default=100)
+    has_more: bool = Field(default=False)
+
+
+class ReminderSnapshotStatus(BaseModel):
+    """Status of reminder snapshot storage."""
+    has_snapshot: bool = Field(default=False)
+    last_refreshed_at: Optional[datetime] = None
+    duration_ms: int = Field(default=0)
+    row_count: int = Field(default=0)
+    nonzero_count: int = Field(default=0)
+    error_count: int = Field(default=0)
+    source_db_path_hash: Optional[str] = None
 
 
 class CreateBatchRequest(BaseModel):

@@ -72,10 +72,42 @@ class MessageQueueDB:
                     retry_count INTEGER DEFAULT 0,
                     error_message TEXT,
                     message_id TEXT,
+                    delivery_status TEXT DEFAULT 'unknown',
+                    delivery_updated_at TIMESTAMP,
+                    delivered_at TIMESTAMP,
+                    read_at TIMESTAMP,
+                    failed_at TIMESTAMP,
+                    recipient_waid TEXT,
                     created_at TIMESTAMP,
                     sent_at TIMESTAMP,
                     completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (queue_id) REFERENCES message_queue(id)
+                )
+            """)
+
+            # Meta webhook diagnostics table (single-row state + rolling errors)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS meta_webhook_diagnostics (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    verified_config INTEGER DEFAULT 0,
+                    last_verify_at TIMESTAMP,
+                    last_verify_mode TEXT,
+                    last_verify_source_ip TEXT,
+                    last_webhook_post_at TIMESTAMP,
+                    last_webhook_post_source_ip TEXT,
+                    last_webhook_delivery_status_seen TEXT,
+                    last_webhook_updates INTEGER DEFAULT 0,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS meta_webhook_errors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    source_ip TEXT,
+                    stage TEXT,
+                    error_message TEXT,
+                    payload TEXT
                 )
             """)
             
@@ -110,6 +142,9 @@ class MessageQueueDB:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_history_date ON message_history(completed_at)
             """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_history_message_id ON message_history(message_id)
+            """)
             
             conn.commit()
             self._run_migrations(conn)
@@ -130,6 +165,24 @@ class MessageQueueDB:
         migrated = False
         if not self._has_column(conn, "message_history", "source"):
             conn.execute("ALTER TABLE message_history ADD COLUMN source TEXT DEFAULT 'api'")
+            migrated = True
+        if not self._has_column(conn, "message_history", "delivery_status"):
+            conn.execute("ALTER TABLE message_history ADD COLUMN delivery_status TEXT DEFAULT 'unknown'")
+            migrated = True
+        if not self._has_column(conn, "message_history", "delivery_updated_at"):
+            conn.execute("ALTER TABLE message_history ADD COLUMN delivery_updated_at TIMESTAMP")
+            migrated = True
+        if not self._has_column(conn, "message_history", "delivered_at"):
+            conn.execute("ALTER TABLE message_history ADD COLUMN delivered_at TIMESTAMP")
+            migrated = True
+        if not self._has_column(conn, "message_history", "read_at"):
+            conn.execute("ALTER TABLE message_history ADD COLUMN read_at TIMESTAMP")
+            migrated = True
+        if not self._has_column(conn, "message_history", "failed_at"):
+            conn.execute("ALTER TABLE message_history ADD COLUMN failed_at TIMESTAMP")
+            migrated = True
+        if not self._has_column(conn, "message_history", "recipient_waid"):
+            conn.execute("ALTER TABLE message_history ADD COLUMN recipient_waid TEXT")
             migrated = True
         if not self._has_column(conn, "dead_letter_queue", "source"):
             conn.execute("ALTER TABLE dead_letter_queue ADD COLUMN source TEXT DEFAULT 'api'")
@@ -197,7 +250,9 @@ class MessageQueueDB:
         self,
         queue_id: int,
         message_id: str,
-        provider: str
+        provider: str,
+        delivery_status: str = "delivered",
+        resolved_phone: Optional[str] = None,
     ):
         """Mark message as successfully sent and move to history."""
         now = datetime.now()
@@ -216,15 +271,31 @@ class MessageQueueDB:
                     """
                     INSERT INTO message_history 
                     (queue_id, phone, message, pdf_url, provider, source, status, 
-                     retry_count, message_id, created_at, sent_at, completed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?, ?)
+                     retry_count, message_id, delivery_status, delivery_updated_at,
+                     delivered_at, read_at, failed_at, recipient_waid,
+                     created_at, sent_at, completed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         # sqlite3.Row behaves like a mapping but has no .get()
                         # method, so use key checks explicitly.
-                        queue_id, row['phone'], row['message'], row['pdf_url'],
-                        provider, (row['source'] if 'source' in row.keys() else 'api'), row['retry_count'], message_id,
-                        row['created_at'], now, now
+                        queue_id,
+                        (resolved_phone or row['phone']),
+                        row['message'],
+                        row['pdf_url'],
+                        provider,
+                        (row['source'] if 'source' in row.keys() else 'api'),
+                        row['retry_count'],
+                        message_id,
+                        delivery_status,
+                        now,
+                        (now if (delivery_status or "").strip().lower() == "delivered" else None),
+                        (now if (delivery_status or "").strip().lower() == "read" else None),
+                        (now if (delivery_status or "").strip().lower() == "failed" else None),
+                        (resolved_phone.lstrip('+') if resolved_phone else None),
+                        row['created_at'],
+                        now,
+                        now,
                     )
                 )
                 
@@ -239,7 +310,9 @@ class MessageQueueDB:
                     "message_sent_success",
                     queue_id=queue_id,
                     message_id=message_id,
-                    provider=provider
+                    provider=provider,
+                    delivery_status=delivery_status,
+                    phone=resolved_phone or row['phone'],
                 )
     
     def mark_message_failed(
@@ -327,13 +400,112 @@ class MessageQueueDB:
                     next_retry=next_retry.isoformat(),
                     delay_seconds=delay
                 )
+
+    def update_delivery_status(
+        self,
+        message_id: str,
+        delivery_status: str,
+        error_message: Optional[str] = None,
+        recipient_waid: Optional[str] = None,
+        provider: Optional[str] = None,
+        event_time: Optional[datetime] = None,
+        raw_payload: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        Update delivery lifecycle status for a previously accepted message.
+
+        Returns True if a matching history record was found and updated.
+        """
+        if not message_id:
+            return False
+
+        now = event_time or datetime.now()
+        normalized = (delivery_status or "").strip().lower()
+        if not normalized:
+            normalized = "unknown"
+
+        final_status = "failed" if normalized == "failed" else "sent"
+        payload_text = json.dumps(raw_payload, ensure_ascii=False) if raw_payload else None
+        delivered_at = now if normalized == "delivered" else None
+        read_at = now if normalized == "read" else None
+        failed_at = now if normalized == "failed" else None
+
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT id FROM message_history WHERE message_id = ? ORDER BY id DESC LIMIT 1",
+                (message_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                logger.warning(
+                    "delivery_status_message_not_found",
+                    message_id=message_id,
+                    delivery_status=normalized,
+                )
+                return False
+
+            history_id = row["id"]
+            current_error = error_message
+            if payload_text:
+                if current_error:
+                    current_error = f"{current_error} | payload={payload_text}"
+                else:
+                    current_error = f"payload={payload_text}"
+
+            conn.execute(
+                """
+                UPDATE message_history
+                SET status = ?,
+                    delivery_status = ?,
+                    delivery_updated_at = ?,
+                    delivered_at = COALESCE(?, delivered_at),
+                    read_at = COALESCE(?, read_at),
+                    failed_at = COALESCE(?, failed_at),
+                    recipient_waid = COALESCE(?, recipient_waid),
+                    provider = COALESCE(?, provider),
+                    error_message = CASE
+                        WHEN ? IS NOT NULL THEN ?
+                        ELSE error_message
+                    END,
+                    completed_at = ?
+                WHERE id = ?
+                """,
+                (
+                    final_status,
+                    normalized,
+                    now,
+                    delivered_at,
+                    read_at,
+                    failed_at,
+                    recipient_waid,
+                    provider,
+                    current_error,
+                    current_error,
+                    now,
+                    history_id,
+                ),
+            )
+            conn.commit()
+
+            logger.info(
+                "delivery_status_updated",
+                message_id=message_id,
+                delivery_status=normalized,
+                status=final_status,
+                history_id=history_id,
+            )
+            return True
     
     def get_message_history(
         self,
         phone: Optional[str] = None,
         status: Optional[str] = None,
+        source: Optional[str] = None,
+        delivery_status: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        from_time: Optional[datetime] = None,
+        to_time: Optional[datetime] = None,
         limit: int = 100,
         offset: int = 0
     ) -> List[Dict[str, Any]]:
@@ -348,6 +520,14 @@ class MessageQueueDB:
         if status:
             query += " AND status = ?"
             params.append(status)
+
+        if source:
+            query += " AND source = ?"
+            params.append(source)
+
+        if delivery_status:
+            query += " AND delivery_status = ?"
+            params.append(delivery_status)
         
         if start_date:
             query += " AND completed_at >= ?"
@@ -356,6 +536,14 @@ class MessageQueueDB:
         if end_date:
             query += " AND completed_at <= ?"
             params.append(end_date)
+
+        if from_time:
+            query += " AND completed_at >= ?"
+            params.append(from_time)
+
+        if to_time:
+            query += " AND completed_at <= ?"
+            params.append(to_time)
         
         query += " ORDER BY completed_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -363,7 +551,128 @@ class MessageQueueDB:
         with self._get_connection() as conn:
             cursor = conn.execute(query, params)
             rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+            normalized_rows: List[Dict[str, Any]] = []
+            for row in rows:
+                item = dict(row)
+                if not item.get("delivery_status"):
+                    item["delivery_status"] = "unknown"
+                normalized_rows.append(item)
+            return normalized_rows
+
+    def record_meta_webhook_verify(
+        self,
+        *,
+        success: bool,
+        mode: Optional[str],
+        source_ip: Optional[str],
+    ) -> None:
+        """Record webhook verification attempts and latest state."""
+        with self._get_connection() as conn:
+            now = datetime.now()
+            conn.execute(
+                """
+                INSERT INTO meta_webhook_diagnostics
+                (id, verified_config, last_verify_at, last_verify_mode, last_verify_source_ip, updated_at)
+                VALUES (1, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    verified_config = excluded.verified_config,
+                    last_verify_at = excluded.last_verify_at,
+                    last_verify_mode = excluded.last_verify_mode,
+                    last_verify_source_ip = excluded.last_verify_source_ip,
+                    updated_at = excluded.updated_at
+                """,
+                (1 if success else 0, now, mode, source_ip, now),
+            )
+            conn.commit()
+
+    def record_meta_webhook_post(
+        self,
+        *,
+        source_ip: Optional[str],
+        last_status: Optional[str],
+        updates: int,
+    ) -> None:
+        """Record latest successful webhook POST metadata."""
+        with self._get_connection() as conn:
+            now = datetime.now()
+            conn.execute(
+                """
+                INSERT INTO meta_webhook_diagnostics
+                (id, last_webhook_post_at, last_webhook_post_source_ip,
+                 last_webhook_delivery_status_seen, last_webhook_updates, updated_at)
+                VALUES (1, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    last_webhook_post_at = excluded.last_webhook_post_at,
+                    last_webhook_post_source_ip = excluded.last_webhook_post_source_ip,
+                    last_webhook_delivery_status_seen = excluded.last_webhook_delivery_status_seen,
+                    last_webhook_updates = excluded.last_webhook_updates,
+                    updated_at = excluded.updated_at
+                """,
+                (now, source_ip, last_status, updates, now),
+            )
+            conn.commit()
+
+    def record_meta_webhook_error(
+        self,
+        *,
+        source_ip: Optional[str],
+        stage: str,
+        error_message: str,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Record webhook processing errors for diagnostics."""
+        payload_text = json.dumps(payload, ensure_ascii=False) if payload is not None else None
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO meta_webhook_errors (source_ip, stage, error_message, payload)
+                VALUES (?, ?, ?, ?)
+                """,
+                (source_ip, stage, error_message, payload_text),
+            )
+            conn.commit()
+
+    def get_meta_webhook_status(self, error_limit: int = 5) -> Dict[str, Any]:
+        """Return latest webhook diagnostics and recent errors."""
+        with self._get_connection() as conn:
+            state = conn.execute(
+                "SELECT * FROM meta_webhook_diagnostics WHERE id = 1"
+            ).fetchone()
+            errors = conn.execute(
+                """
+                SELECT created_at, source_ip, stage, error_message
+                FROM meta_webhook_errors
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (max(1, error_limit),),
+            ).fetchall()
+
+            result = {
+                "verified_config": False,
+                "last_verify_at": None,
+                "last_verify_mode": None,
+                "last_verify_source_ip": None,
+                "last_webhook_post_at": None,
+                "last_webhook_post_source_ip": None,
+                "last_webhook_delivery_status_seen": None,
+                "last_webhook_updates": 0,
+                "recent_errors": [dict(e) for e in errors],
+            }
+            if state:
+                result.update(
+                    {
+                        "verified_config": bool(state["verified_config"]),
+                        "last_verify_at": state["last_verify_at"],
+                        "last_verify_mode": state["last_verify_mode"],
+                        "last_verify_source_ip": state["last_verify_source_ip"],
+                        "last_webhook_post_at": state["last_webhook_post_at"],
+                        "last_webhook_post_source_ip": state["last_webhook_post_source_ip"],
+                        "last_webhook_delivery_status_seen": state["last_webhook_delivery_status_seen"],
+                        "last_webhook_updates": int(state["last_webhook_updates"] or 0),
+                    }
+                )
+            return result
     
     def get_dead_letter_messages(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get messages from dead letter queue."""
@@ -434,9 +743,9 @@ class MessageQueueDB:
             status: Optional status filter ('sent' or 'failed')
             
         Returns:
-            Dict with 'sent' and 'failed' counts
+            Dict with legacy and delivery lifecycle counts
         """
-        query = "SELECT status, COUNT(*) as count FROM message_history WHERE 1=1"
+        query = "SELECT status, delivery_status, COUNT(*) as count FROM message_history WHERE 1=1"
         params = []
         
         if start_date:
@@ -451,16 +760,39 @@ class MessageQueueDB:
             query += " AND status = ?"
             params.append(status)
         
-        query += " GROUP BY status"
+        query += " GROUP BY status, delivery_status"
         
         with self._get_connection() as conn:
             cursor = conn.execute(query, params)
             rows = cursor.fetchall()
-            
-            counts = {'sent': 0, 'failed': 0}
+
+            counts = {
+                "sent": 0,
+                "failed": 0,
+                "accepted": 0,
+                "network_sent": 0,
+                "delivered": 0,
+                "read": 0,
+            }
             for row in rows:
-                if row['status'] in counts:
-                    counts[row['status']] = row['count']
+                row_status = (row["status"] or "").lower()
+                delivery = (row["delivery_status"] or "").lower()
+                count = int(row["count"])
+
+                if row_status == "failed":
+                    counts["failed"] += count
+                    continue
+
+                # Legacy "sent" should continue to represent successful sends.
+                counts["sent"] += count
+                if delivery == "accepted":
+                    counts["accepted"] += count
+                elif delivery == "sent":
+                    counts["network_sent"] += count
+                elif delivery == "delivered":
+                    counts["delivered"] += count
+                elif delivery == "read":
+                    counts["read"] += count
             return counts
 
     def get_message_counts_by_source(
@@ -471,7 +803,7 @@ class MessageQueueDB:
         status: Optional[str] = None
     ) -> Dict[str, int]:
         """Get sent/failed counts from history for a specific source."""
-        query = "SELECT status, COUNT(*) as count FROM message_history WHERE source = ?"
+        query = "SELECT status, delivery_status, COUNT(*) as count FROM message_history WHERE source = ?"
         params: List[Any] = [source]
 
         if start_date:
@@ -486,15 +818,37 @@ class MessageQueueDB:
             query += " AND status = ?"
             params.append(status)
 
-        query += " GROUP BY status"
+        query += " GROUP BY status, delivery_status"
 
         with self._get_connection() as conn:
             cursor = conn.execute(query, params)
             rows = cursor.fetchall()
-            counts = {"sent": 0, "failed": 0}
+            counts = {
+                "sent": 0,
+                "failed": 0,
+                "accepted": 0,
+                "network_sent": 0,
+                "delivered": 0,
+                "read": 0,
+            }
             for row in rows:
-                if row["status"] in counts:
-                    counts[row["status"]] = row["count"]
+                row_status = (row["status"] or "").lower()
+                delivery = (row["delivery_status"] or "").lower()
+                count = int(row["count"])
+
+                if row_status == "failed":
+                    counts["failed"] += count
+                    continue
+
+                counts["sent"] += count
+                if delivery == "accepted":
+                    counts["accepted"] += count
+                elif delivery == "sent":
+                    counts["network_sent"] += count
+                elif delivery == "delivered":
+                    counts["delivered"] += count
+                elif delivery == "read":
+                    counts["read"] += count
             return counts
     
     def get_queue_stats(self) -> Dict[str, Any]:

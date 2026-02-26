@@ -8,7 +8,7 @@ Calculates amount due based on:
 """
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import structlog
 
@@ -32,6 +32,7 @@ class AmountDueCalculator:
         self.db = db
         self.config_service = reminder_config_service
         self.default_credit_days = DEFAULT_CREDIT_DAYS
+        self._debtor_group_codes_cache: Optional[List[int]] = None
     
     def _validate_party_code(self, party_code: str) -> int:
         """Validate and convert party code to integer"""
@@ -163,6 +164,81 @@ class AmountDueCalculator:
                 error=str(e)
             )
             return Decimal("0"), 0, start_date, as_of_date
+
+    def _get_debtor_group_codes(self, force_refresh: bool = False) -> List[int]:
+        """
+        Resolve debtor account-group codes from Master1 hierarchy.
+
+        Busy stores account groups in Master1 with MasterType = 1 and ledgers
+        with MasterType = 2. Debtor ledgers are expected under "Sundry Debtors"
+        (or debtor-like group names), including all descendant groups.
+        """
+        if self._debtor_group_codes_cache is not None and not force_refresh:
+            return self._debtor_group_codes_cache
+
+        groups: List[Tuple[int, str, int]] = []
+        with self.db.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT Code, Name, ParentGrp
+                FROM Master1
+                WHERE MasterType = 1
+                """
+            )
+            groups = [(int(r[0]), str(r[1] or ""), int(r[2] or 0)) for r in cursor.fetchall()]
+
+        by_parent: Dict[int, List[int]] = {}
+        for code, _name, parent in groups:
+            by_parent.setdefault(parent, []).append(code)
+
+        seeds: Set[int] = set()
+        for code, name, _parent in groups:
+            lname = name.lower().strip()
+            if "sundry debtors" in lname or "debtor" in lname:
+                seeds.add(code)
+
+        # Conservative fallback for common Busy setups.
+        if not seeds:
+            for code, _name, _parent in groups:
+                if code == 116:
+                    seeds.add(code)
+                    break
+
+        all_group_codes: Set[int] = set()
+        stack = list(seeds)
+        while stack:
+            cur = stack.pop()
+            if cur in all_group_codes:
+                continue
+            all_group_codes.add(cur)
+            stack.extend(by_parent.get(cur, []))
+
+        resolved = sorted(all_group_codes)
+        self._debtor_group_codes_cache = resolved
+        logger.info(
+            "debtor_groups_resolved",
+            seed_count=len(seeds),
+            group_count=len(resolved),
+            groups=resolved[:20],
+        )
+        return resolved
+
+    def get_debtor_party_count(self) -> int:
+        """Count ledger masters that fall under debtor group hierarchy."""
+        debtor_groups = self._get_debtor_group_codes()
+        if not debtor_groups:
+            return 0
+        in_clause = ",".join(str(c) for c in debtor_groups)
+        with self.db.get_cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM Master1
+                WHERE MasterType = 2
+                  AND ParentGrp IN ({in_clause})
+                """
+            )
+            return int((cursor.fetchone() or [0])[0] or 0)
     
     async def calculate_for_party(
         self,
@@ -261,92 +337,114 @@ class AmountDueCalculator:
         logger.info("calculating_amount_due_for_all_parties", min_amount_due=min_amount_due)
         
         eligible_parties: List[PartyReminderInfo] = []
-        
+
         try:
-            # Get all parties from Master1
-            query = """
-                SELECT Code, Name, PrintName, C3 as Phone
-                FROM Master1
-                WHERE MasterType = 2
-                ORDER BY Code
+            # Use a single roster query for list view to avoid per-party deep scans
+            # that can overwhelm MS Access ODBC and trigger intermittent auth errors.
+            debtor_groups = self._get_debtor_group_codes()
+            if not debtor_groups:
+                logger.warning("no_debtor_group_found")
+                return []
+
+            in_clause = ",".join(str(c) for c in debtor_groups)
+            top_clause = f"TOP {int(max_parties)} " if max_parties else ""
+            # MS Access SQL can reject certain JOIN predicates depending on
+            # driver/version. Use a correlated subquery for Folio1 balance to
+            # keep this query broadly compatible.
+            query = f"""
+                SELECT {top_clause}
+                    m.Code,
+                    m.Name,
+                    m.PrintName,
+                    m.C3 as Phone,
+                    m.I2 as SalesCreditDays,
+                    IIF(
+                        ISNULL(
+                            (
+                                SELECT TOP 1 f.D1
+                                FROM Folio1 f
+                                WHERE f.MasterCode = m.Code
+                                  AND f.MasterType = 2
+                            )
+                        ),
+                        0,
+                        (
+                            SELECT TOP 1 f2.D1
+                            FROM Folio1 f2
+                            WHERE f2.MasterCode = m.Code
+                              AND f2.MasterType = 2
+                        )
+                    ) as LedgerBalance
+                FROM Master1 m
+                WHERE m.MasterType = 2
+                  AND m.ParentGrp IN ({in_clause})
+                ORDER BY m.Code
             """
-            
+
             with self.db.get_cursor() as cursor:
                 cursor.execute(query)
                 parties = cursor.fetchall()
-            
-            logger.info("total_parties_found", count=len(parties))
-            
-            scanned_count = 0
-            for party_row in parties:
-                scanned_count += 1
-                if max_parties and scanned_count > max_parties:
-                    logger.info(
-                        "party_scan_limit_reached",
-                        scanned_count=scanned_count - 1,
-                        max_parties=max_parties
-                    )
-                    break
-                try:
-                    party_code = str(party_row[0])
-                    party_name = party_row[1]
-                    print_name = party_row[2]
-                    phone = party_row[3]
-                    
-                    # Calculate amount due
-                    calculation = await self.calculate_for_party(party_code, as_of_date=as_of_date)
-                    
-                    # Check if meets minimum threshold
-                    if calculation.amount_due >= min_amount_due:
-                        # Format amounts
-                        config = self.config_service.get_config()
-                        currency = config.currency_symbol
-                        closing_formatted = f"{currency}{calculation.closing_balance:,.2f}"
-                        amount_due_formatted = f"{currency}{calculation.amount_due:,.2f}"
-                        
-                        party_info = PartyReminderInfo(
-                            code=party_code,
-                            name=party_name,
-                            print_name=print_name,
-                            phone=phone,
-                            closing_balance=calculation.closing_balance,
-                            closing_balance_formatted=closing_formatted,
-                            amount_due=calculation.amount_due,
-                            amount_due_formatted=amount_due_formatted,
-                            sales_credit_days=calculation.credit_days_used,
-                            credit_days_source=calculation.credit_days_source,
-                            permanent_enabled=False,  # Will be populated from config
-                            temp_enabled=False
-                        )
-                        
-                        eligible_parties.append(party_info)
-                except NoTransactionsError:
-                    logger.debug("party_skipped_no_transactions", party_code=party_code)
+
+            config = self.config_service.get_config()
+            currency = config.currency_symbol
+
+            for row in parties:
+                party_code = str(row[0])
+                party_name = row[1]
+                print_name = row[2]
+                phone = row[3]
+                sales_credit_days_raw = row[4]
+                balance_raw = row[5]
+
+                sales_credit_days = (
+                    int(sales_credit_days_raw)
+                    if sales_credit_days_raw and int(sales_credit_days_raw) > 0
+                    else self.default_credit_days
+                )
+                credit_source = (
+                    "master1_i2"
+                    if sales_credit_days_raw and int(sales_credit_days_raw) > 0
+                    else "config_default"
+                )
+
+                closing_balance = Decimal(str(balance_raw or 0))
+                amount_due = closing_balance
+
+                if amount_due < min_amount_due:
                     continue
-                except Exception as e:
-                    logger.debug(
-                        "error_processing_party",
-                        party_code=party_code,
-                        error=str(e)
+
+                eligible_parties.append(
+                    PartyReminderInfo(
+                        code=party_code,
+                        name=party_name,
+                        print_name=print_name,
+                        phone=phone,
+                        closing_balance=closing_balance,
+                        closing_balance_formatted=f"{currency}{closing_balance:,.2f}",
+                        amount_due=amount_due,
+                        amount_due_formatted=f"{currency}{amount_due:,.2f}",
+                        sales_credit_days=sales_credit_days,
+                        credit_days_source=credit_source,
+                        permanent_enabled=False,
+                        temp_enabled=False,
                     )
-                    continue
-            
-            # Sort by amount due descending
+                )
+
             eligible_parties.sort(key=lambda x: x.amount_due, reverse=True)
-            
+
             logger.info(
                 "eligible_parties_calculated",
                 total_parties=len(parties),
-                eligible_count=len(eligible_parties)
+                eligible_count=len(eligible_parties),
+                mode="roster_fast",
             )
-            
             return eligible_parties
-            
+
         except Exception as e:
             logger.error(
                 "error_calculating_all_parties",
                 error=str(e),
-                exc_info=True
+                exc_info=True,
             )
             raise
     

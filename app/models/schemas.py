@@ -93,6 +93,8 @@ class WhatsAppResponse(BaseModel):
     """Schema for WhatsApp message response."""
     success: bool = Field(..., description="Whether message was sent successfully")
     message_id: Optional[str] = Field(None, description="Message ID from provider")
+    delivery_status: Optional[str] = Field(None, description="Provider delivery status")
+    normalized_to: Optional[str] = Field(None, description="Normalized destination number")
     error: Optional[str] = Field(None, description="Error message if failed")
     
     class Config:
