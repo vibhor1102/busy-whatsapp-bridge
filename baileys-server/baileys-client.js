@@ -461,6 +461,65 @@ class BaileysClient extends EventEmitter {
         return cleaned + '@s.whatsapp.net';
     }
 
+    async setPresence(online = true) {
+        """
+        Set user presence (online/offline).
+        
+        Args:
+            online: true for 'available', false for 'unavailable'
+        """
+        if (!this.socket || this.connectionState !== 'connected') {
+            this.logger.debug('Cannot set presence: not connected');
+            return false;
+        }
+
+        try {
+            const presence = online ? 'available' : 'unavailable';
+            await this.socket.sendPresenceUpdate(presence);
+            this.logger.debug({ presence }, 'Presence updated');
+            return true;
+        } catch (error) {
+            this.logger.error({ error: error.message }, 'Failed to set presence');
+            return false;
+        }
+    }
+
+    async sendTypingIndicator(to, duration = 5000) {
+        """
+        Send typing indicator to a chat.
+        
+        Args:
+            to: Phone number or JID
+            duration: Duration in milliseconds to show typing
+            
+        Returns:
+            success: boolean
+        """
+        if (!this.socket || this.connectionState !== 'connected') {
+            this.logger.debug('Cannot send typing: not connected');
+            return false;
+        }
+
+        let jid = this.formatPhoneNumber(to);
+
+        try {
+            // Send typing state
+            await this.socket.sendPresenceUpdate('composing', jid);
+            this.logger.debug({ to: jid, duration }, 'Typing indicator sent');
+            
+            // Wait for the specified duration
+            await new Promise(resolve => setTimeout(resolve, duration));
+            
+            // Clear typing state (set to available)
+            await this.socket.sendPresenceUpdate('available', jid);
+            
+            return true;
+        } catch (error) {
+            this.logger.error({ to: jid, error: error.message }, 'Failed to send typing indicator');
+            return false;
+        }
+    }
+
     async disconnect(forRestart = false) {
         this.isShuttingDown = !forRestart;
         this.isRestarting = forRestart;

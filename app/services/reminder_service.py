@@ -31,6 +31,10 @@ from app.services.reminder_config_service import reminder_config_service
 from app.services.template_service import template_service
 from app.services.ledger_data_service import ledger_data_service
 from app.services.ledger_pdf_service import ledger_pdf_service
+from app.services.anti_spam_service import anti_spam_service, ReminderSession, SessionState
+from app.services.message_inflation_service import message_inflation_service
+from app.services.pdf_inflation_service import pdf_inflation_service
+from app.services.whatsapp import BaileysProvider
 from app.database.message_queue import message_db
 from app.database.reminder_snapshot import reminder_snapshot_db
 from app.config import get_local_appdata_path, get_settings
@@ -347,7 +351,7 @@ class ReminderService:
         schedule_delay: Optional[int] = None
     ) -> str:
         """
-        Send reminders to selected parties
+        Send reminders to selected parties with anti-spam measures
         
         Args:
             party_codes: List of party codes to send to
@@ -374,6 +378,13 @@ class ReminderService:
             if template is None:
                 raise ValueError(f"Template '{template_id}' not found")
             
+            # Create anti-spam session
+            session = await anti_spam_service.create_session(
+                party_codes=party_codes,
+                template_id=template_id
+            )
+            session.metrics.start_time = datetime.now()
+            
             # Create batch record
             batch = ReminderBatch(
                 batch_id=batch_id,
@@ -383,12 +394,52 @@ class ReminderService:
                 status=REMINDER_STATUS_SENDING
             )
             
+            # Startup delay: Set online and wait
+            startup_delay_mins = anti_spam_service.calculate_startup_delay()
+            if startup_delay_mins > 0:
+                session.state = SessionState.STARTING
+                logger.info(
+                    "startup_delay_starting",
+                    batch_id=batch_id,
+                    session_id=session.session_id,
+                    delay_minutes=startup_delay_mins
+                )
+                
+                # Set user online
+                provider = BaileysProvider()
+                await provider.set_presence(online=True)
+                
+                # Wait for startup delay
+                startup_delay_seconds = startup_delay_mins * 60
+                await asyncio.sleep(startup_delay_seconds)
+                
+                logger.info(
+                    "startup_delay_complete",
+                    batch_id=batch_id,
+                    session_id=session.session_id
+                )
+            
+            session.state = SessionState.ONLINE
+            
             # Process each party
             results = {}
             config = self.config_service.get_config()
             
             for i, party_code in enumerate(party_codes):
                 try:
+                    # Check for pause/stop
+                    await session.wait_if_paused()
+                    if session.check_stop():
+                        logger.info(
+                            "session_stopped_by_user",
+                            batch_id=batch_id,
+                            session_id=session.session_id,
+                            processed=i
+                        )
+                        break
+                    
+                    session.current_index = i
+                    
                     # Calculate amount due
                     calculation = await self.calculator.calculate_for_party(party_code)
                     
@@ -402,8 +453,22 @@ class ReminderService:
                     # Generate ledger PDF
                     pdf_bytes = await self.generate_ledger_pdf(party_code)
                     
-                    # Save PDF temporarily (in production, use temp file or cloud storage)
-                    # For now, we'll attach it directly to the message
+                    # Inflate PDF if enabled
+                    if pdf_inflation_service._enabled:
+                        pdf_path = str(self._ledger_dir / f"ledger_{party_code}_{batch_id}.pdf")
+                        inflated_path = str(self._ledger_dir / f"ledger_{party_code}_{batch_id}_inflated.pdf")
+                        with open(pdf_path, 'wb') as f:
+                            f.write(pdf_bytes)
+                        pdf_inflation_service.inflate_pdf(
+                            pdf_path,
+                            inflated_path,
+                            party_code=party_code
+                        )
+                        pdf_path = inflated_path
+                    else:
+                        pdf_path = str(self._ledger_dir / f"ledger_{party_code}_{batch_id}.pdf")
+                        with open(pdf_path, 'wb') as f:
+                            f.write(pdf_bytes)
                     
                     # Get party info
                     party_info = ledger_data_service.get_customer_info(party_code)
@@ -415,22 +480,19 @@ class ReminderService:
                     )
                     message = self.template_svc.render_template(template, variables)
                     
+                    # Inflate message if enabled
+                    if message_inflation_service._enabled:
+                        message = message_inflation_service.inject_invisible_chars(message)
+                    
                     # Queue message
                     if party_info.phone:
-                        provider = self._resolve_delivery_provider(config.default_provider)
-                        # Persist locally so retries still have access to media.
-                        pdf_path = str(self._ledger_dir / f"ledger_{party_code}_{batch_id}.pdf")
-                        with open(pdf_path, 'wb') as f:
-                            f.write(pdf_bytes)
+                        provider_name = self._resolve_delivery_provider(config.default_provider)
+                        media_ref = pdf_path if provider_name == "baileys" else None
 
-                        # Local media is supported for Baileys
-                        # REMOVED: Evolution and Meta support - only Baileys available now
-                        # TODO: Re-add via Baileys integration when needed
-                        media_ref = pdf_path if provider == "baileys" else None
                         if media_ref is None:
                             logger.warning(
                                 "reminder_media_not_supported_for_provider",
-                                provider=provider,
+                                provider=provider_name,
                                 party_code=party_code,
                             )
 
@@ -438,7 +500,7 @@ class ReminderService:
                             phone=party_info.phone,
                             message=message,
                             pdf_url=media_ref,
-                            provider=provider,
+                            provider=provider_name,
                             source="payment_reminder"
                         )
                         
@@ -481,13 +543,23 @@ class ReminderService:
             batch.results = results
             batch.sent_at = datetime.now()
             
+            # Update session metrics
+            session.metrics.end_time = datetime.now()
+            session.state = SessionState.COMPLETED
+            
             logger.info(
                 "reminders_batch_completed",
                 batch_id=batch_id,
                 total=len(party_codes),
                 successful=sum(1 for r in results.values() if r.get("status") == "queued"),
-                failed=sum(1 for r in results.values() if r.get("status") == "failed")
+                failed=sum(1 for r in results.values() if r.get("status") == "failed"),
+                session_id=session.session_id,
+                duration_seconds=session.metrics.duration_seconds
             )
+            
+            # Send session report to admin
+            if anti_spam_service.get_config().send_session_reports:
+                await self._send_session_report(session)
             
             return batch_id
             
@@ -499,6 +571,125 @@ class ReminderService:
                 exc_info=True
             )
             raise
+    
+    async def pause_session(self, session_id: str) -> bool:
+        """Pause an active reminder session.
+        
+        Args:
+            session_id: Session ID to pause
+            
+        Returns:
+            True if paused successfully
+        """
+        return await anti_spam_service.pause_session(session_id)
+    
+    async def resume_session(self, session_id: str) -> bool:
+        """Resume a paused reminder session.
+        
+        Args:
+            session_id: Session ID to resume
+            
+        Returns:
+            True if resumed successfully
+        """
+        return await anti_spam_service.resume_session(session_id)
+    
+    async def stop_session(self, session_id: str) -> bool:
+        """Stop an active reminder session permanently.
+        
+        Args:
+            session_id: Session ID to stop
+            
+        Returns:
+            True if stopped successfully
+        """
+        return await anti_spam_service.stop_session(session_id)
+    
+    async def get_session_status(self, session_id: str) -> Optional[dict]:
+        """Get status of a reminder session.
+        
+        Args:
+            session_id: Session ID
+            
+        Returns:
+            Session status dict or None
+        """
+        return anti_spam_service.get_session_summary(session_id)
+    
+    async def get_active_sessions(self) -> List[dict]:
+        """Get all active reminder sessions.
+        
+        Returns:
+            List of session status dicts
+        """
+        sessions = anti_spam_service.get_active_sessions()
+        summaries = [anti_spam_service.get_session_summary(s.session_id) for s in sessions]
+        return [s for s in summaries if s is not None]
+    
+    async def _send_session_report(self, session: ReminderSession):
+        """Send session completion report to admin.
+        
+        Args:
+            session: Completed session
+        """
+        try:
+            config = anti_spam_service.get_config()
+            admin_phone = config.admin_phone
+            
+            if not admin_phone:
+                logger.warning("session_report_no_admin_phone", session_id=session.session_id)
+                return
+            
+            # Format report message
+            duration_mins = int(session.metrics.duration_seconds / 60)
+            duration_secs = int(session.metrics.duration_seconds % 60)
+            
+            report = f"""📊 Reminder Session Complete
+━━━━━━━━━━━━━━━━━━━━━
+⏱️ Duration: {duration_mins}m {duration_secs}s
+👥 Total: {session.metrics.total_messages} parties
+✅ Sent: {session.metrics.sent_count}
+❌ Failed: {session.metrics.failed_count}
+
+⏱️ Anti-Spam Metrics:
+• Avg delay: {round(session.metrics.avg_delay_seconds, 1)}s
+• Typing simulation: {'ON' if config.typing_simulation else 'OFF'}
+• Total typing time: {int(session.metrics.typing_time_total)}s
+• Total reading time: {int(session.metrics.reading_time_total)}s"""
+            
+            # Add unsaved contacts info if any
+            if session.metrics.unsaved_contacts:
+                report += f"""
+
+⚠️ Attention Required:
+• {len(session.metrics.unsaved_contacts)} numbers may be unsaved"""
+                for contact in session.metrics.unsaved_contacts[:3]:  # Show first 3
+                    report += f"\n• {contact.get('name', 'Unknown')}: {contact.get('phone', 'N/A')}"
+                if len(session.metrics.unsaved_contacts) > 3:
+                    report += f"\n• ... and {len(session.metrics.unsaved_contacts) - 3} more"
+                
+                report += "\n\n💾 Recommendation: Save these contacts to phone"
+            
+            # Queue report message to admin
+            message_db.enqueue_message(
+                phone=admin_phone,
+                message=report,
+                provider="baileys",
+                source="admin_report"
+            )
+            
+            logger.info(
+                "session_report_queued",
+                session_id=session.session_id,
+                admin_phone=admin_phone
+            )
+            
+        except Exception as e:
+            logger.error(
+                "session_report_failed",
+                session_id=session.session_id,
+                error=str(e)
+            )
     
     async def get_stats(self) -> ReminderStats:
         """Get reminder system statistics"""

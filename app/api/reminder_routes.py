@@ -36,8 +36,8 @@ from app.models.reminder_schemas import (
 from app.services.reminder_service import reminder_service
 from app.services.reminder_config_service import reminder_config_service
 from app.services.template_service import template_service
-from app.services.scheduler_service import scheduler_service
 from app.services.amount_due_calculator import amount_due_calculator
+from app.services.anti_spam_service import anti_spam_service
 
 logger = structlog.get_logger()
 
@@ -70,23 +70,6 @@ async def update_reminder_config(config: ReminderConfig):
         logger.error("update_config_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@router.put("/config/schedule")
-async def update_schedule_config(schedule: ScheduleConfig):
-    """Update schedule configuration"""
-    try:
-        reminder_config_service.update_schedule(schedule)
-        
-        # Restart scheduler if it's running
-        if scheduler_service.is_running:
-            await scheduler_service.stop_scheduler()
-            await scheduler_service.initialize()
-        
-        logger.info("schedule_updated", enabled=schedule.enabled)
-        return {"status": "success", "message": "Schedule configuration updated"}
-    except Exception as e:
-        logger.error("update_schedule_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================
@@ -524,106 +507,154 @@ async def update_currency_settings(settings: dict):
 
 
 # ============================================
-# Scheduler Control Endpoints
+# Anti-Spam Configuration Endpoints
 # ============================================
 
-@router.get("/scheduler/status")
-async def get_scheduler_status():
-    """Get current scheduler status"""
+@router.get("/antispam/config")
+async def get_antispam_config():
+    """Get anti-spam configuration"""
     try:
-        status = scheduler_service.get_status()
-        config = reminder_config_service.get_config()
-        
+        config = anti_spam_service.get_config()
         return {
-            "is_running": status["is_running"],
-            "next_run": status["next_run"],
-            "schedule_enabled": config.schedule.enabled,
-            "frequency": config.schedule.frequency,
-            "day_of_week": config.schedule.day_of_week,
-            "time": config.schedule.time,
-            "timezone": config.schedule.timezone
+            "enabled": config.enabled,
+            "message_inflation": config.message_inflation,
+            "pdf_inflation": config.pdf_inflation,
+            "typing_simulation": config.typing_simulation,
+            "startup_delay_enabled": True  # Always enabled when anti-spam is on
         }
-        
     except Exception as e:
-        logger.error("get_scheduler_status_error", error=str(e))
+        logger.error("get_antispam_config_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/scheduler/start")
-async def start_scheduler():
-    """Start the reminder scheduler"""
+@router.put("/antispam/config")
+async def update_antispam_config(config_update: dict):
+    """Update anti-spam configuration"""
     try:
-        await scheduler_service.start_scheduler()
-        return {
-            "status": "success",
-            "message": "Scheduler started"
-        }
+        from app.services.anti_spam_service import AntiSpamConfig
         
+        current_config = anti_spam_service.get_config()
+        new_config = AntiSpamConfig(
+            enabled=config_update.get("enabled", current_config.enabled),
+            message_inflation=config_update.get("message_inflation", current_config.message_inflation),
+            pdf_inflation=config_update.get("pdf_inflation", current_config.pdf_inflation),
+            typing_simulation=config_update.get("typing_simulation", current_config.typing_simulation),
+            startup_delay_min=current_config.startup_delay_min,
+            startup_delay_max=current_config.startup_delay_max,
+            admin_phone=current_config.admin_phone,
+            send_session_reports=current_config.send_session_reports
+        )
+        anti_spam_service.update_config(new_config)
+        
+        logger.info("antispam_config_updated", config=config_update)
+        return {"status": "success", "message": "Anti-spam configuration updated"}
     except Exception as e:
-        logger.error("start_scheduler_error", error=str(e))
+        logger.error("update_antispam_config_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/scheduler/stop")
-async def stop_scheduler():
-    """Stop the reminder scheduler"""
+# ============================================
+# Session Control Endpoints
+# ============================================
+
+@router.post("/sessions/{session_id}/pause")
+async def pause_session(session_id: str):
+    """Pause an active reminder session"""
     try:
-        await scheduler_service.stop_scheduler()
-        return {
-            "status": "success",
-            "message": "Scheduler stopped"
-        }
-        
+        success = await reminder_service.pause_session(session_id)
+        if success:
+            return {"status": "success", "message": "Session paused"}
+        else:
+            raise HTTPException(status_code=404, detail="Session not found or already completed")
     except Exception as e:
-        logger.error("stop_scheduler_error", error=str(e))
+        logger.error("pause_session_error", session_id=session_id, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/scheduler/pause")
-async def pause_scheduler():
-    """Pause the reminder scheduler"""
+@router.post("/sessions/{session_id}/resume")
+async def resume_session(session_id: str):
+    """Resume a paused reminder session"""
     try:
-        await scheduler_service.pause_scheduler()
-        return {
-            "status": "success",
-            "message": "Scheduler paused"
-        }
-        
+        success = await reminder_service.resume_session(session_id)
+        if success:
+            return {"status": "success", "message": "Session resumed"}
+        else:
+            raise HTTPException(status_code=404, detail="Session not found or not paused")
     except Exception as e:
-        logger.error("pause_scheduler_error", error=str(e))
+        logger.error("resume_session_error", session_id=session_id, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/scheduler/resume")
-async def resume_scheduler():
-    """Resume the reminder scheduler"""
+@router.post("/sessions/{session_id}/stop")
+async def stop_session(session_id: str):
+    """Stop an active reminder session"""
     try:
-        await scheduler_service.resume_scheduler()
-        return {
-            "status": "success",
-            "message": "Scheduler resumed"
-        }
-        
+        success = await reminder_service.stop_session(session_id)
+        if success:
+            return {"status": "success", "message": "Session stopped"}
+        else:
+            raise HTTPException(status_code=404, detail="Session not found")
     except Exception as e:
-        logger.error("resume_scheduler_error", error=str(e))
+        logger.error("stop_session_error", session_id=session_id, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/scheduler/trigger")
-async def trigger_manual_run():
-    """Manually trigger a reminder run"""
+@router.get("/sessions/{session_id}/status")
+async def get_session_status(session_id: str):
+    """Get status of a reminder session"""
     try:
-        batch_id = await scheduler_service.trigger_manual_run()
+        status = await reminder_service.get_session_status(session_id)
+        if status:
+            return status
+        else:
+            raise HTTPException(status_code=404, detail="Session not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("get_session_status_error", session_id=session_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/sessions/active")
+async def get_active_sessions():
+    """Get all active reminder sessions"""
+    try:
+        sessions = await reminder_service.get_active_sessions()
+        return {"sessions": sessions}
+    except Exception as e:
+        logger.error("get_active_sessions_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/batch")
+async def send_reminders_batch(request: CreateBatchRequest):
+    """Send reminders to selected parties"""
+    try:
+        batch_id = await reminder_service.send_reminders_to_parties(
+            party_codes=request.party_codes,
+            template_id=request.template_id,
+            sent_by="manual"
+        )
+        
+        # Get the session ID from the active sessions
+        active_sessions = await reminder_service.get_active_sessions()
+        session_id = None
+        for session in active_sessions:
+            if session.get("progress", {}).get("total") == len(request.party_codes):
+                session_id = session.get("session_id")
+                break
+        
         return {
             "status": "success",
             "batch_id": batch_id,
-            "message": "Manual reminder run triggered"
+            "session_id": session_id,
+            "message": f"Sending reminders to {len(request.party_codes)} parties"
         }
         
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error("trigger_manual_run_error", error=str(e))
+        logger.error("send_reminders_batch_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 

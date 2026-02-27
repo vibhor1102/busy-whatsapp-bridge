@@ -535,6 +535,60 @@ app.post('/logout', async (req, res) => {
     }
 });
 
+// Presence control endpoint
+app.post('/presence', async (req, res) => {
+    try {
+        const { online = true } = req.body;
+        
+        const success = await client.setPresence(online);
+        
+        res.json({
+            success,
+            online,
+            message: online ? 'Set presence to online' : 'Set presence to offline'
+        });
+    } catch (error) {
+        console.error('[ERROR] Failed to set presence:', error.message);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Typing indicator endpoint
+app.post('/typing', async (req, res) => {
+    try {
+        const { to, phone, duration = 5000 } = req.body;
+        const recipient = to || phone;
+        
+        if (!recipient) {
+            return res.status(400).json({
+                success: false,
+                error: 'Recipient phone number is required (to or phone field)'
+            });
+        }
+        
+        // Validate duration
+        const typingDuration = Math.min(Math.max(parseInt(duration) || 5000, 1000), 30000);
+        
+        const success = await client.sendTypingIndicator(recipient, typingDuration);
+        
+        res.json({
+            success,
+            recipient,
+            duration: typingDuration,
+            message: success ? `Typing indicator sent for ${typingDuration}ms` : 'Failed to send typing indicator'
+        });
+    } catch (error) {
+        console.error('[ERROR] Failed to send typing indicator:', error.message);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 app.get('/health', (req, res) => {
     const status = client.getStatus();
     const isHealthy = ['connected', 'qr_ready'].includes(status.state);

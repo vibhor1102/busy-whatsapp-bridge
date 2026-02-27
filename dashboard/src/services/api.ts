@@ -293,8 +293,8 @@ class ApiService {
   async sendReminders(
     partyCodes: string[],
     templateId: string
-  ): Promise<{ status: string; batch_id: string; message: string }> {
-    return this.fetch<{ status: string; batch_id: string; message: string }>('/reminders/batch', {
+  ): Promise<{ status: string; batch_id: string; session_id: string; message: string }> {
+    return this.fetch<{ status: string; batch_id: string; session_id: string; message: string }>('/reminders/batch', {
       method: 'POST',
       body: JSON.stringify({ party_codes: partyCodes, template_id: templateId }),
     })
@@ -325,6 +325,75 @@ class ApiService {
 
   async getTemplate(templateId: string): Promise<MessageTemplate> {
     return this.fetch<MessageTemplate>(`/reminders/templates/${templateId}`)
+  }
+
+  // Anti-Spam Configuration
+  async getAntiSpamConfig(): Promise<{
+    enabled: boolean
+    message_inflation: boolean
+    pdf_inflation: boolean
+    typing_simulation: boolean
+    startup_delay_enabled: boolean
+  }> {
+    return this.fetch<{
+      enabled: boolean
+      message_inflation: boolean
+      pdf_inflation: boolean
+      typing_simulation: boolean
+      startup_delay_enabled: boolean
+    }>('/reminders/antispam/config')
+  }
+
+  async updateAntiSpamConfig(config: {
+    enabled: boolean
+    message_inflation: boolean
+    pdf_inflation: boolean
+    typing_simulation: boolean
+    startup_delay_enabled: boolean
+  }): Promise<void> {
+    return this.fetch<void>('/reminders/antispam/config', {
+      method: 'PUT',
+      body: JSON.stringify(config),
+    })
+  }
+
+  // Session Control
+  async pauseSession(sessionId: string): Promise<void> {
+    return this.fetch<void>(`/reminders/sessions/${sessionId}/pause`, {
+      method: 'POST',
+    })
+  }
+
+  async resumeSession(sessionId: string): Promise<void> {
+    return this.fetch<void>(`/reminders/sessions/${sessionId}/resume`, {
+      method: 'POST',
+    })
+  }
+
+  async stopSession(sessionId: string): Promise<void> {
+    return this.fetch<void>(`/reminders/sessions/${sessionId}/stop`, {
+      method: 'POST',
+    })
+  }
+
+  async getSessionStatus(sessionId: string): Promise<{
+    session_id: string
+    state: string
+    progress: {
+      current: number
+      total: number
+      percentage: number
+    }
+  } | null> {
+    return this.fetch<{
+      session_id: string
+      state: string
+      progress: {
+        current: number
+        total: number
+        percentage: number
+      }
+    } | null>(`/reminders/sessions/${sessionId}/status`)
   }
 
   async createTemplate(template: MessageTemplate): Promise<{ success: boolean; template: MessageTemplate; message: string }> {

@@ -132,6 +132,99 @@ class BaileysProvider(WhatsAppProvider):
                 normalized_to=None,
                 error=str(e)
             )
+    
+    async def set_presence(self, online: bool = True) -> bool:
+        """Set user presence (online/offline) on WhatsApp.
+        
+        Args:
+            online: True to set online, False for offline
+            
+        Returns:
+            True if successful
+        """
+        try:
+            is_connected = await self._check_connection()
+            if not is_connected:
+                logger.warning("baileys_presence_not_connected")
+                return False
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.server_url}/presence",
+                    json={"online": online},
+                    timeout=10.0
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    logger.info(
+                        "baileys_presence_set",
+                        online=online,
+                        success=result.get("success")
+                    )
+                    return result.get("success", False)
+                else:
+                    logger.error(
+                        "baileys_presence_failed",
+                        status=response.status_code
+                    )
+                    return False
+                    
+        except Exception as e:
+            logger.error("baileys_presence_error", error=str(e))
+            return False
+    
+    async def send_typing_indicator(self, phone: str, duration_ms: int = 5000) -> bool:
+        """Send typing indicator to a chat.
+        
+        Args:
+            phone: Phone number to send typing indicator to
+            duration_ms: Duration in milliseconds to show typing (1000-30000)
+            
+        Returns:
+            True if successful
+        """
+        try:
+            is_connected = await self._check_connection()
+            if not is_connected:
+                logger.warning("baileys_typing_not_connected")
+                return False
+            
+            # Clamp duration between 1s and 30s
+            duration_ms = max(1000, min(30000, duration_ms))
+            
+            to_number = to_wa_id(phone, self.default_country_code)
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.server_url}/typing",
+                    json={
+                        "to": to_number,
+                        "duration": duration_ms
+                    },
+                    timeout=60.0  # Long timeout as this waits for duration
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    logger.info(
+                        "baileys_typing_sent",
+                        phone=phone,
+                        duration=duration_ms,
+                        success=result.get("success")
+                    )
+                    return result.get("success", False)
+                else:
+                    logger.error(
+                        "baileys_typing_failed",
+                        phone=phone,
+                        status=response.status_code
+                    )
+                    return False
+                    
+        except Exception as e:
+            logger.error("baileys_typing_error", phone=phone, error=str(e))
+            return False
 
 
 # =============================================================================

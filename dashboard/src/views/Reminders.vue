@@ -55,12 +55,6 @@
           <div class="stat-label">Total Amount Due</div>
         </template>
       </Card>
-      <Card class="stat-card">
-        <template #content>
-          <div class="stat-value" :class="schedulerStatusClass">{{ schedulerStatusText }}</div>
-          <div class="stat-label">Scheduler Status</div>
-        </template>
-      </Card>
     </div>
 
     <Card v-if="showConfigPanel" class="config-panel mb-4">
@@ -73,54 +67,57 @@
       <template #content>
         <div class="config-grid">
           <div class="config-section">
-            <h4>Schedule Settings</h4>
+            <h4>Anti-Spam Settings</h4>
             <div class="field">
-              <label>Enable Scheduler</label>
-              <InputSwitch v-model="config.schedule.enabled" @change="saveSchedule" />
+              <label>Enable Anti-Spam</label>
+              <InputSwitch v-model="antiSpamConfig.enabled" @change="saveAntiSpamConfig" />
             </div>
             <div class="field">
-              <label>Frequency</label>
-              <Dropdown
-                v-model="config.schedule.frequency"
-                :options="frequencyOptions"
-                optionLabel="label"
-                optionValue="value"
-                @change="saveSchedule"
-              />
+              <label>Message Size Inflation</label>
+              <InputSwitch v-model="antiSpamConfig.message_inflation" :disabled="!antiSpamConfig.enabled" @change="saveAntiSpamConfig" />
+              <small class="text-muted">Adds invisible characters to messages</small>
             </div>
             <div class="field">
-              <label>Day of Week</label>
-              <Dropdown
-                v-model="config.schedule.day_of_week"
-                :options="dayOptions"
-                optionLabel="label"
-                optionValue="value"
-                @change="saveSchedule"
-              />
+              <label>PDF Size Inflation</label>
+              <InputSwitch v-model="antiSpamConfig.pdf_inflation" :disabled="!antiSpamConfig.enabled" @change="saveAntiSpamConfig" />
+              <small class="text-muted">Adds invisible metadata to PDFs</small>
             </div>
             <div class="field">
-              <label>Time</label>
-              <InputMask v-model="config.schedule.time" mask="99:99" placeholder="HH:MM" @blur="saveSchedule" />
+              <label>Simulate Human Typing</label>
+              <InputSwitch v-model="antiSpamConfig.typing_simulation" :disabled="!antiSpamConfig.enabled" @change="saveAntiSpamConfig" />
+              <small class="text-muted">Shows typing indicator before sending</small>
+            </div>
+            <div class="field">
+              <label>Session Startup Delay</label>
+              <InputSwitch v-model="antiSpamConfig.startup_delay_enabled" :disabled="!antiSpamConfig.enabled" @change="saveAntiSpamConfig" />
+              <small class="text-muted">Waits 3-5 minutes before sending (sets online status)</small>
             </div>
           </div>
           <div class="config-section">
-            <h4>Scheduler Control</h4>
-            <div class="button-group">
-              <Button
-                label="Start"
-                icon="pi pi-play"
-                class="p-button-success"
-                @click="startScheduler"
-                :disabled="schedulerStatus?.is_running"
-              />
-              <Button
-                label="Stop"
-                icon="pi pi-stop"
-                class="p-button-danger"
-                @click="stopScheduler"
-                :disabled="!schedulerStatus?.is_running"
-              />
-              <Button label="Trigger Now" icon="pi pi-send" class="p-button-primary" @click="triggerManualRun" />
+            <h4>Anti-Spam Settings</h4>
+            <div class="field">
+              <label>Enable Anti-Spam</label>
+              <InputSwitch v-model="antiSpamConfig.enabled" @change="saveAntiSpamConfig" />
+            </div>
+            <div class="field">
+              <label>Message Size Inflation</label>
+              <InputSwitch v-model="antiSpamConfig.message_inflation" :disabled="!antiSpamConfig.enabled" @change="saveAntiSpamConfig" />
+              <small class="text-muted">Adds invisible characters to messages</small>
+            </div>
+            <div class="field">
+              <label>PDF Size Inflation</label>
+              <InputSwitch v-model="antiSpamConfig.pdf_inflation" :disabled="!antiSpamConfig.enabled" @change="saveAntiSpamConfig" />
+              <small class="text-muted">Adds invisible metadata to PDFs</small>
+            </div>
+            <div class="field">
+              <label>Simulate Human Typing</label>
+              <InputSwitch v-model="antiSpamConfig.typing_simulation" :disabled="!antiSpamConfig.enabled" @change="saveAntiSpamConfig" />
+              <small class="text-muted">Shows typing indicator before sending</small>
+            </div>
+            <div class="field">
+              <label>Session Startup Delay</label>
+              <InputSwitch v-model="antiSpamConfig.startup_delay_enabled" :disabled="!antiSpamConfig.enabled" @change="saveAntiSpamConfig" />
+              <small class="text-muted">Waits 3-5 minutes before sending (sets online status)</small>
             </div>
           </div>
         </div>
@@ -261,20 +258,54 @@
       </template>
     </Card>
 
+    <!-- Active Session Panel -->
+    <Card v-if="activeSession" class="session-panel mb-4">
+      <template #title>
+        <div class="flex justify-content-between align-items-center">
+          <span>Active Session: {{ activeSession.session_id }}</span>
+          <Tag :value="activeSession.state" :severity="getSessionStateSeverity(activeSession.state)" />
+        </div>
+      </template>
+      <template #content>
+        <div class="session-progress">
+          <ProgressBar :value="activeSession.progress.percentage" />
+          <div class="progress-text mt-2">
+            {{ activeSession.progress.current }} / {{ activeSession.progress.total }} parties
+            ({{ activeSession.progress.percentage }}%)
+          </div>
+        </div>
+        <div class="session-controls mt-3">
+          <Button
+            v-if="activeSession.state === 'online' || activeSession.state === 'sending'"
+            label="Pause"
+            icon="pi pi-pause"
+            class="p-button-warning"
+            @click="pauseSession"
+          />
+          <Button
+            v-if="activeSession.state === 'paused'"
+            label="Resume"
+            icon="pi pi-play"
+            class="p-button-success"
+            @click="resumeSession"
+          />
+          <Button
+            label="Stop"
+            icon="pi pi-stop"
+            class="p-button-danger ml-2"
+            @click="stopSession"
+          />
+        </div>
+      </template>
+    </Card>
+
     <div class="action-bar">
       <Button
         label="Send Now"
         icon="pi pi-send"
         class="p-button-primary p-button-lg"
-        :disabled="selectedTempCount === 0 || !selectedTemplateId"
+        :disabled="selectedTempCount === 0 || !selectedTemplateId || !!activeSession"
         @click="confirmSend"
-      />
-      <Button
-        label="Schedule for Later"
-        icon="pi pi-calendar"
-        class="p-button-outlined p-button-lg ml-3"
-        :disabled="selectedTempCount === 0 || !selectedTemplateId"
-        @click="showScheduleDialog = true"
       />
       <Button label="Export CSV" icon="pi pi-download" class="p-button-outlined p-button-lg ml-3" @click="exportCsv" />
     </div>
@@ -351,6 +382,26 @@ const stats = ref<ReminderStats | null>(null)
 const schedulerStatus = ref<SchedulerStatus | null>(null)
 const snapshotStatus = ref<ReminderSnapshotStatus | null>(null)
 const settingsInfo = ref<Record<string, any> | null>(null)
+
+// Anti-spam configuration
+const antiSpamConfig = ref({
+  enabled: true,
+  message_inflation: true,
+  pdf_inflation: true,
+  typing_simulation: true,
+  startup_delay_enabled: true
+})
+
+// Session state
+const activeSession = ref<{
+  session_id: string | null
+  state: string
+  progress: {
+    current: number
+    total: number
+    percentage: number
+  }
+} | null>(null)
 
 const parties = ref<PartyReminderInfo[]>([])
 const totalRecords = ref(0)
@@ -665,22 +716,80 @@ async function sendReminders(): Promise<void> {
   try {
     const partyCodes = Array.from(tempSelections.value)
     const result = await api.sendReminders(partyCodes, selectedTemplateId.value)
+    
+    // Start tracking the session
+    if (result.session_id) {
+      activeSession.value = {
+        session_id: result.session_id,
+        state: 'starting',
+        progress: {
+          current: 0,
+          total: partyCodes.length,
+          percentage: 0
+        }
+      }
+      
+      // Start polling for session updates
+      startSessionPolling(result.session_id)
+    }
+    
     toast.add({
       severity: 'success',
-      summary: 'Success',
-      detail: result.message,
-      life: 3000,
+      summary: 'Session Started',
+      detail: `Sending reminders to ${partyCodes.length} parties. This may take several minutes.`,
+      life: 5000,
     })
-    clearAllSelections()
-    await loadMetaData()
   } catch {
     toast.add({
       severity: 'error',
       summary: 'Error',
-      detail: 'Failed to send reminders',
+      detail: 'Failed to start reminder session',
       life: 3000,
     })
   }
+}
+
+let sessionPollingInterval: ReturnType<typeof setInterval> | null = null
+
+function startSessionPolling(sessionId: string): void {
+  // Clear any existing polling
+  if (sessionPollingInterval) {
+    clearInterval(sessionPollingInterval)
+  }
+  
+  // Poll every 2 seconds
+  sessionPollingInterval = setInterval(async () => {
+    try {
+      const status = await api.getSessionStatus(sessionId)
+      if (status) {
+        activeSession.value = {
+          session_id: sessionId,
+          state: status.state,
+          progress: status.progress
+        }
+        
+        // Stop polling if session is complete
+        if (['completed', 'stopped', 'error'].includes(status.state)) {
+          if (sessionPollingInterval) {
+            clearInterval(sessionPollingInterval)
+            sessionPollingInterval = null
+          }
+          
+          // Clear active session after a delay
+          setTimeout(() => {
+            activeSession.value = null
+          }, 5000)
+        }
+      }
+    } catch {
+      // Session might have ended
+      if (sessionPollingInterval) {
+        clearInterval(sessionPollingInterval)
+        sessionPollingInterval = null
+      }
+      activeSession.value = null
+    }
+  }, 2000)
 }
 
 async function scheduleReminders(): Promise<void> {
@@ -766,6 +875,107 @@ async function stopScheduler(): Promise<void> {
       severity: 'error',
       summary: 'Error',
       detail: 'Failed to stop scheduler',
+      life: 3000,
+    })
+  }
+}
+
+// Session control functions
+function getSessionStateSeverity(state: string): string {
+  switch (state) {
+    case 'online':
+    case 'sending':
+      return 'success'
+    case 'typing':
+    case 'reading':
+      return 'info'
+    case 'paused':
+      return 'warning'
+    case 'stopped':
+    case 'error':
+      return 'danger'
+    default:
+      return 'secondary'
+  }
+}
+
+async function pauseSession(): Promise<void> {
+  if (!activeSession.value?.session_id) return
+  try {
+    await api.pauseSession(activeSession.value.session_id)
+    activeSession.value.state = 'paused'
+    toast.add({
+      severity: 'info',
+      summary: 'Session Paused',
+      detail: 'Reminder sending has been paused',
+      life: 3000,
+    })
+  } catch {
+    toast.add({
+      severity: 'error',
+      summary: 'Error',
+      detail: 'Failed to pause session',
+      life: 3000,
+    })
+  }
+}
+
+async function resumeSession(): Promise<void> {
+  if (!activeSession.value?.session_id) return
+  try {
+    await api.resumeSession(activeSession.value.session_id)
+    activeSession.value.state = 'online'
+    toast.add({
+      severity: 'success',
+      summary: 'Session Resumed',
+      detail: 'Reminder sending has been resumed',
+      life: 3000,
+    })
+  } catch {
+    toast.add({
+      severity: 'error',
+      summary: 'Error',
+      detail: 'Failed to resume session',
+      life: 3000,
+    })
+  }
+}
+
+async function stopSession(): Promise<void> {
+  if (!activeSession.value?.session_id) return
+  try {
+    await api.stopSession(activeSession.value.session_id)
+    activeSession.value = null
+    toast.add({
+      severity: 'success',
+      summary: 'Session Stopped',
+      detail: 'Reminder sending has been stopped',
+      life: 3000,
+    })
+  } catch {
+    toast.add({
+      severity: 'error',
+      summary: 'Error',
+      detail: 'Failed to stop session',
+      life: 3000,
+    })
+  }
+}
+
+async function saveAntiSpamConfig(): Promise<void> {
+  try {
+    await api.updateAntiSpamConfig(antiSpamConfig.value)
+    toast.add({
+      severity: 'success',
+      summary: 'Settings Saved',
+      detail: 'Anti-spam configuration updated',
+      life: 2000,
+    })
+  } catch {
+    toast.add({
+      severity: 'error',
+      summary: 'Error',
+      detail: 'Failed to save anti-spam configuration',
       life: 3000,
     })
   }
