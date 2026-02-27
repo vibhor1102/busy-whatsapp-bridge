@@ -900,9 +900,9 @@ class LedgerDataService:
                     is_debit = dr_cr_lookup.get(vch_code, True)
                     particulars = counter_lookup.get(vch_code, DEFAULT_COUNTER_ACCOUNT)
                     
-                    # Append voucher number for sales invoices (no space before parenthesis)
+                    # Append voucher number for sales invoices using dash to prevent wrapping
                     if vch_type == VoucherType.SALES and vch_no:
-                        particulars = f"{particulars}({vch_no})"
+                        particulars = f"{particulars}-{vch_no}"
                     
                     entries.append(LedgerEntry(
                         date=vch_date,
