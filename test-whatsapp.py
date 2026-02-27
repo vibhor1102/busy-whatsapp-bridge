@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-Simple test script for WhatsApp Cloud API
+Simple test script for WhatsApp via Baileys
 
 Setup:
-1. Fill in your META_ACCESS_TOKEN in the conf.json file
-2. Update META_PHONE_NUMBER_ID with your test number ID (starts with 555)
-3. Change WHATSAPP_PROVIDER=meta in the conf.json file
-4. Run: python test-whatsapp.py
+1. Ensure Baileys server is running (npm start in baileys-server/)
+2. Ensure WHATSAPP_PROVIDER=baileys in the conf.json file
+3. Run: python test-whatsapp.py
+
+NOTE: This script previously tested Meta Cloud API which has been removed.
+Only Baileys is now available.
+TODO: Re-add via Baileys integration when needed
 """
 
 import asyncio
@@ -17,7 +20,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app.config import get_settings
-from app.services.whatsapp import MetaProvider
+from app.services.whatsapp import BaileysProvider
 from app.models.schemas import WhatsAppMessage
 
 async def send_test_message():
@@ -25,49 +28,31 @@ async def send_test_message():
     
     # Get settings
     settings = get_settings()
-    token = settings.META_ACCESS_TOKEN or ""
-    phone_id = settings.META_PHONE_NUMBER_ID or ""
     
-    if not token or token == "YOUR_TOKEN_HERE":
-        print("[X] Error: Please set whatsapp.meta_access_token in conf.json file")
-        return
-    
-    if not phone_id or phone_id == "555XXXXXXXXXXX":
-        print("[X] Error: Please set whatsapp.meta_phone_number_id in conf.json file")
-        return
+    print(f"Using provider: {settings.WHATSAPP_PROVIDER}")
     
     # Test recipient
     recipient = "+919350561606"
     
-    print("Sending test message...")
-    print(f"   From: {phone_id}")
-    print(f"   To: {recipient}")
-    print()
+    # Create provider
+    provider = BaileysProvider()
     
-    try:
-        provider = MetaProvider()
-        message = WhatsAppMessage(
-            to=recipient,
-            body="Hello! This is a test message from your WhatsApp integration.",
-            media_url=None
-        )
-        
-        result = await provider.send_message(message)
-        
-        if result.success:
-            print("[OK] Message sent successfully!")
-            print(f"   Message ID: {result.message_id}")
-        else:
-            print("[X] Failed to send message")
-            print(f"   Error: {result.error}")
-            
-    except Exception as e:
-        print(f"[X] Error: {str(e)}")
+    # Create message
+    message = WhatsAppMessage(
+        to=recipient,
+        body="Test message from Busy WhatsApp Bridge (Baileys)",
+    )
+    
+    # Send
+    print(f"Sending message to {recipient}...")
+    result = await provider.send_message(message)
+    
+    if result.success:
+        print(f"[OK] Message sent successfully!")
+        print(f"    Message ID: {result.message_id}")
+        print(f"    Status: {result.delivery_status}")
+    else:
+        print(f"[X] Failed: {result.error}")
 
 if __name__ == "__main__":
-    print("=" * 50)
-    print("WhatsApp Cloud API Test Script")
-    print("=" * 50)
-    print()
-    
     asyncio.run(send_test_message())

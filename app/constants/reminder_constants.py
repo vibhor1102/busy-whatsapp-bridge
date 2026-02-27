@@ -41,9 +41,15 @@ DEFAULT_DELAY_BETWEEN_MESSAGES = 5  # seconds
 MIN_DELAY_BETWEEN_MESSAGES = 1
 MAX_DELAY_BETWEEN_MESSAGES = 60
 
-# Meta API Provider
-REMINDER_PROVIDER_META = "meta"
-VALID_REMINDER_PROVIDERS = [REMINDER_PROVIDER_META]
+# =============================================================================
+# REMOVED: Meta API Provider constant
+# Previously: REMINDER_PROVIDER_META = "meta"
+# Now using Baileys as the only provider.
+# TODO: Re-add via Baileys integration when needed
+# =============================================================================
+# Baileys Provider (now the only available provider)
+REMINDER_PROVIDER_BAILEYS = "baileys"
+VALID_REMINDER_PROVIDERS = [REMINDER_PROVIDER_BAILEYS]
 
 # Template Configuration
 MAX_TEMPLATES = 6

@@ -81,12 +81,7 @@ async def lifespan(app: FastAPI):
         debug=settings.DEBUG,
         whatsapp_provider=settings.WHATSAPP_PROVIDER
     )
-    if config_details.get("meta_webhook_token_mismatch"):
-        logger.warning(
-            "meta_webhook_token_mismatch_detected",
-            roaming_path=config_details.get("roaming_path"),
-            local_path=config_details.get("local_path"),
-        )
+    # REMOVED: meta_webhook_token_mismatch check - Meta Cloud API removed
     
     # Test database connection on startup
     db_status = db.test_connection()
@@ -277,16 +272,8 @@ async def health_check():
         except Exception as e:
             whatsapp_status["error"] = str(e)
             whatsapp_status["state"] = "unreachable"
-    elif settings.WHATSAPP_PROVIDER == "meta":
-        # Meta doesn't have a persistent connection to check
-        whatsapp_status["connected"] = bool(
-            getattr(settings, 'META_ACCESS_TOKEN', None) and 
-            getattr(settings, 'META_PHONE_NUMBER_ID', None)
-        )
-        whatsapp_status["state"] = "configured" if whatsapp_status["connected"] else "not_configured"
-    elif settings.WHATSAPP_PROVIDER == "webhook":
-        whatsapp_status["connected"] = bool(getattr(settings, 'WEBHOOK_URL', None))
-        whatsapp_status["state"] = "configured" if whatsapp_status["connected"] else "not_configured"
+    # REMOVED: Meta and Webhook provider checks - only Baileys available now
+    # TODO: Re-add via Baileys integration when needed
     
     # Determine overall health
     is_healthy = db_connected and whatsapp_status["connected"]
@@ -582,151 +569,48 @@ async def get_message_history(
     }
 
 
+# =============================================================================
+# REMOVED: Meta Cloud API webhook endpoints
+# The following endpoints have been removed as Meta Cloud API is no longer used.
+# Only Baileys is now available as the WhatsApp provider.
+# TODO: Re-add via Baileys integration when needed
+# =============================================================================
+# @app.get("/api/v1/whatsapp/meta/webhook") - was Meta webhook verification
+# @app.post("/api/v1/whatsapp/meta/webhook") - was Meta webhook status updates
+# @app.get("/api/v1/whatsapp/meta/webhook/status") - was Meta webhook diagnostics
+
 @app.get("/api/v1/whatsapp/meta/webhook", tags=["WhatsApp"])
-async def verify_meta_webhook(
-    request: Request,
-    hub_mode: Optional[str] = Query(None, alias="hub.mode"),
-    hub_verify_token: Optional[str] = Query(None, alias="hub.verify_token"),
-    hub_challenge: Optional[str] = Query(None, alias="hub.challenge"),
-):
+async def meta_webhook_removed():
+    """Meta webhook endpoint - REMOVED.
+    
+    This endpoint has been removed. Only Baileys is now available as the WhatsApp provider.
+    TODO: Re-add via Baileys integration when needed.
     """
-    Meta webhook verification endpoint.
-
-    Configure this URL in Meta App dashboard and set matching verify token in conf.json:
-    whatsapp.meta_webhook_verify_token
-    """
-    expected_token = settings.META_WEBHOOK_VERIFY_TOKEN
-    if hub_mode == "subscribe" and expected_token and hub_verify_token == expected_token:
-        message_db.record_meta_webhook_verify(
-            success=True,
-            mode=hub_mode,
-            source_ip=(request.client.host if request.client else None),
-        )
-        logger.info("meta_webhook_verified")
-        return HTMLResponse(content=str(hub_challenge or ""), status_code=200)
-
-    message_db.record_meta_webhook_verify(
-        success=False,
-        mode=hub_mode,
-        source_ip=(request.client.host if request.client else None),
-    )
-    logger.warning(
-        "meta_webhook_verify_failed",
-        mode=hub_mode,
-        has_expected_token=bool(expected_token),
-    )
-    raise HTTPException(status_code=403, detail="Meta webhook verification failed")
+    return {
+        "error": "meta_webhook_removed",
+        "message": "Meta Cloud API webhook endpoints have been removed. Only Baileys is now available.",
+        "provider": "baileys"
+    }
 
 
-@app.post("/api/v1/whatsapp/meta/webhook", tags=["WhatsApp"])
-async def receive_meta_webhook(request: Request):
-    """
-    Receive asynchronous Meta delivery status updates and reconcile message history.
-    """
-    try:
-        payload = await request.json()
-    except Exception as e:
-        message_db.record_meta_webhook_error(
-            source_ip=(request.client.host if request.client else None),
-            stage="json_parse",
-            error_message=str(e),
-        )
-        logger.error("meta_webhook_invalid_json", error=str(e))
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
-
-    logger.info(
-        "meta_webhook_post_received",
-        source_ip=(request.client.host if request.client else None),
-    )
-    updates = 0
-    last_status_seen: Optional[str] = None
-    entries = payload.get("entry", []) if isinstance(payload, dict) else []
-    for entry in entries:
-        for change in entry.get("changes", []):
-            value = change.get("value", {})
-            statuses = value.get("statuses", [])
-            for status_item in statuses:
-                message_id = status_item.get("id")
-                delivery_status = status_item.get("status")
-                last_status_seen = delivery_status or last_status_seen
-                recipient_id = status_item.get("recipient_id")
-                error_text = None
-                errors = status_item.get("errors") or []
-                if errors:
-                    first_error = errors[0]
-                    parts = [
-                        str(first_error.get("title") or "").strip(),
-                        str(first_error.get("details") or "").strip(),
-                    ]
-                    error_text = " | ".join([p for p in parts if p])
-                    if first_error.get("code") is not None:
-                        error_text = f"[{first_error.get('code')}] {error_text}".strip()
-
-                event_time = None
-                ts_raw = status_item.get("timestamp")
-                if ts_raw:
-                    try:
-                        event_time = datetime.fromtimestamp(int(ts_raw))
-                    except Exception:
-                        event_time = None
-
-                try:
-                    changed = message_db.update_delivery_status(
-                        message_id=message_id,
-                        delivery_status=delivery_status or "unknown",
-                        error_message=error_text,
-                        recipient_waid=recipient_id,
-                        provider="meta",
-                        event_time=event_time,
-                        raw_payload=status_item,
-                    )
-                    if changed:
-                        updates += 1
-                        logger.info(
-                            "meta_delivery_status_applied",
-                            message_id=message_id,
-                            delivery_status=(delivery_status or "unknown"),
-                        )
-                except Exception as e:
-                    message_db.record_meta_webhook_error(
-                        source_ip=(request.client.host if request.client else None),
-                        stage="status_apply",
-                        error_message=str(e),
-                        payload=status_item,
-                    )
-                    logger.error(
-                        "meta_delivery_status_apply_failed",
-                        message_id=message_id,
-                        delivery_status=(delivery_status or "unknown"),
-                        error=str(e),
-                    )
-
-    message_db.record_meta_webhook_post(
-        source_ip=(request.client.host if request.client else None),
-        last_status=last_status_seen,
-        updates=updates,
-    )
-    logger.info("meta_webhook_processed", updates=updates)
-    return {"success": True, "updates": updates}
+@app.post("/api/v1/whatsapp/meta/webhook")
+async def meta_webhook_post_removed():
+    """Meta webhook POST endpoint - REMOVED."""
+    return {
+        "error": "meta_webhook_removed",
+        "message": "Meta Cloud API webhook endpoints have been removed. Only Baileys is now available.",
+        "provider": "baileys"
+    }
 
 
-@app.get("/api/v1/whatsapp/meta/webhook/status", tags=["WhatsApp"])
-async def get_meta_webhook_status():
-    """Get Meta webhook diagnostics and recent processing errors."""
-    status = message_db.get_meta_webhook_status(error_limit=8)
-    last_post_at = status.get("last_webhook_post_at")
-    stale_threshold_minutes = 15
-    status["stale_callbacks"] = False
-    status["callback_staleness_minutes"] = None
-    if last_post_at:
-        try:
-            dt = datetime.fromisoformat(str(last_post_at))
-            delta = datetime.now() - dt
-            status["callback_staleness_minutes"] = int(delta.total_seconds() // 60)
-            status["stale_callbacks"] = delta > timedelta(minutes=stale_threshold_minutes)
-        except Exception:
-            pass
-    return status
+@app.get("/api/v1/whatsapp/meta/webhook/status")
+async def meta_webhook_status_removed():
+    """Meta webhook status endpoint - REMOVED."""
+    return {
+        "error": "meta_webhook_removed",
+        "message": "Meta Cloud API webhook endpoints have been removed. Only Baileys is now available.",
+        "provider": "baileys"
+    }
 
 
 @app.get("/api/v1/queue/dead-letter", tags=["Queue"])
@@ -1054,7 +938,8 @@ async def get_settings_endpoint():
         "WHATSAPP_DEFAULT_COUNTRY_CODE": settings.WHATSAPP_DEFAULT_COUNTRY_CODE,
         "BAILEYS_SERVER_URL": settings.BAILEYS_SERVER_URL,
         "BAILEYS_ENABLED": settings.BAILEYS_ENABLED,
-        "META_WEBHOOK_CONFIGURED": bool(settings.META_WEBHOOK_VERIFY_TOKEN),
+        # REMOVED: meta_webhook_configured - Meta Cloud API removed
+        # "META_WEBHOOK_CONFIGURED": ...,
         "REMINDER_PROVIDER_CONFIGURED": reminder_provider_configured,
         "LOG_LEVEL": settings.LOG_LEVEL,
         "config": get_config_details(),
@@ -1079,7 +964,7 @@ async def get_config_file():
             "whatsapp": {
                 "provider": settings.WHATSAPP_PROVIDER,
                 "default_country_code": settings.WHATSAPP_DEFAULT_COUNTRY_CODE,
-                "meta_webhook_configured": bool(settings.META_WEBHOOK_VERIFY_TOKEN),
+                # REMOVED: meta_webhook_configured - Meta Cloud API removed
             },
             "baileys": {
                 "server_url": settings.BAILEYS_SERVER_URL,
@@ -1098,13 +983,14 @@ async def get_config_file():
 
 class ConfigUpdateRequest(BaseModel):
     """Validatable settings update request."""
-    whatsapp_provider: Optional[str] = Field(None, pattern="^(baileys|meta|webhook|evolution)$")
+    # REMOVED: pattern now only allows baileys (meta, webhook, evolution removed)
+    whatsapp_provider: Optional[str] = Field(None, pattern="^baileys$")
     whatsapp_default_country_code: Optional[str] = Field(None, pattern="^\\d{1,4}$")
     baileys_server_url: Optional[str] = Field(None, pattern="^https?://")
     baileys_enabled: Optional[bool] = None
     log_level: Optional[str] = Field(None, pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
     bds_file_path: Optional[str] = None
-    meta_webhook_verify_token: Optional[str] = None
+    # REMOVED: meta_webhook_verify_token - Meta Cloud API removed
 
 
 @app.put("/api/v1/settings/config", tags=["Settings"])
@@ -1126,8 +1012,7 @@ async def update_config_file(request: ConfigUpdateRequest):
             current_settings.whatsapp.provider = update_data['whatsapp_provider']
         if 'whatsapp_default_country_code' in update_data:
             current_settings.whatsapp.default_country_code = update_data['whatsapp_default_country_code']
-        if 'meta_webhook_verify_token' in update_data:
-            current_settings.whatsapp.meta_webhook_verify_token = update_data['meta_webhook_verify_token']
+        # REMOVED: meta_webhook_verify_token update - Meta Cloud API removed
         if 'baileys_server_url' in update_data:
             current_settings.baileys.server_url = update_data['baileys_server_url']
         if 'baileys_enabled' in update_data:

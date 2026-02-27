@@ -60,30 +60,25 @@ class ReminderService:
 
     def _resolve_delivery_provider(self, configured_provider: Optional[str]) -> str:
         """
-        Resolve effective provider for reminder dispatch with safe fallbacks.
-
-        If Meta is selected without webhook status tracking, fallback to runtime
-        provider (typically Baileys) to avoid false-positive "accepted" sends.
+        Resolve effective provider for reminder dispatch.
+        
+        NOTE: Previously this had fallback logic for Meta, Evolution, Webhook.
+        Now only Baileys is available - all requests fall back to Baileys.
+        TODO: Re-add other providers via Baileys integration when needed.
         """
         provider = (configured_provider or "baileys").strip().lower()
-        if provider != "meta":
-            return provider
-
-        webhook_ready = bool(self._settings.META_WEBHOOK_VERIFY_TOKEN)
-        if webhook_ready:
-            return "meta"
-
-        fallback = (self._settings.WHATSAPP_PROVIDER or "baileys").strip().lower()
-        if fallback == "meta":
-            fallback = "baileys"
-
-        logger.warning(
-            "reminder_provider_fallback",
-            configured_provider=provider,
-            effective_provider=fallback,
-            reason="meta_webhook_not_configured",
-        )
-        return fallback
+        
+        # Only Baileys is available now - fallback all others to baileys
+        if provider != "baileys":
+            logger.warning(
+                "reminder_provider_fallback",
+                configured_provider=provider,
+                effective_provider="baileys",
+                message="Only Baileys provider available, using Baileys"
+            )
+            return "baileys"
+        
+        return provider
 
     def get_snapshot_status(self) -> Dict[str, Any]:
         """Return current snapshot metadata."""
@@ -428,9 +423,10 @@ class ReminderService:
                         with open(pdf_path, 'wb') as f:
                             f.write(pdf_bytes)
 
-                        # Local media is supported for Baileys/Evolution and uploaded
-                        # on-demand for Meta in MetaProvider.
-                        media_ref = pdf_path if provider in {"baileys", "evolution", "meta"} else None
+                        # Local media is supported for Baileys
+                        # REMOVED: Evolution and Meta support - only Baileys available now
+                        # TODO: Re-add via Baileys integration when needed
+                        media_ref = pdf_path if provider == "baileys" else None
                         if media_ref is None:
                             logger.warning(
                                 "reminder_media_not_supported_for_provider",

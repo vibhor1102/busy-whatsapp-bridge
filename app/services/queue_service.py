@@ -107,7 +107,9 @@ class MessageQueueService:
             if result.success:
                 delivery_status = result.delivery_status
                 if not delivery_status:
-                    delivery_status = "accepted" if provider_name == "meta" else "delivered"
+                    # REMOVED: Meta "accepted" status - only Baileys available now
+                    # TODO: Re-add via Baileys integration when needed
+                    delivery_status = "delivered"
                 # Mark as sent
                 message_db.mark_message_sent(
                     queue_id=queue_id,

@@ -27,14 +27,21 @@ class DatabaseSettings(BaseModel):
 class WhatsAppSettings(BaseModel):
     """WhatsApp provider configuration."""
     provider: str = "baileys"
-    meta_api_version: str = "v18.0"
-    meta_phone_number_id: Optional[str] = None
-    meta_access_token: Optional[str] = None
-    meta_business_id: Optional[str] = None
-    meta_webhook_verify_token: Optional[str] = None
+    # =============================================================================
+    # REMOVED PROVIDER CONFIGURATIONS
+    # The following settings were for Meta, Evolution, and Webhook providers
+    # which have been removed. Only Baileys is now used.
+    # Configuration keys kept for backward compatibility but are no longer used.
+    # TODO: Re-add via Baileys integration when needed
+    # =============================================================================
+    # meta_api_version: str = "v18.0"  # Was Meta API version
+    # meta_phone_number_id: Optional[str] = None  # Was Meta phone number ID
+    # meta_access_token: Optional[str] = None  # Was Meta access token
+    # meta_business_id: Optional[str] = None  # Was Meta business ID
+    # meta_webhook_verify_token: Optional[str] = None  # Was Meta webhook verify token
+    # webhook_url: Optional[str] = None  # Was custom webhook URL
+    # webhook_auth_token: Optional[str] = None  # Was custom webhook auth token
     default_country_code: str = "91"
-    webhook_url: Optional[str] = None
-    webhook_auth_token: Optional[str] = None
 
 
 class BaileysSettings(BaseModel):
@@ -53,7 +60,12 @@ class LoggingSettings(BaseModel):
 class ReminderSettings(BaseModel):
     """Payment reminder configuration."""
     enabled: bool = True
-    provider: str = "meta"
+    # =============================================================================
+    # REMOVED: provider setting was previously "meta"
+    # Now using "baileys" as the only provider
+    # TODO: Re-add other providers via Baileys integration when needed
+    # =============================================================================
+    provider: str = "baileys"
     default_credit_days: int = 30
     schedule_enabled: bool = False
     schedule_frequency: str = "weekly"
@@ -106,37 +118,44 @@ class Settings(BaseModel):
     def WHATSAPP_PROVIDER(self) -> str:
         return self.whatsapp.provider
     
-    @property
-    def META_API_VERSION(self) -> str:
-        return self.whatsapp.meta_api_version
-    
-    @property
-    def META_PHONE_NUMBER_ID(self) -> Optional[str]:
-        return self.whatsapp.meta_phone_number_id
-    
-    @property
-    def META_ACCESS_TOKEN(self) -> Optional[str]:
-        return self.whatsapp.meta_access_token
-    
-    @property
-    def META_BUSINESS_ID(self) -> Optional[str]:
-        return self.whatsapp.meta_business_id
-
-    @property
-    def META_WEBHOOK_VERIFY_TOKEN(self) -> Optional[str]:
-        return self.whatsapp.meta_webhook_verify_token
+    # =============================================================================
+    # REMOVED: Meta and Webhook provider properties
+    # These were used for Meta Cloud API, Evolution API, and Webhook providers
+    # which have been removed. Only Baileys is now used.
+    # Properties kept for backward compatibility - return None or defaults.
+    # TODO: Re-add via Baileys integration when needed
+    # =============================================================================
+    # @property
+    # def META_API_VERSION(self) -> str:
+    #     return self.whatsapp.meta_api_version
+    #
+    # @property
+    # def META_PHONE_NUMBER_ID(self) -> Optional[str]:
+    #     return self.whatsapp.meta_phone_number_id
+    #
+    # @property
+    # def META_ACCESS_TOKEN(self) -> Optional[str]:
+    #     return self.whatsapp.meta_access_token
+    #
+    # @property
+    # def META_BUSINESS_ID(self) -> Optional[str]:
+    #     return self.whatsapp.meta_business_id
+    #
+    # @property
+    # def META_WEBHOOK_VERIFY_TOKEN(self) -> Optional[str]:
+    #     return self.whatsapp.meta_webhook_verify_token
+    #
+    # @property
+    # def WEBHOOK_URL(self) -> Optional[str]:
+    #     return self.whatsapp.webhook_url
+    #
+    # @property
+    # def WEBHOOK_AUTH_TOKEN(self) -> Optional[str]:
+    #     return self.whatsapp.webhook_auth_token
 
     @property
     def WHATSAPP_DEFAULT_COUNTRY_CODE(self) -> str:
         return self.whatsapp.default_country_code
-    
-    @property
-    def WEBHOOK_URL(self) -> Optional[str]:
-        return self.whatsapp.webhook_url
-    
-    @property
-    def WEBHOOK_AUTH_TOKEN(self) -> Optional[str]:
-        return self.whatsapp.webhook_auth_token
     
     @property
     def BAILEYS_SERVER_URL(self) -> str:
@@ -268,26 +287,7 @@ def get_config_details() -> dict:
     effective = get_config_path()
     roaming = get_roaming_appdata_path() / "conf.json"
     local = get_local_appdata_path() / "conf.json"
-    roaming_token_configured = False
-    local_token_configured = False
-    token_mismatch = False
-    try:
-        if roaming.exists():
-            roaming_data = json.loads(roaming.read_text(encoding="utf-8", errors="ignore"))
-            roaming_token = (roaming_data.get("whatsapp", {}) or {}).get("meta_webhook_verify_token")
-            roaming_token_configured = bool(str(roaming_token or "").strip())
-        else:
-            roaming_token = None
-        if local.exists():
-            local_data = json.loads(local.read_text(encoding="utf-8", errors="ignore"))
-            local_token = (local_data.get("whatsapp", {}) or {}).get("meta_webhook_verify_token")
-            local_token_configured = bool(str(local_token or "").strip())
-        else:
-            local_token = None
-        if roaming.exists() and local.exists():
-            token_mismatch = (str(roaming_token or "").strip() != str(local_token or "").strip())
-    except Exception:
-        pass
+    # REMOVED: meta_webhook_token_* diagnostics - Meta Cloud API removed
     return {
         "effective_path": str(effective),
         "effective_source": "roaming" if effective == roaming else "local",
@@ -295,9 +295,7 @@ def get_config_details() -> dict:
         "roaming_exists": roaming.exists(),
         "local_path": str(local),
         "local_exists": local.exists(),
-        "meta_webhook_token_mismatch": token_mismatch,
-        "roaming_meta_webhook_token_configured": roaming_token_configured,
-        "local_meta_webhook_token_configured": local_token_configured,
+        # REMOVED: meta_webhook_token_mismatch, roaming_meta_webhook_token_configured, local_meta_webhook_token_configured
     }
 
 

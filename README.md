@@ -14,7 +14,7 @@ Enterprise-grade middleware that seamlessly integrates **Busy Accounting Softwar
 
 - **🔧 Native Windows Service** - Auto-start on boot, runs in background
 - **📊 32-bit ODBC Support** - Full compatibility with Busy .bds MS Access databases
-- **📱 Multi-Provider** - Meta Business API or custom webhook (Baileys support planned)
+- **📱 Baileys Integration** - WhatsApp Web via Baileys (Meta Cloud API removed)
 - **🔒 Production Ready** - Structured logging, error handling, health monitoring
 - **⚡ High Performance** - Async FastAPI with connection pooling
 - **📈 Scalable** - Event-driven architecture with webhook support
@@ -38,14 +38,14 @@ Enterprise-grade middleware that seamlessly integrates **Busy Accounting Softwar
 │   Busy Software │ ─────────────────────→ │  Windows Service │
 │   (Invoice Save)│                        │   (FastAPI App)  │
 └─────────────────┘                        └────────┬─────────┘
-                                                     │
+                                                    │
                           ┌────────────────────────┼────────────────────────┐
                           │                        │                        │
                           ▼                        ▼                        ▼
                    ┌──────────────┐      ┌──────────────┐        ┌──────────────┐
                    │   Database   │      │   WhatsApp   │        │    Logs      │
-                   │  (MS Access) │      │   Provider   │        │   (Event/    │
-                    │   (.bds)     │      │    (Meta)    │        │    File)     │
+                   │  (MS Access) │      │   (Baileys)  │        │   (Event/    │
+                   │   (.bds)     │      │  Web Bridge  │        │    File)     │
                    └──────────────┘      └──────────────┘        └──────────────┘
 ```
 
@@ -77,9 +77,9 @@ Edit `.env` file with your settings:
 BDS_FILE_PATH=C:\Busy\Data\YourCompany.bds
 BDS_PASSWORD=ILoveMyINDIA
 
-# WhatsApp Provider (REQUIRED)
-WHATSAPP_PROVIDER=webhook
-WEBHOOK_URL=http://localhost:3000/send
+# WhatsApp Provider (Baileys - REQUIRED)
+WHATSAPP_PROVIDER=baileys
+BAILEYS_SERVER_URL=http://localhost:3001
 ```
 
 ### 3. Install Windows Service
@@ -227,7 +227,8 @@ python -c "import struct; print(struct.calcsize('P') * 8)"
 - Run as Administrator if permission issues
 
 **WhatsApp messages not sending**
-- Verify Meta API credentials
+- Ensure Baileys server is running: `cd baileys-server && npm start`
+- Verify WhatsApp is authenticated (visit http://localhost:3001/qr/page)
 - Check phone number format (with country code)
 - Review logs in Windows Event Viewer
 

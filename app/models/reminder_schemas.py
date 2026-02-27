@@ -164,7 +164,12 @@ class ReminderConfig(BaseModel):
         ge=1, le=365,
         description="Default credit days when Master1.I2 is 0"
     )
-    default_provider: str = Field(default="meta", description="Default WhatsApp provider")
+    # =============================================================================
+    # NOTE: Changed default from "meta" to "baileys"
+    # Only Baileys is now available - other providers removed.
+    # TODO: Re-add via Baileys integration when needed
+    # =============================================================================
+    default_provider: str = Field(default="baileys", description="Default WhatsApp provider")
     currency_symbol: str = Field(default="₹", description="Currency symbol for formatting")
     
     # Company settings

@@ -406,18 +406,34 @@ class BaileysClient extends EventEmitter {
 
         let jid = this.formatPhoneNumber(to);
         const mimetype = options.mimetype || 'application/pdf';
-        const fileName = options.fileName || mediaUrl.split('/').pop() || 'document.pdf';
+        
+        // Handle both URLs and local file paths
+        let mediaSource;
+        let fileName = options.fileName;
+        
+        // Check if it's a URL (http/https) or local file path
+        if (mediaUrl.match(/^https?:\/\//i)) {
+            // It's a URL
+            mediaSource = { url: mediaUrl };
+            fileName = fileName || mediaUrl.split('/').pop() || 'document.pdf';
+        } else {
+            // It's a local file path - convert to file:// URL for Baileys
+            const path = require('path');
+            const resolvedPath = path.resolve(mediaUrl);
+            mediaSource = { url: resolvedPath };
+            fileName = fileName || path.basename(resolvedPath) || 'document.pdf';
+        }
 
         try {
             const result = await this.socket.sendMessage(jid, {
-                document: { url: mediaUrl },
+                document: mediaSource,
                 caption: caption || '',
                 mimetype: mimetype,
                 fileName: fileName
             });
 
             this.logger.info(
-                { to: jid, messageId: result.key.id, mediaUrl },
+                { to: jid, messageId: result.key.id, mediaUrl, isLocalFile: !mediaUrl.match(/^https?:\/\//i) },
                 'Media message sent successfully'
             );
 

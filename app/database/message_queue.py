@@ -85,31 +85,9 @@ class MessageQueueDB:
                 )
             """)
 
-            # Meta webhook diagnostics table (single-row state + rolling errors)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS meta_webhook_diagnostics (
-                    id INTEGER PRIMARY KEY CHECK (id = 1),
-                    verified_config INTEGER DEFAULT 0,
-                    last_verify_at TIMESTAMP,
-                    last_verify_mode TEXT,
-                    last_verify_source_ip TEXT,
-                    last_webhook_post_at TIMESTAMP,
-                    last_webhook_post_source_ip TEXT,
-                    last_webhook_delivery_status_seen TEXT,
-                    last_webhook_updates INTEGER DEFAULT 0,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS meta_webhook_errors (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    source_ip TEXT,
-                    stage TEXT,
-                    error_message TEXT,
-                    payload TEXT
-                )
-            """)
+            # REMOVED: Meta webhook diagnostics tables (meta_webhook_diagnostics, meta_webhook_errors)
+            # These were used for Meta Cloud API which has been removed.
+            # TODO: Re-add via Baileys integration when needed
             
             # Dead letter queue (permanently failed messages)
             conn.execute("""
@@ -559,120 +537,13 @@ class MessageQueueDB:
                 normalized_rows.append(item)
             return normalized_rows
 
-    def record_meta_webhook_verify(
-        self,
-        *,
-        success: bool,
-        mode: Optional[str],
-        source_ip: Optional[str],
-    ) -> None:
-        """Record webhook verification attempts and latest state."""
-        with self._get_connection() as conn:
-            now = datetime.now()
-            conn.execute(
-                """
-                INSERT INTO meta_webhook_diagnostics
-                (id, verified_config, last_verify_at, last_verify_mode, last_verify_source_ip, updated_at)
-                VALUES (1, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    verified_config = excluded.verified_config,
-                    last_verify_at = excluded.last_verify_at,
-                    last_verify_mode = excluded.last_verify_mode,
-                    last_verify_source_ip = excluded.last_verify_source_ip,
-                    updated_at = excluded.updated_at
-                """,
-                (1 if success else 0, now, mode, source_ip, now),
-            )
-            conn.commit()
-
-    def record_meta_webhook_post(
-        self,
-        *,
-        source_ip: Optional[str],
-        last_status: Optional[str],
-        updates: int,
-    ) -> None:
-        """Record latest successful webhook POST metadata."""
-        with self._get_connection() as conn:
-            now = datetime.now()
-            conn.execute(
-                """
-                INSERT INTO meta_webhook_diagnostics
-                (id, last_webhook_post_at, last_webhook_post_source_ip,
-                 last_webhook_delivery_status_seen, last_webhook_updates, updated_at)
-                VALUES (1, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    last_webhook_post_at = excluded.last_webhook_post_at,
-                    last_webhook_post_source_ip = excluded.last_webhook_post_source_ip,
-                    last_webhook_delivery_status_seen = excluded.last_webhook_delivery_status_seen,
-                    last_webhook_updates = excluded.last_webhook_updates,
-                    updated_at = excluded.updated_at
-                """,
-                (now, source_ip, last_status, updates, now),
-            )
-            conn.commit()
-
-    def record_meta_webhook_error(
-        self,
-        *,
-        source_ip: Optional[str],
-        stage: str,
-        error_message: str,
-        payload: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Record webhook processing errors for diagnostics."""
-        payload_text = json.dumps(payload, ensure_ascii=False) if payload is not None else None
-        with self._get_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO meta_webhook_errors (source_ip, stage, error_message, payload)
-                VALUES (?, ?, ?, ?)
-                """,
-                (source_ip, stage, error_message, payload_text),
-            )
-            conn.commit()
-
-    def get_meta_webhook_status(self, error_limit: int = 5) -> Dict[str, Any]:
-        """Return latest webhook diagnostics and recent errors."""
-        with self._get_connection() as conn:
-            state = conn.execute(
-                "SELECT * FROM meta_webhook_diagnostics WHERE id = 1"
-            ).fetchone()
-            errors = conn.execute(
-                """
-                SELECT created_at, source_ip, stage, error_message
-                FROM meta_webhook_errors
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (max(1, error_limit),),
-            ).fetchall()
-
-            result = {
-                "verified_config": False,
-                "last_verify_at": None,
-                "last_verify_mode": None,
-                "last_verify_source_ip": None,
-                "last_webhook_post_at": None,
-                "last_webhook_post_source_ip": None,
-                "last_webhook_delivery_status_seen": None,
-                "last_webhook_updates": 0,
-                "recent_errors": [dict(e) for e in errors],
-            }
-            if state:
-                result.update(
-                    {
-                        "verified_config": bool(state["verified_config"]),
-                        "last_verify_at": state["last_verify_at"],
-                        "last_verify_mode": state["last_verify_mode"],
-                        "last_verify_source_ip": state["last_verify_source_ip"],
-                        "last_webhook_post_at": state["last_webhook_post_at"],
-                        "last_webhook_post_source_ip": state["last_webhook_post_source_ip"],
-                        "last_webhook_delivery_status_seen": state["last_webhook_delivery_status_seen"],
-                        "last_webhook_updates": int(state["last_webhook_updates"] or 0),
-                    }
-                )
-            return result
+    # REMOVED: Meta webhook methods - Meta Cloud API removed
+    # These methods were used for Meta webhook processing
+    # TODO: Re-add via Baileys integration when needed
+    # def record_meta_webhook_verify(...)
+    # def record_meta_webhook_post(...)
+    # def record_meta_webhook_error(...)
+    # def get_meta_webhook_status(...)
     
     def get_dead_letter_messages(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get messages from dead letter queue."""
