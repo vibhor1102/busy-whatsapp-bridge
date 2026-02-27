@@ -35,94 +35,6 @@
     <Message v-if="loadError" severity="warn" :closable="false" class="mb-3">
       {{ loadError }}
     </Message>
-    <Message v-if="metaHealth?.stale_callbacks" severity="warn" :closable="false" class="mb-3">
-      Webhook configured but no recent Meta callback in the last
-      {{ metaHealth.callback_staleness_minutes ?? 'many' }} minutes.
-      Check tunnel stability and Meta webhook subscription.
-    </Message>
-
-    <Card class="meta-health mb-4">
-      <template #title>
-        <div class="flex justify-content-between align-items-center">
-          <span>Meta Delivery Health</span>
-          <Button
-            icon="pi pi-refresh"
-            class="p-button-text p-button-sm"
-            @click="loadMetaHealth"
-          />
-        </div>
-      </template>
-      <template #content>
-        <div class="health-grid">
-          <div class="health-item">
-            <label>Webhook Configured</label>
-            <span :class="metaHealth?.verified_config ? 'text-green-500' : 'text-orange-500'">
-              {{ metaHealth?.verified_config ? 'Yes' : 'No' }}
-            </span>
-          </div>
-          <div class="health-item">
-            <label>Last Verify</label>
-            <span>{{ formatDateTime(metaHealth?.last_verify_at) }}</span>
-          </div>
-          <div class="health-item">
-            <label>Last Callback</label>
-            <span>{{ formatDateTime(metaHealth?.last_webhook_post_at) }}</span>
-          </div>
-          <div class="health-item">
-            <label>Last Status Seen</label>
-            <span>{{ metaHealth?.last_webhook_delivery_status_seen || 'N/A' }}</span>
-          </div>
-          <div class="health-item">
-            <label>Reminder Provider</label>
-            <span>{{ settingsInfo?.REMINDER_PROVIDER_CONFIGURED || 'N/A' }}</span>
-          </div>
-          <div class="health-item">
-            <label>Token State</label>
-            <span>{{ settingsInfo?.META_WEBHOOK_CONFIGURED ? 'Configured' : 'Missing' }}</span>
-          </div>
-        </div>
-
-        <div class="runbook mt-3">
-          <h4>Quick Setup (5 steps)</h4>
-          <ol>
-            <li>Start tunnel to <code>http://localhost:8000</code> (prefer ngrok/cloudflared).</li>
-            <li>Set callback URL in Meta: <code>{{ webhookCallbackUrl }}</code>.</li>
-            <li>Set verify token to configured value in app settings.</li>
-            <li>Subscribe only <code>messages</code> webhook field.</li>
-            <li>Send one test reminder and confirm transition beyond <code>accepted</code>.</li>
-          </ol>
-          <p class="text-muted">
-            Note: <code>loca.lt</code> is not recommended for webhook callbacks due to interstitial/password behavior.
-          </p>
-          <div class="runbook-actions">
-            <Button
-              label="Copy Callback URL"
-              icon="pi pi-copy"
-              class="p-button-outlined p-button-sm"
-              @click="copyToClipboard(webhookCallbackUrl, 'Callback URL copied')"
-            />
-            <Button
-              label="Copy Status Command"
-              icon="pi pi-copy"
-              class="p-button-outlined p-button-sm ml-2"
-              @click="copyToClipboard(historyCommand, 'Command copied')"
-            />
-          </div>
-        </div>
-
-        <div class="recent-transitions mt-3">
-          <h4>Recent Delivery Transitions</h4>
-          <ul v-if="recentTransitions.length > 0">
-            <li v-for="item in recentTransitions" :key="item.id">
-              <code>{{ item.phone }}</code> ->
-              <strong>{{ item.delivery_status || 'unknown' }}</strong>
-              at {{ formatDateTime(item.delivery_updated_at || item.completed_at) }}
-            </li>
-          </ul>
-          <p v-else class="text-muted">No recent reminder delivery transitions yet.</p>
-        </div>
-      </template>
-    </Card>
 
     <div class="stats-grid">
       <Card class="stat-card">
@@ -392,8 +304,6 @@
     <Dialog v-model:visible="showTemplateEditor" header="Message Templates" modal maximizable :style="{ width: '800px', height: '600px' }">
       <TemplateEditor @close="showTemplateEditor = false" @saved="loadTemplates" />
     </Dialog>
-
-    <ConfirmDialog />
   </div>
 </template>
 
@@ -404,7 +314,6 @@ import Calendar from 'primevue/calendar'
 import Card from 'primevue/card'
 import Checkbox from 'primevue/checkbox'
 import Column from 'primevue/column'
-import ConfirmDialog from 'primevue/confirmdialog'
 import DataTable from 'primevue/datatable'
 import Dialog from 'primevue/dialog'
 import Dropdown from 'primevue/dropdown'
@@ -419,8 +328,6 @@ import type { DataTablePageEvent, DataTableSortEvent } from 'primevue/datatable'
 import TemplateEditor from '@/components/TemplateEditor.vue'
 import { api } from '@/services/api'
 import type {
-  Message as QueueMessage,
-  MetaWebhookStatus,
   MessageTemplate,
   PartyReminderInfo,
   ReminderConfig,
@@ -443,9 +350,7 @@ const selectedTemplateId = ref('')
 const stats = ref<ReminderStats | null>(null)
 const schedulerStatus = ref<SchedulerStatus | null>(null)
 const snapshotStatus = ref<ReminderSnapshotStatus | null>(null)
-const metaHealth = ref<MetaWebhookStatus | null>(null)
 const settingsInfo = ref<Record<string, any> | null>(null)
-const recentTransitions = ref<QueueMessage[]>([])
 
 const parties = ref<PartyReminderInfo[]>([])
 const totalRecords = ref(0)
@@ -506,9 +411,6 @@ const schedulerStatusClass = computed(() => {
   if (!schedulerStatus.value) return ''
   return schedulerStatus.value.is_running ? 'text-green-500' : 'text-red-500'
 })
-
-const webhookCallbackUrl = computed(() => `${window.location.origin}/api/v1/whatsapp/meta/webhook`)
-const historyCommand = `Invoke-RestMethod "http://localhost:8000/api/v1/queue/history?source=payment_reminder&limit=20"`
 
 function isSelected(code: string): boolean {
   return tempSelections.value.has(code)
@@ -626,25 +528,10 @@ async function loadMetaData(): Promise<void> {
   }
 }
 
-async function loadMetaHealth(): Promise<void> {
-  const [healthResult, transitionsResult] = await Promise.allSettled([
-    api.getMetaWebhookStatus(),
-    api.getReminderHistory(undefined, 3),
-  ])
-
-  if (healthResult.status === 'fulfilled') {
-    metaHealth.value = healthResult.value
-  }
-
-  if (transitionsResult.status === 'fulfilled') {
-    recentTransitions.value = transitionsResult.value
-  }
-}
-
 async function loadData(): Promise<void> {
   loading.value = true
   try {
-    await Promise.all([loadMetaData(), loadMetaHealth()])
+    await loadMetaData()
     await loadPartiesPage(0)
   } finally {
     loading.value = false
@@ -655,7 +542,7 @@ async function refreshSnapshot(): Promise<void> {
   snapshotRefreshing.value = true
   try {
     snapshotStatus.value = await api.refreshReminderSnapshot()
-    await Promise.all([loadMetaData(), loadMetaHealth(), loadPartiesPage(0)])
+    await Promise.all([loadMetaData(), loadPartiesPage(0)])
     toast.add({
       severity: 'success',
       summary: 'Snapshot Refreshed',

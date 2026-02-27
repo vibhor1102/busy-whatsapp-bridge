@@ -150,15 +150,12 @@
         <Button label="Close" @click="showPreview = false" />
       </template>
     </Dialog>
-
-    <ConfirmDialog />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import Button from 'primevue/button'
-import ConfirmDialog from 'primevue/confirmdialog'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import Tag from 'primevue/tag'
