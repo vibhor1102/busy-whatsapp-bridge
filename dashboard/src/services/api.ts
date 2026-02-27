@@ -305,27 +305,6 @@ class ApiService {
     })
   }
 
-  async getEligibleParties(params: {
-    offset?: number
-    limit?: number
-    filter_by?: string
-    search?: string
-  }): Promise<{ items: any[]; total: number }> {
-    const queryParams = new URLSearchParams()
-    if (params.offset !== undefined) queryParams.append('offset', params.offset.toString())
-    if (params.limit !== undefined) queryParams.append('limit', params.limit.toString())
-    if (params.filter_by) queryParams.append('filter_by', params.filter_by)
-    if (params.search) queryParams.append('search', params.search)
-    
-    return this.fetch<{ items: any[]; total: number }>(`/reminders/parties?${queryParams.toString()}`)
-  }
-
-  async refreshReminderSnapshot(): Promise<any> {
-    return this.fetch<any>('/reminders/snapshot/refresh', {
-      method: 'POST',
-    })
-  }
-
   async scheduleReminders(
     partyCodes: string[],
     templateId: string,
