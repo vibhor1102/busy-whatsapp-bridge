@@ -462,12 +462,10 @@ class BaileysClient extends EventEmitter {
     }
 
     async setPresence(online = true) {
-        """
-        Set user presence (online/offline).
-        
-        Args:
-            online: true for 'available', false for 'unavailable'
-        """
+        /*
+         * Set user presence (online/offline).
+         * @param {boolean} online - true for 'available', false for 'unavailable'
+         */
         if (!this.socket || this.connectionState !== 'connected') {
             this.logger.debug('Cannot set presence: not connected');
             return false;
@@ -485,16 +483,14 @@ class BaileysClient extends EventEmitter {
     }
 
     async sendTypingIndicator(to, duration = 5000) {
-        """
-        Send typing indicator to a chat.
+        /*
+         * Send typing indicator to a chat.
         
         Args:
-            to: Phone number or JID
-            duration: Duration in milliseconds to show typing
-            
-        Returns:
-            success: boolean
-        """
+         * @param {string} to - Phone number or JID
+         * @param {number} duration - Duration in milliseconds to show typing
+         * @returns {boolean} success
+         */
         if (!this.socket || this.connectionState !== 'connected') {
             this.logger.debug('Cannot send typing: not connected');
             return false;

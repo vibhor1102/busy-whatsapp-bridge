@@ -251,9 +251,9 @@ class PDFInflationService:
 /Length {500 + random.randint(100, 500)}
 >>
 stream
-<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?\u003e
-<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.0-c060 61.134777, 2010/02/12-17:32:00"\u003e
- <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\u003e
+<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.0-c060 61.134777, 2010/02/12-17:32:00">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
   <rdf:Description rdf:about=""
     xmlns:dc="http://purl.org/dc/elements/1.1/"
     xmlns:xmp="http://ns.adobe.com/xap/1.0/"
@@ -270,12 +270,12 @@ stream
     pdf:Producer="{metadata['producer']}"
     pdf:Keywords="{metadata['keywords']}"
     pdfaid:part="1"
-    pdfaid:conformance="B"\u003e
-   </dc:description\u003e
-  </rdf:Description\u3e
- </rdf:RDF\u003e
-</x:xmpmeta\u003e
-<?xpacket end="w"?\u003e
+    pdfaid:conformance="B">
+   </dc:description>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>
 endstream
 endobj
 """
