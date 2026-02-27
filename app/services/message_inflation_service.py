@@ -21,25 +21,12 @@ class MessageInflationService:
     Service to inflate message size using invisible characters.
     
     Uses various Unicode invisible characters:
-    - Zero-width space (ZWSP): \u200B
-    - Zero-width non-joiner (ZWNJ): \u200C
     - Zero-width joiner (ZWJ): \u200D
-    - Left-to-right mark (LRM): \u200E
-    - Right-to-left mark (RLM): \u200F
-    - Non-breaking space (NBSP): \u00A0
-    - Variation selectors: \uFE00-\uFE0F
-    - Combining grapheme joiner: \u034F
     """
     
     # Invisible/zero-width characters
     INVISIBLE_CHARS = [
-        '\u200B',  # Zero-width space
-        '\u200C',  # Zero-width non-joiner
         '\u200D',  # Zero-width joiner
-        '\u200E',  # Left-to-right mark
-        '\u200F',  # Right-to-left mark
-        '\u00A0',  # Non-breaking space (invisible in most contexts)
-        '\u034F',  # Combining grapheme joiner
     ]
     
     # Variation selectors (can be appended to emoji)
