@@ -1,61 +1,90 @@
 <template>
-  <div class="whatsapp-page">
-    <div class="top-row">
-      <h1>WhatsApp Connection</h1>
-      <div class="actions">
-        <Button label="Refresh" icon="pi pi-refresh" outlined :loading="loading" @click="refresh" />
-        <Button label="Restart" icon="pi pi-replay" severity="warning" outlined :loading="busyRestart" @click="restartConnection" />
-        <Button label="Logout" icon="pi pi-sign-out" severity="danger" outlined :loading="busyLogout" @click="logoutConnection" />
+  <div class="bw-page">
+    <div class="bw-page-header">
+      <div>
+        <h1>WhatsApp Connection</h1>
+        <p class="subtitle">Manage your WhatsApp Web session via Baileys</p>
+      </div>
+      <div class="header-actions">
+        <Button label="Refresh" icon="pi pi-refresh" class="p-button-outlined p-button-sm" :loading="loading" @click="refresh" />
+        <Button label="Restart" icon="pi pi-replay" severity="warning" class="p-button-outlined p-button-sm" :loading="busyRestart" @click="restartConnection" />
+        <Button label="Logout" icon="pi pi-sign-out" severity="danger" class="p-button-outlined p-button-sm" :loading="busyLogout" @click="logoutConnection" />
       </div>
     </div>
 
-    <div class="content-grid">
-      <Card class="status-card">
-        <template #title>
-          <div class="title-line">
-            <span>Status</span>
-            <Tag :value="statusLabel" :severity="statusSeverity" />
+    <div class="wa-grid">
+      <!-- Status Card -->
+      <div class="bw-section">
+        <div class="bw-section-header">
+          <h2><i class="pi pi-info-circle"></i> Connection Status</h2>
+          <Tag :value="statusLabel" :severity="statusSeverity" />
+        </div>
+        <div class="bw-section-body">
+          <div class="kv-list">
+            <div class="kv-row">
+              <span class="kv-label">Provider</span>
+              <span class="kv-value">Baileys (WhatsApp Web)</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-label">State</span>
+              <span class="kv-value">
+                <span class="bw-status-dot" :class="status?.state === 'connected' ? 'bw-status-dot--online' : 'bw-status-dot--offline'" style="margin-right: 6px"></span>
+                {{ status?.state || 'unknown' }}
+              </span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-label">Phone</span>
+              <span class="kv-value">{{ userPhone }}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-label">Name</span>
+              <span class="kv-value">{{ userName }}</span>
+            </div>
           </div>
-        </template>
-        <template #content>
-          <div class="kv"><span>Provider</span><strong>Baileys (WhatsApp Web)</strong></div>
-          <div class="kv"><span>State</span><strong>{{ status?.state || 'unknown' }}</strong></div>
-          <div class="kv"><span>Phone</span><strong>{{ userPhone }}</strong></div>
-          <div class="kv"><span>Name</span><strong>{{ userName }}</strong></div>
-          <small class="hint">This page is fully served via port 8000 APIs.</small>
-        </template>
-      </Card>
+        </div>
+      </div>
 
-      <Card class="qr-card">
-        <template #title>QR Scan</template>
-        <template #content>
-          <div v-if="status?.state === 'connected'" class="connected-block">
-            <i class="pi pi-check-circle"></i>
-            <p>WhatsApp is connected. No QR scan required.</p>
+      <!-- QR Card -->
+      <div class="bw-section qr-section">
+        <div class="bw-section-header">
+          <h2><i class="pi pi-qrcode"></i> QR Scan</h2>
+        </div>
+        <div class="bw-section-body qr-body">
+          <!-- Connected -->
+          <div v-if="status?.state === 'connected'" class="qr-connected">
+            <div class="connected-icon">
+              <i class="pi pi-check-circle"></i>
+            </div>
+            <p>WhatsApp is connected</p>
+            <small>No QR scan required</small>
           </div>
 
-          <div v-else-if="qrImage" class="qr-block">
-            <img :src="qrImage" alt="WhatsApp QR Code" class="qr-image" />
-            <ol>
-              <li>Open WhatsApp on phone</li>
-              <li>Settings > Linked Devices</li>
-              <li>Tap Link a Device and scan this QR</li>
-            </ol>
+          <!-- QR Available -->
+          <div v-else-if="qrImage" class="qr-available">
+            <div class="qr-image-wrap">
+              <img :src="qrImage" alt="WhatsApp QR Code" class="qr-img" />
+            </div>
+            <div class="qr-steps">
+              <div class="qr-step"><span class="step-num">1</span> Open WhatsApp on phone</div>
+              <div class="qr-step"><span class="step-num">2</span> Settings → Linked Devices</div>
+              <div class="qr-step"><span class="step-num">3</span> Tap "Link a Device" and scan</div>
+            </div>
           </div>
 
-          <div v-else class="empty-qr">
-            <i class="pi pi-qrcode"></i>
-            <p>Waiting for QR from Baileys...</p>
+          <!-- Waiting -->
+          <div v-else class="qr-waiting">
+            <i class="pi pi-spin pi-spinner" style="font-size: 1.5rem; color: var(--bw-brand-primary)"></i>
+            <p>Waiting for QR code...</p>
+            <small>Make sure Baileys server is running</small>
           </div>
-        </template>
-      </Card>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import Card from 'primevue/card'
 import Button from 'primevue/button'
 import Tag from 'primevue/tag'
 import { api } from '@/services/api'
@@ -99,7 +128,6 @@ const refresh = async () => {
     const latestStatus = await api.getBaileysStatus()
     status.value = latestStatus
     systemStore.setBaileysStatus(latestStatus)
-
     if (latestStatus.state !== 'connected') {
       const qr = await api.getBaileysQr()
       qrImage.value = qr.qrImage || ''
@@ -107,10 +135,7 @@ const refresh = async () => {
       qrImage.value = ''
     }
   } catch (error) {
-    status.value = {
-      state: 'unreachable',
-      error: error instanceof Error ? error.message : String(error),
-    }
+    status.value = { state: 'unreachable', error: error instanceof Error ? error.message : String(error) }
     qrImage.value = ''
   } finally {
     loading.value = false
@@ -119,22 +144,12 @@ const refresh = async () => {
 
 const restartConnection = async () => {
   busyRestart.value = true
-  try {
-    await api.restartBaileys()
-    await refresh()
-  } finally {
-    busyRestart.value = false
-  }
+  try { await api.restartBaileys(); await refresh() } finally { busyRestart.value = false }
 }
 
 const logoutConnection = async () => {
   busyLogout.value = true
-  try {
-    await api.disconnectWhatsApp()
-    await refresh()
-  } finally {
-    busyLogout.value = false
-  }
+  try { await api.disconnectWhatsApp(); await refresh() } finally { busyLogout.value = false }
 }
 
 onMounted(async () => {
@@ -142,103 +157,142 @@ onMounted(async () => {
   timer = window.setInterval(refresh, 5000)
 })
 
-onBeforeUnmount(() => {
-  if (timer) {
-    clearInterval(timer)
-  }
-})
+onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 </script>
 
 <style scoped>
-.whatsapp-page {
-  max-width: 1200px;
-  margin: 0 auto;
-}
-
-.top-row {
+.header-actions {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-.top-row h1 {
-  margin: 0;
-}
-
-.actions {
-  display: flex;
-  gap: 0.5rem;
+  gap: var(--bw-space-sm);
   flex-wrap: wrap;
 }
 
-.content-grid {
+.wa-grid {
   display: grid;
-  grid-template-columns: 1fr 1.4fr;
-  gap: 1rem;
-}
-
-.title-line {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.kv {
-  display: flex;
-  justify-content: space-between;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--surface-border);
-}
-
-.hint {
-  display: block;
-  margin-top: 0.75rem;
-  color: var(--text-color-secondary);
-}
-
-.connected-block,
-.empty-qr {
-  min-height: 300px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.75rem;
-  color: var(--text-color-secondary);
-}
-
-.connected-block i {
-  font-size: 2rem;
-  color: var(--green-500);
-}
-
-.qr-block {
-  display: grid;
-  gap: 1rem;
-}
-
-.qr-image {
-  width: min(320px, 100%);
-  border: 1px solid var(--surface-border);
-  border-radius: 12px;
-  justify-self: center;
-}
-
-.qr-block ol {
-  margin: 0;
-  padding-left: 1.25rem;
+  grid-template-columns: 1fr 1.3fr;
+  gap: var(--bw-space-lg);
 }
 
 @media (max-width: 960px) {
-  .top-row {
-    flex-direction: column;
-    align-items: flex-start;
-  }
+  .wa-grid { grid-template-columns: 1fr; }
+}
 
-  .content-grid {
-    grid-template-columns: 1fr;
-  }
+/* KV list */
+.kv-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.kv-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--bw-border-subtle);
+}
+
+.kv-row:last-child { border-bottom: none; }
+
+.kv-label {
+  font-size: 0.82rem;
+  color: var(--bw-text-muted);
+}
+
+.kv-value {
+  font-weight: 600;
+  font-size: 0.875rem;
+  display: flex;
+  align-items: center;
+}
+
+/* QR states */
+.qr-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+}
+
+.qr-connected {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--bw-space-sm);
+  color: var(--bw-text-secondary);
+}
+
+.connected-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(34, 197, 94, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--bw-space-sm);
+}
+
+.connected-icon i {
+  font-size: 2rem;
+  color: #22c55e;
+}
+
+.qr-available {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--bw-space-lg);
+  width: 100%;
+}
+
+.qr-image-wrap {
+  padding: 1rem;
+  background: white;
+  border-radius: var(--bw-radius-lg);
+  box-shadow: var(--bw-shadow-md);
+}
+
+.qr-img {
+  width: 260px;
+  max-width: 100%;
+  display: block;
+}
+
+.qr-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bw-space-sm);
+  width: 100%;
+  max-width: 300px;
+}
+
+.qr-step {
+  display: flex;
+  align-items: center;
+  gap: var(--bw-space-sm);
+  font-size: 0.82rem;
+  color: var(--bw-text-secondary);
+}
+
+.step-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bw-brand-primary-alpha);
+  color: var(--bw-brand-primary-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.qr-waiting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--bw-space-sm);
+  color: var(--bw-text-muted);
 }
 </style>

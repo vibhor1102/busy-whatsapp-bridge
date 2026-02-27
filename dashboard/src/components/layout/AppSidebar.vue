@@ -2,16 +2,18 @@
   <aside class="sidebar" :class="{ collapsed: collapsed, 'mobile-open': mobileOpen }">
     <div class="sidebar-header">
       <div class="logo">
-        <i class="pi pi-whatsapp"></i>
-        <span v-if="!collapsed" class="logo-text">Busy Gateway</span>
+        <div class="logo-icon">
+          <i class="pi pi-whatsapp"></i>
+        </div>
+        <transition name="logo-fade">
+          <span v-if="!collapsed" class="logo-text">Busy Gateway</span>
+        </transition>
       </div>
-      <Button 
-        icon="pi pi-bars" 
-        class="p-button-text p-button-rounded toggle-btn"
-        @click="$emit('toggle')"
-      />
+      <button class="toggle-btn" @click="$emit('toggle')" :title="collapsed ? 'Expand' : 'Collapse'">
+        <i :class="collapsed ? 'pi pi-angle-right' : 'pi pi-angle-left'"></i>
+      </button>
     </div>
-    
+
     <nav class="sidebar-nav">
       <router-link
         v-for="route in routes"
@@ -20,10 +22,15 @@
         class="nav-item"
         :class="{ active: isActiveRoute(route.path) }"
         @click="$emit('navigate')"
+        :title="collapsed ? route.meta?.title : undefined"
       >
-        <i :class="route.meta?.icon"></i>
-        <span v-if="!collapsed" class="nav-text">{{ route.meta?.title }}</span>
-        <Badge 
+        <div class="nav-icon-wrap">
+          <i :class="route.meta?.icon"></i>
+        </div>
+        <transition name="text-fade">
+          <span v-if="!collapsed" class="nav-text">{{ route.meta?.title }}</span>
+        </transition>
+        <Badge
           v-if="route.name === 'Message Queue' && queueStore.totalPending > 0 && !collapsed"
           :value="queueStore.totalPending.toString()"
           severity="danger"
@@ -31,15 +38,19 @@
         />
       </router-link>
     </nav>
-    
+
     <div class="sidebar-footer">
-      <div class="connection-status" :class="{ connected: dashboardStore.isConnected }">
-        <i class="pi pi-circle-fill"></i>
-        <span v-if="!collapsed">{{ dashboardStore.isConnected ? 'Connected' : 'Disconnected' }}</span>
+      <div class="connection-indicator">
+        <span class="bw-status-dot" :class="dashboardStore.isConnected ? 'bw-status-dot--online' : 'bw-status-dot--offline'"></span>
+        <transition name="text-fade">
+          <span v-if="!collapsed" class="connection-text">{{ dashboardStore.isConnected ? 'Live' : 'Offline' }}</span>
+        </transition>
       </div>
-      <div v-if="!collapsed" class="version">
-        v{{ stats?.system?.version || '0.0.1' }}
-      </div>
+      <transition name="text-fade">
+        <div v-if="!collapsed" class="version-badge">
+          v{{ stats?.system?.version || '0.0.1' }}
+        </div>
+      </transition>
     </div>
   </aside>
 </template>
@@ -49,7 +60,6 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useDashboardStore } from '@/stores/dashboard'
 import { useQueueStore } from '@/stores/queue'
-import Button from 'primevue/button'
 import Badge from 'primevue/badge'
 import { navRoutes } from '@/router'
 
@@ -77,85 +87,145 @@ const stats = computed(() => dashboardStore.stats)
 .sidebar {
   width: 260px;
   height: 100vh;
-  background-color: var(--surface-card);
-  border-right: 1px solid var(--surface-border);
+  background: var(--bw-bg-sidebar);
+  backdrop-filter: blur(16px);
+  border-right: 1px solid var(--bw-border-subtle);
   display: flex;
   flex-direction: column;
   position: fixed;
   left: 0;
   top: 0;
   z-index: 1000;
-  transition: width 0.3s ease;
+  transition: width var(--bw-transition-slow);
 }
 
 .sidebar.collapsed {
-  width: 70px;
+  width: 72px;
 }
 
+/* Header */
 .sidebar-header {
   padding: 1rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--surface-border);
+  border-bottom: 1px solid var(--bw-border-subtle);
+  min-height: 64px;
 }
 
 .logo {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  color: var(--primary-color);
-  font-size: 1.25rem;
-  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
 }
 
-.logo i {
-  font-size: 1.5rem;
+.logo-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--bw-radius-md);
+  background: var(--bw-gradient-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  color: white;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(20, 184, 166, 0.3);
+}
+
+.logo-text {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--bw-text-primary);
+  white-space: nowrap;
+  letter-spacing: -0.01em;
 }
 
 .toggle-btn {
-  color: var(--text-color-secondary);
+  width: 30px;
+  height: 30px;
+  border-radius: var(--bw-radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--bw-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--bw-transition-fast);
+  flex-shrink: 0;
 }
 
+.toggle-btn:hover {
+  background: var(--bw-brand-primary-alpha);
+  color: var(--bw-brand-primary-light);
+}
+
+/* Navigation */
 .sidebar-nav {
   flex: 1;
-  padding: 1rem 0.75rem;
+  padding: 0.75rem;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 2px;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  color: var(--text-color-secondary);
+  padding: 0.65rem 0.75rem;
+  color: var(--bw-text-secondary);
   text-decoration: none;
-  border-radius: var(--border-radius);
-  transition: all 0.2s ease;
+  border-radius: var(--bw-radius-md);
+  transition: all var(--bw-transition-fast);
   position: relative;
+  min-height: 42px;
 }
 
 .nav-item:hover {
-  background-color: var(--surface-hover);
-  color: var(--text-color);
+  background: rgba(148, 163, 184, 0.06);
+  color: var(--bw-text-primary);
 }
 
 .nav-item.active {
-  background-color: var(--primary-color);
-  color: var(--primary-color-text);
+  background: var(--bw-brand-primary-alpha);
+  color: var(--bw-brand-primary-light);
 }
 
-.nav-item i {
-  font-size: 1.25rem;
-  width: 1.5rem;
-  text-align: center;
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  border-radius: 0 3px 3px 0;
+  background: var(--bw-gradient-primary);
+  box-shadow: 0 0 8px rgba(20, 184, 166, 0.4);
+}
+
+.nav-icon-wrap {
+  width: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.nav-icon-wrap i {
+  font-size: 1.1rem;
 }
 
 .nav-text {
   flex: 1;
+  font-size: 0.875rem;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -163,44 +233,71 @@ const stats = computed(() => dashboardStore.stats)
 
 .nav-badge {
   margin-left: auto;
+  flex-shrink: 0;
 }
 
+/* Footer */
 .sidebar-footer {
-  padding: 1rem;
-  border-top: 1px solid var(--surface-border);
-  font-size: 0.875rem;
+  padding: 0.85rem 1rem;
+  border-top: 1px solid var(--bw-border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 
-.connection-status {
+.connection-indicator {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: var(--red-500);
-  margin-bottom: 0.5rem;
 }
 
-.connection-status.connected {
-  color: var(--green-500);
-}
-
-.connection-status i {
-  font-size: 0.5rem;
-}
-
-.version {
-  color: var(--text-color-secondary);
+.connection-text {
   font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--bw-text-secondary);
 }
 
+.version-badge {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--bw-text-muted);
+  background: rgba(148, 163, 184, 0.08);
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--bw-radius-full);
+}
+
+/* Transitions for text */
+.text-fade-enter-active,
+.text-fade-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.text-fade-enter-from,
+.text-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-8px);
+}
+
+.logo-fade-enter-active,
+.logo-fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+.logo-fade-enter-from,
+.logo-fade-leave-to {
+  opacity: 0;
+}
+
+/* Mobile */
 @media (max-width: 1024px) {
   .sidebar {
     transform: translateX(-100%);
-    transition: transform 0.25s ease;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     width: 260px;
   }
 
   .sidebar.mobile-open {
     transform: translateX(0);
+    box-shadow: var(--bw-shadow-lg);
   }
 
   .sidebar.collapsed {

@@ -1,72 +1,53 @@
 <template>
-  <div class="page-container">
-    <div class="page-head">
-      <h1>Live Logs</h1>
-      <div class="nav-links">
-        <router-link to="/" class="nav-link">Overview</router-link>
-        <router-link to="/system" class="nav-link">System Control</router-link>
-        <router-link to="/settings" class="nav-link">Settings</router-link>
+  <div class="bw-page">
+    <div class="bw-page-header">
+      <div>
+        <h1>Live Logs</h1>
+        <p class="subtitle">Real-time application logs</p>
+      </div>
+      <Button icon="pi pi-refresh" label="Refresh" class="p-button-outlined p-button-sm" :loading="loading" @click="loadLogs" />
+    </div>
+
+    <!-- Toolbar -->
+    <div class="bw-section toolbar-section">
+      <div class="bw-section-body">
+        <div class="toolbar-row">
+          <div class="toolbar-field">
+            <label>Source</label>
+            <Dropdown v-model="source" :options="sourceOptions" optionLabel="label" optionValue="value" class="p-dropdown-sm" />
+          </div>
+          <div class="toolbar-field">
+            <label>Level</label>
+            <Dropdown v-model="level" :options="levelOptions" optionLabel="label" optionValue="value" class="p-dropdown-sm" />
+          </div>
+          <div class="toolbar-field">
+            <label>Limit</label>
+            <InputNumber v-model="limit" :min="20" :max="1000" :step="20" class="p-inputtext-sm limit-input" />
+          </div>
+          <div class="toolbar-field switch-field">
+            <InputSwitch v-model="autoRefresh" />
+            <label>Auto-refresh</label>
+          </div>
+        </div>
       </div>
     </div>
 
-    <Card class="toolbar-card">
-      <template #content>
-        <div class="toolbar">
-          <label>
-            Source
-            <select v-model="source">
-              <option value="all">All</option>
-              <option value="gateway">Gateway</option>
-              <option value="service">Service</option>
-              <option value="fastapi">FastAPI</option>
-              <option value="baileys">Baileys</option>
-            </select>
-          </label>
-
-          <label>
-            Level
-            <select v-model="level">
-              <option value="">All</option>
-              <option value="DEBUG">DEBUG</option>
-              <option value="INFO">INFO</option>
-              <option value="WARNING">WARNING</option>
-              <option value="ERROR">ERROR</option>
-              <option value="CRITICAL">CRITICAL</option>
-            </select>
-          </label>
-
-          <label>
-            Limit
-            <input v-model.number="limit" type="number" min="20" max="1000" step="20" />
-          </label>
-
-          <label class="switch">
-            <input v-model="autoRefresh" type="checkbox" />
-            Auto refresh
-          </label>
-
-          <Button icon="pi pi-refresh" label="Refresh" :loading="loading" @click="loadLogs" />
+    <!-- Logs -->
+    <div class="bw-section">
+      <div class="bw-section-header">
+        <span class="log-meta">{{ logs.length }} entries</span>
+        <span v-if="lastUpdated" class="log-meta">Updated {{ lastUpdated }}</span>
+      </div>
+      <div class="log-console">
+        <div v-if="logs.length === 0" class="log-empty">No logs found for selected filters.</div>
+        <div v-for="log in logs" :key="log.id" class="log-line" :class="`level-${(log.level || 'INFO').toLowerCase()}`">
+          <span class="log-ts">[{{ formatTime(log.timestamp) }}]</span>
+          <span class="log-src">[{{ log.source || log.logger || 'app' }}]</span>
+          <span class="log-lvl">[{{ log.level }}]</span>
+          <span class="log-msg">{{ log.message }}</span>
         </div>
-      </template>
-    </Card>
-
-    <Card>
-      <template #content>
-        <div class="meta-row">
-          <span>Showing {{ logs.length }} entries</span>
-          <span v-if="lastUpdated">Last updated: {{ lastUpdated }}</span>
-        </div>
-        <div class="log-console">
-          <div v-if="logs.length === 0" class="empty">No logs found for the selected filters.</div>
-          <div v-for="log in logs" :key="log.id" class="log-line" :class="`level-${(log.level || 'INFO').toLowerCase()}`">
-            <span class="ts">[{{ formatTime(log.timestamp) }}]</span>
-            <span class="src">[{{ log.source || log.logger || 'app' }}]</span>
-            <span class="lvl">[{{ log.level }}]</span>
-            <span class="msg">{{ log.message }}</span>
-          </div>
-        </div>
-      </template>
-    </Card>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -74,8 +55,10 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '@/services/api'
 import type { LogEntry } from '@/types'
-import Card from 'primevue/card'
 import Button from 'primevue/button'
+import Dropdown from 'primevue/dropdown'
+import InputNumber from 'primevue/inputnumber'
+import InputSwitch from 'primevue/inputswitch'
 
 const logs = ref<LogEntry[]>([])
 const loading = ref(false)
@@ -85,6 +68,23 @@ const limit = ref(200)
 const autoRefresh = ref(true)
 const lastUpdated = ref('')
 let timer: number | null = null
+
+const sourceOptions = [
+  { label: 'All', value: 'all' },
+  { label: 'Gateway', value: 'gateway' },
+  { label: 'Service', value: 'service' },
+  { label: 'FastAPI', value: 'fastapi' },
+  { label: 'Baileys', value: 'baileys' },
+]
+
+const levelOptions = [
+  { label: 'All', value: '' },
+  { label: 'DEBUG', value: 'DEBUG' },
+  { label: 'INFO', value: 'INFO' },
+  { label: 'WARNING', value: 'WARNING' },
+  { label: 'ERROR', value: 'ERROR' },
+  { label: 'CRITICAL', value: 'CRITICAL' },
+]
 
 const formatTime = (iso: string) => {
   if (!iso) return '-'
@@ -110,133 +110,94 @@ const startAutoRefresh = () => {
   timer = window.setInterval(loadLogs, 5000)
 }
 
-watch(autoRefresh, () => startAutoRefresh())
-watch([source, level, limit], () => loadLogs())
+watch(autoRefresh, startAutoRefresh)
+watch([source, level, limit], loadLogs)
 
-onMounted(async () => {
-  await loadLogs()
-  startAutoRefresh()
-})
-
-onBeforeUnmount(() => {
-  if (timer) window.clearInterval(timer)
-})
+onMounted(async () => { await loadLogs(); startAutoRefresh() })
+onBeforeUnmount(() => { if (timer) window.clearInterval(timer) })
 </script>
 
 <style scoped>
-.page-container {
-  max-width: 1400px;
-  margin: 0 auto;
-  display: grid;
-  gap: 1rem;
-}
+.toolbar-section { margin-bottom: var(--bw-space-lg); }
 
-.page-head {
+.toolbar-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.nav-links {
-  display: flex;
-  gap: 0.5rem;
+  align-items: flex-end;
+  gap: var(--bw-space-md);
   flex-wrap: wrap;
 }
 
-.nav-link {
-  padding: 0.25rem 0.6rem;
-  border: 1px solid var(--surface-border);
-  border-radius: 999px;
-  text-decoration: none;
-  color: var(--text-color-secondary);
-  font-size: 0.75rem;
-}
-
-.toolbar {
-  display: flex;
-  align-items: end;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-label {
+.toolbar-field {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  font-size: 0.8rem;
-  color: var(--text-color-secondary);
+  gap: 0.3rem;
 }
 
-select,
-input[type="number"] {
-  min-width: 130px;
-  border: 1px solid var(--surface-border);
-  border-radius: 6px;
-  background: var(--surface-card);
-  color: var(--text-color);
-  padding: 0.4rem 0.5rem;
+.toolbar-field label {
+  font-size: 0.72rem;
+  color: var(--bw-text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.switch {
+.switch-field {
   flex-direction: row;
   align-items: center;
-  margin-bottom: 0.35rem;
+  gap: var(--bw-space-sm);
+  margin-bottom: 0.2rem;
 }
 
-.meta-row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.8rem;
-  color: var(--text-color-secondary);
-  margin-bottom: 0.75rem;
+.switch-field label {
+  text-transform: none;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--bw-text-secondary);
 }
 
+.limit-input { width: 100px; }
+
+.log-meta {
+  font-size: 0.75rem;
+  color: var(--bw-text-muted);
+}
+
+/* Log console */
 .log-console {
-  background: #091222;
-  border: 1px solid var(--surface-border);
-  border-radius: var(--border-radius);
-  padding: 0.8rem;
+  background: #070e1a;
+  border-top: 1px solid var(--bw-border-subtle);
+  padding: 0.6rem 1rem;
   max-height: 65vh;
   overflow: auto;
-  font-family: Consolas, "Courier New", monospace;
-  font-size: 0.8rem;
+  font-family: var(--bw-font-mono);
+  font-size: 0.78rem;
+  line-height: 1.7;
 }
 
 .log-line {
-  padding: 0.16rem 0.25rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  color: #d8e2f1;
-  word-break: break-word;
+  padding: 0.1rem 0.25rem;
+  border-radius: 2px;
+  color: #d1ddf0;
+  transition: background var(--bw-transition-fast);
 }
 
-.log-line:last-child {
-  border-bottom: none;
+.log-line:hover {
+  background: rgba(148, 163, 184, 0.06);
 }
 
-.ts {
-  color: #8aa4c8;
+.log-empty {
+  color: var(--bw-text-muted);
+  padding: 0.5rem 0;
 }
 
-.src {
-  color: #7cdcc0;
-}
+.log-ts { color: #7191b5; }
+.log-src { color: #6cc9b3; }
+.log-lvl { color: #a3c4f5; }
 
-.lvl {
-  color: #b9d2ff;
-}
+.level-error .log-lvl,
+.level-critical .log-lvl { color: #ff8e8e; }
+.level-error .log-msg,
+.level-critical .log-msg { color: #ffc4c4; }
 
-.level-error .lvl,
-.level-critical .lvl {
-  color: #ff8e8e;
-}
-
-.level-warning .lvl {
-  color: #ffd487;
-}
-
-.empty {
-  color: #9db3ce;
-  padding: 0.4rem 0;
-}
+.level-warning .log-lvl { color: #ffd487; }
 </style>

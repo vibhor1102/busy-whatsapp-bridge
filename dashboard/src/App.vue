@@ -15,7 +15,7 @@
       <AppHeader @toggle-sidebar="toggleSidebar" />
       <main class="content-area">
         <router-view v-slot="{ Component }">
-          <transition name="fade" mode="out-in">
+          <transition name="page" mode="out-in">
             <component :is="Component" />
           </transition>
         </router-view>
@@ -81,7 +81,7 @@ onBeforeUnmount(() => {
 .app-container {
   display: flex;
   min-height: 100vh;
-  background-color: var(--surface-ground);
+  background: var(--bw-bg-page);
 }
 
 .main-content {
@@ -89,11 +89,12 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   margin-left: 260px;
-  transition: margin-left 0.3s ease;
+  transition: margin-left var(--bw-transition-slow);
+  min-height: 100vh;
 }
 
 .main-content.sidebar-collapsed {
-  margin-left: 70px;
+  margin-left: 72px;
 }
 
 .content-area {
@@ -102,21 +103,29 @@ onBeforeUnmount(() => {
   overflow-y: auto;
 }
 
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s ease;
+/* Page transitions */
+.page-enter-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.page-leave-active {
+  transition: opacity 0.15s ease;
 }
 
-.fade-enter-from,
-.fade-leave-to {
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.page-leave-to {
   opacity: 0;
 }
 
 .sidebar-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
   z-index: 900;
+  animation: fadeIn 0.2s ease;
 }
 
 @media (max-width: 1024px) {

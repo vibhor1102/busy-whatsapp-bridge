@@ -33,9 +33,9 @@
         <template #body="{ data }">
           <div class="variables-list">
             <Tag 
-              v-for="var in data.variables.slice(0, 3)" 
-              :key="var"
-              :value="var"
+              v-for="variable in data.variables.slice(0, 3)" 
+              :key="variable"
+              :value="variable"
               class="mr-1 mb-1"
               severity="info"
             />
