@@ -375,6 +375,23 @@ async def delete_template(template_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/templates/{template_id}/default")
+async def set_default_template(template_id: str):
+    """Set a template as the default template"""
+    try:
+        reminder_config_service.set_active_template(template_id)
+        return {
+            "status": "success",
+            "message": f"Template {template_id} set as default"
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("set_default_template_error", template_id=template_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/templates/{template_id}/preview")
 async def preview_template(
     template_id: str,

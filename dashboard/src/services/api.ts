@@ -292,11 +292,37 @@ class ApiService {
 
   async sendReminders(
     partyCodes: string[],
-    templateId: string
+    templateId: string,
+    partyTemplateMap?: Record<string, string>
   ): Promise<{ status: string; batch_id: string; session_id: string; message: string }> {
     return this.fetch<{ status: string; batch_id: string; session_id: string; message: string }>('/reminders/batch', {
       method: 'POST',
-      body: JSON.stringify({ party_codes: partyCodes, template_id: templateId }),
+      body: JSON.stringify({ 
+        party_codes: partyCodes, 
+        template_id: templateId,
+        party_templates: partyTemplateMap 
+      }),
+    })
+  }
+
+  async getEligibleParties(params: {
+    offset?: number
+    limit?: number
+    filter_by?: string
+    search?: string
+  }): Promise<{ items: any[]; total: number }> {
+    const queryParams = new URLSearchParams()
+    if (params.offset !== undefined) queryParams.append('offset', params.offset.toString())
+    if (params.limit !== undefined) queryParams.append('limit', params.limit.toString())
+    if (params.filter_by) queryParams.append('filter_by', params.filter_by)
+    if (params.search) queryParams.append('search', params.search)
+    
+    return this.fetch<{ items: any[]; total: number }>(`/reminders/parties?${queryParams.toString()}`)
+  }
+
+  async refreshReminderSnapshot(): Promise<any> {
+    return this.fetch<any>('/reminders/snapshot/refresh', {
+      method: 'POST',
     })
   }
 
@@ -419,6 +445,12 @@ class ApiService {
   async deleteTemplate(templateId: string): Promise<{ success: boolean; message: string }> {
     return this.fetch<{ success: boolean; message: string }>(`/reminders/templates/${templateId}`, {
       method: 'DELETE',
+    })
+  }
+
+  async setDefaultTemplate(templateId: string): Promise<{ success: boolean; message: string }> {
+    return this.fetch<{ success: boolean; message: string }>(`/reminders/templates/${templateId}/default`, {
+      method: 'POST',
     })
   }
 
