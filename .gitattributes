@@ -1,5 +1,5 @@
-# Auto detect text files and normalize line endings
-* text=auto
+# Windows-only project - force CRLF for all text files
+* text eol=crlf
 
 # Force Windows batch files to always use CRLF
 *.bat text eol=crlf

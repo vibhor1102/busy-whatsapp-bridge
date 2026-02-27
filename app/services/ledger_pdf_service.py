@@ -225,15 +225,13 @@ class LedgerPDFService:
             "Opening Balance",
             "",
             "",
-            self._format_amount(report.opening_balance)
+            report.opening_balance_formatted
         ])
         
         # Transaction rows
         for entry in report.entries:
-            # Format particulars - for sales invoices, append voucher number
+            # Particulars already include voucher number from data service
             particulars = entry.particulars
-            if entry.voucher_type == "Sales" and entry.voucher_no:
-                particulars = f"{entry.particulars} - {entry.voucher_no}"
             
             # Separate Dr and Cr amounts
             dr_amount = self._format_amount(entry.amount) if entry.is_debit else ""
@@ -253,7 +251,7 @@ class LedgerPDFService:
             "Closing Balance",
             "",
             "",
-            self._format_amount(report.closing_balance)
+            report.closing_balance_formatted
         ])
         
         # Render table using fpdf2 table API

@@ -59,10 +59,10 @@ class LedgerEntry(BaseModel):
     @property
     def balance_formatted(self) -> str:
         """Format balance with Dr/Cr suffix."""
-        # Positive balance = Cr (customer owes us or has credit)
-        # Negative balance = Dr (we owe customer)
+        # Positive balance = Dr (customer owes us - receivable)
+        # Negative balance = Cr (we owe customer - payable)
         amount = abs(self.balance)
-        suffix = " Cr" if self.balance >= 0 else " Dr"
+        suffix = " Dr" if self.balance >= 0 else " Cr"
         return f"{amount:,.2f}{suffix}"
     
     @property
@@ -86,15 +86,17 @@ class LedgerReport(BaseModel):
     @property
     def opening_balance_formatted(self) -> str:
         """Format opening balance with Dr/Cr suffix."""
+        # Positive = Dr (customer owes us), Negative = Cr (we owe customer)
         amount = abs(self.opening_balance)
-        suffix = " Cr" if self.opening_balance >= 0 else " Dr"
+        suffix = " Dr" if self.opening_balance >= 0 else " Cr"
         return f"{amount:,.2f}{suffix}"
     
     @property
     def closing_balance_formatted(self) -> str:
         """Format closing balance with Dr/Cr suffix."""
+        # Positive = Dr (customer owes us), Negative = Cr (we owe customer)
         amount = abs(self.closing_balance)
-        suffix = " Cr" if self.closing_balance >= 0 else " Dr"
+        suffix = " Dr" if self.closing_balance >= 0 else " Cr"
         return f"{amount:,.2f}{suffix}"
     
     @property

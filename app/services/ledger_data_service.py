@@ -307,12 +307,52 @@ class LedgerDataService:
     
     def get_company_info(self, force_refresh: bool = False) -> CompanyInfo:
         """
-        Fetch company info from Config table.
+        Fetch company info.
         
-        Returns minimal info if Config table is empty.
+        Priority:
+        1) Reminder config company.name (user-configured, most reliable)
+        2) Locks.CompanyName from database
+        3) Config table with COMPANY_INFO RecType
+        4) DB filename as fallback
+        
+        Returns minimal info if all sources are empty.
         """
         if self._company_info_cache and not force_refresh:
             return self._company_info_cache
+        
+        # First try: Reminder config (user-configured company name)
+        try:
+            from app.services.reminder_config_service import reminder_config_service
+            config = reminder_config_service.get_config()
+            if config and config.company and config.company.name:
+                company_name = config.company.name.strip()
+                if company_name:
+                    logger.debug("company_name_from_reminder_config", company_name=company_name)
+                    info = CompanyInfo(
+                        name=company_name,
+                        address_line1=config.company.address,
+                        phone=config.company.contact_phone
+                    )
+                    self._company_info_cache = info
+                    return info
+        except Exception as e:
+            logger.debug("reminder_config_company_name_failed", error=str(e))
+        
+        # Second try: Locks.CompanyName from database
+        try:
+            with self.db.get_cursor() as cursor:
+                cursor.execute("SELECT TOP 1 CompanyName FROM Locks")
+                row = cursor.fetchone()
+                if row and row[0] and str(row[0]).strip():
+                    company_name = str(row[0]).strip()
+                    logger.debug("company_name_from_locks", company_name=company_name)
+                    info = CompanyInfo(name=company_name)
+                    self._company_info_cache = info
+                    return info
+        except Exception as e:
+            logger.debug("locks_company_name_failed", error=str(e))
+        
+        # Third try: Config table
         try:
             query = f"""
                 SELECT C1, C2, C3, C4, C5, C6 
@@ -335,18 +375,16 @@ class LedgerDataService:
                     )
                     self._company_info_cache = info
                     return info
-                else:
-                    fallback_name = self._detect_company_name_fallback()
-                    logger.info("company_info_missing_using_fallback", rec_type=ConfigRecType.COMPANY_INFO, fallback_name=fallback_name)
-                    info = CompanyInfo(name=fallback_name)
-                    self._company_info_cache = info
-                    return info
                     
         except Exception as e:
-            logger.error("get_company_info_error", error=str(e))
-            info = CompanyInfo(name=self._detect_company_name_fallback())
-            self._company_info_cache = info
-            return info
+            logger.debug("config_company_info_failed", error=str(e))
+        
+        # Fallback: Use database filename or generic name
+        fallback_name = self._detect_company_name_fallback()
+        logger.info("company_info_using_fallback", fallback_name=fallback_name)
+        info = CompanyInfo(name=fallback_name)
+        self._company_info_cache = info
+        return info
 
     def _detect_company_name_fallback(self) -> str:
         """
@@ -862,9 +900,9 @@ class LedgerDataService:
                     is_debit = dr_cr_lookup.get(vch_code, True)
                     particulars = counter_lookup.get(vch_code, DEFAULT_COUNTER_ACCOUNT)
                     
-                    # Append voucher number for sales invoices
+                    # Append voucher number for sales invoices (no space before parenthesis)
                     if vch_type == VoucherType.SALES and vch_no:
-                        particulars = f"{particulars} ({vch_no})"
+                        particulars = f"{particulars}({vch_no})"
                     
                     entries.append(LedgerEntry(
                         date=vch_date,
