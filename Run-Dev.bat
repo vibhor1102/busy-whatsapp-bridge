@@ -12,7 +12,7 @@ SET "VENV_PYTHON=%SCRIPT_DIR%venv\Scripts\python.exe"
 SET "DASHBOARD_DIR=%SCRIPT_DIR%dashboard-react"
 SET "DASHBOARD_DIST=%DASHBOARD_DIR%\dist"
 SET "NODE_MODULES=%DASHBOARD_DIR%\node_modules"
-SET "CONFIG_DIR=%LOCALAPPDATA%\BusyWhatsappBridge"
+SET "CONFIG_DIR=%APPDATA%\BusyWhatsappBridge"
 SET "CONFIG_FILE=%CONFIG_DIR%\conf.json"
 
 REM Get current timestamp

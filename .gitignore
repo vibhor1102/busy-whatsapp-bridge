@@ -44,7 +44,7 @@ innosetup.exe
 BusyWhatsappBridge-*-Setup.exe
 
 # Configuration files (user-specific, stored in AppData)
-# Note: conf.json is stored in %LOCALAPPDATA%\BusyWhatsappBridge\
+# Note: conf.json is stored in %APPDATA%\BusyWhatsappBridge\
 # and should not be committed to version control
 
 # IDE

@@ -14,7 +14,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.models.reminder_schemas import ScheduleConfig
 from app.services.reminder_config_service import reminder_config_service
 from app.constants.reminder_constants import DAYS_OF_WEEK
-from app.config import get_local_appdata_path
+from app.config import get_roaming_appdata_path
 
 logger = structlog.get_logger()
 
@@ -26,7 +26,7 @@ class ReminderSchedulerService:
         self.scheduler: Optional[AsyncIOScheduler] = None
         self.job_id = "payment_reminder_job"
         self.is_running = False
-        self._last_run_file = get_local_appdata_path() / "scheduler_last_run.txt"
+        self._last_run_file = get_roaming_appdata_path() / "scheduler_last_run.txt"
     
     def _get_last_run_time(self) -> Optional[datetime]:
         """Get the last time the scheduler ran from file."""

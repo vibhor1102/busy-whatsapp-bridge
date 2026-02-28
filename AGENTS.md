@@ -15,7 +15,7 @@ FastAPI-based middleware integrating Busy Accounting Software with WhatsApp prov
 
 **Critical:** This is a Windows environment with Git Bash (MinGW).
 
-**Paths:** Working directory: `C:\Program Files\BusyWhatsappBridge\`. Config: `%LOCALAPPDATA%\BusyWhatsappBridge\`. Source junction: `C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\` (knowledge only, never use).
+**Paths:** Working directory: `C:\Program Files\BusyWhatsappBridge\`. Config: `%APPDATA%\BusyWhatsappBridge\`. Source junction: `C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\` (knowledge only, never use).
 
 | Do This | Not This |
 |---------|----------|
@@ -51,11 +51,11 @@ source venv/Scripts/activate  # Git Bash
 | Location | Purpose |
 |----------|---------|
 | `C:\Program Files\BusyWhatsappBridge\` | Application code (immutable) |
-| `%LOCALAPPDATA%\BusyWhatsappBridge\` | Configuration & mutable data |
+| `%APPDATA%\BusyWhatsappBridge\` | Configuration & mutable data |
 
 **AppData Structure:**
 ```
-%LOCALAPPDATA%\BusyWhatsappBridge\
+%APPDATA%\BusyWhatsappBridge\
 ├── conf.json              # Main configuration
 ├── data\
 │   ├── messages.db        # Message queue SQLite database
@@ -275,7 +275,7 @@ app/
 
 ## Configuration
 
-Configuration stored in `%LOCALAPPDATA%\BusyWhatsappBridge\conf.json`:
+Configuration stored in `%APPDATA%\BusyWhatsappBridge\conf.json`:
 - `database.bds_file_path` - Path to Busy .bds database file
 - `database.bds_password` - Database password
 - `whatsapp.provider` - Provider: baileys (default), meta, webhook, evolution

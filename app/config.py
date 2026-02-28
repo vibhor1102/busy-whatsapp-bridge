@@ -235,16 +235,8 @@ class Settings(BaseModel):
         )
 
 
-def get_local_appdata_path() -> Path:
-    """Get the Local AppData directory for machine-specific data (databases, auth)."""
-    appdata = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
-    data_dir = appdata / "BusyWhatsappBridge"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    return data_dir
-
-
 def get_roaming_appdata_path() -> Path:
-    """Get the Roaming AppData directory for user configuration."""
+    """Get the Roaming AppData directory for user configuration and data."""
     appdata = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
     config_dir = appdata / "BusyWhatsappBridge"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -252,50 +244,16 @@ def get_roaming_appdata_path() -> Path:
 
 
 def get_config_path() -> Path:
-    """Resolve effective configuration path with explicit precedence."""
-    roaming = get_roaming_appdata_path() / "conf.json"
-    local = get_local_appdata_path() / "conf.json"
-
-    if roaming.exists() and local.exists():
-        try:
-            roaming_data = roaming.read_text(encoding="utf-8", errors="ignore")
-            local_data = local.read_text(encoding="utf-8", errors="ignore")
-            if roaming_data != local_data:
-                logger.warning(
-                    "Both Roaming and Local conf.json exist; using Roaming path. "
-                    "Update/migrate Local copy if unintended.",
-                    extra={"roaming_path": str(roaming), "local_path": str(local)},
-                )
-        except Exception:
-            logger.warning(
-                "Both Roaming and Local conf.json exist; using Roaming path.",
-                extra={"roaming_path": str(roaming), "local_path": str(local)},
-            )
-    if roaming.exists():
-        return roaming
-    if local.exists():
-        logger.warning(
-            "Falling back to Local conf.json because Roaming conf.json is missing.",
-            extra={"local_path": str(local)},
-        )
-        return local
-    return roaming
+    """Get the configuration file path."""
+    return get_roaming_appdata_path() / "conf.json"
 
 
 def get_config_details() -> dict:
-    """Return effective and alternate config locations for diagnostics."""
-    effective = get_config_path()
-    roaming = get_roaming_appdata_path() / "conf.json"
-    local = get_local_appdata_path() / "conf.json"
-    # REMOVED: meta_webhook_token_* diagnostics - Meta Cloud API removed
+    """Return config location for diagnostics."""
+    config_path = get_config_path()
     return {
-        "effective_path": str(effective),
-        "effective_source": "roaming" if effective == roaming else "local",
-        "roaming_path": str(roaming),
-        "roaming_exists": roaming.exists(),
-        "local_path": str(local),
-        "local_exists": local.exists(),
-        # REMOVED: meta_webhook_token_mismatch, roaming_meta_webhook_token_configured, local_meta_webhook_token_configured
+        "effective_path": str(config_path),
+        "config_exists": config_path.exists(),
     }
 
 

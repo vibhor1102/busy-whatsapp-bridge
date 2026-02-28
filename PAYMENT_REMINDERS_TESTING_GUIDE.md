@@ -12,7 +12,7 @@ The payment reminder system has been fully fixed and is ready to test. Here's ho
 
 ## Sample Templates Created
 
-The following templates have been created in `%LOCALAPPDATA%\BusyWhatsappBridge\reminder_config.json`:
+The following templates have been created in `%APPDATA%\BusyWhatsappBridge\reminder_config.json`:
 
 **Templates using {{1}}, {{2}}, {{3}} format:**
 
@@ -208,7 +208,7 @@ Monitor the logs to see reminder operations:
 
 ```bash
 # In another terminal
-tail -f "%LOCALAPPDATA%\BusyWhatsappBridge\logs\gateway_$(date +%Y%m%d).log"
+tail -f "%APPDATA%\BusyWhatsappBridge\logs\gateway_$(date +%Y%m%d).log"
 ```
 
 Look for:
@@ -250,7 +250,7 @@ http://localhost:8000/docs
 
 All reminder settings are stored in:
 ```
-%LOCALAPPDATA%\BusyWhatsappBridge\reminder_config.json
+%APPDATA%\BusyWhatsappBridge\reminder_config.json
 ```
 
 You can edit this file directly or use the API endpoints to update configuration.

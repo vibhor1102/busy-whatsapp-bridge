@@ -10,13 +10,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import structlog
 
-from app.config import get_local_appdata_path
+from app.config import get_roaming_appdata_path
 
 logger = structlog.get_logger()
 
 
 def _get_default_snapshot_db_path() -> Path:
-    appdata = get_local_appdata_path()
+    appdata = get_roaming_appdata_path()
     data_dir = appdata / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir / "reminder_snapshot.db"

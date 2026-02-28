@@ -15,7 +15,7 @@ import shutil
 import re
 import uuid
 
-from app.config import get_settings, get_config_path, get_config_details, get_local_appdata_path, load_settings, save_settings, Settings
+from app.config import get_settings, get_config_path, get_config_details, get_roaming_appdata_path, load_settings, save_settings, Settings
 from app.models.schemas import (
     InvoiceNotification,
     PartyDetails,
@@ -885,7 +885,7 @@ async def get_logs(
     limit: int = Query(100, ge=1, le=1000),
 ):
     """Fetch recent logs from AppData logs directory."""
-    logs_dir = get_local_appdata_path() / "logs"
+    logs_dir = get_roaming_appdata_path() / "logs"
     entries = []
     level_filter = (level or "").upper().strip()
     source_filter = (source or "all").lower().strip()

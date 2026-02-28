@@ -63,10 +63,10 @@ REM Setup configuration
 echo [3/4] Setting up configuration...
 
 REM Get AppData path
-for /f "tokens=2*" %%a in ('reg query "HKCU\Environment" /v LOCALAPPDATA 2^>nul ^| findstr "LOCALAPPDATA"') do set "LOCALAPPDATA=%%b"
-IF NOT DEFINED LOCALAPPDATA SET "LOCALAPPDATA=%USERPROFILE%\AppData\Local"
+for /f "tokens=2*" %%a in ('reg query "HKCU\Environment" /v APPDATA 2^>nul ^| findstr "APPDATA"') do set "APPDATA=%%b"
+IF NOT DEFINED APPDATA SET "APPDATA=%USERPROFILE%\AppData\Roaming"
 
-SET "CONFIG_DIR=%LOCALAPPDATA%\BusyWhatsappBridge"
+SET "CONFIG_DIR=%APPDATA%\BusyWhatsappBridge"
 SET "CONFIG_FILE=%CONFIG_DIR%\conf.json"
 
 IF EXIST "%CONFIG_FILE%" (

@@ -16,8 +16,8 @@ logger = structlog.get_logger()
 
 def _get_default_db_path() -> Path:
     """Get the default database path in Local AppData (machine-specific)."""
-    from app.config import get_local_appdata_path
-    appdata = get_local_appdata_path()
+    from app.config import get_roaming_appdata_path
+    appdata = get_roaming_appdata_path()
     data_dir = appdata / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir / "messages.db"

@@ -5,7 +5,7 @@ echo ================================================
 echo.
 
 REM Check for conf.json in AppData
-set "CONFIG_FILE=%LOCALAPPDATA%\BusyWhatsappBridge\conf.json"
+set "CONFIG_FILE=%APPDATA%\BusyWhatsappBridge\conf.json"
 if not exist "%CONFIG_FILE%" (
     echo [WARNING] conf.json not found at %CONFIG_FILE%!
     echo Please configure your environment first.
@@ -26,7 +26,7 @@ if exist "C:\Python311-32\python.exe" set "PYTHON32=C:\Python311-32\python.exe"
 if exist "C:\Python312-32\python.exe" set "PYTHON32=C:\Python312-32\python.exe"
 if exist "C:\Python313-32\python.exe" set "PYTHON32=C:\Python313-32\python.exe"
 
-REM Check user-specific installations in AppData
+REM Check user-specific installations in Local AppData (Python installs here)
 if exist "%LOCALAPPDATA%\Programs\Python\Python39-32\python.exe" set "PYTHON32=%LOCALAPPDATA%\Programs\Python\Python39-32\python.exe"
 if exist "%LOCALAPPDATA%\Programs\Python\Python310-32\python.exe" set "PYTHON32=%LOCALAPPDATA%\Programs\Python\Python310-32\python.exe"
 if exist "%LOCALAPPDATA%\Programs\Python\Python311-32\python.exe" set "PYTHON32=%LOCALAPPDATA%\Programs\Python\Python311-32\python.exe"
@@ -40,7 +40,7 @@ if defined PYTHON32 (
 ) else (
     echo [WARNING] 32-bit Python not found, using default python
     echo Searched in C:\Python39-32 through C:\Python314-32
-    echo and %%LOCALAPPDATA%%\Programs\Python\Python39-32 through Python314-32
+    echo and %%LOCALAPPDATA%%\Programs\Python\Python39-32 through Python314-32 (Python installs here)
     echo.
     python tests\test_webhook.py --url http://localhost:8000
 )

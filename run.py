@@ -36,15 +36,15 @@ except ImportError:
     HAS_TRAY = False
 
 def get_log_dir() -> Path:
-    """Get log directory in LocalAppData so Program Files installs remain writable."""
-    appdata = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+    """Get log directory in AppData so Program Files installs remain writable."""
+    appdata = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
     log_dir = appdata / "BusyWhatsappBridge" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
 
 def get_config_file_path() -> Path:
-    """Get conf.json path in LocalAppData without importing app.config."""
-    appdata = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+    """Get conf.json path in AppData without importing app.config."""
+    appdata = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
     base_dir = appdata / "BusyWhatsappBridge"
     base_dir.mkdir(parents=True, exist_ok=True)
     return base_dir / "conf.json"
@@ -172,7 +172,7 @@ def check_prerequisites() -> bool:
 
 def get_baileys_auth_dir() -> str:
     """Get Baileys auth directory in AppData."""
-    appdata = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+    appdata = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
     auth_dir = appdata / "BusyWhatsappBridge" / "auth" / "baileys_session"
     auth_dir.mkdir(parents=True, exist_ok=True)
     return str(auth_dir)

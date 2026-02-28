@@ -6,45 +6,30 @@ from pathlib import Path
 # Add project to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from app.config import get_local_appdata_path, get_roaming_appdata_path, get_config_path
+from app.config import get_roaming_appdata_path, get_config_path
 
 # Get paths using centralized functions
-local_appdata = get_local_appdata_path()
-roaming_appdata = get_roaming_appdata_path()
+appdata = get_roaming_appdata_path()
 config_file = get_config_path()
 
 print("Busy Whatsapp Bridge Configuration Check")
 print("=" * 50)
 print()
 
-print("ROAMING CONFIG (User-specific, follows user):")
-print(f"  Directory: {roaming_appdata}")
+print("APPDATA (User configuration and data):")
+print(f"  Directory: {appdata}")
 print(f"  Config File: {config_file}")
-print(f"  Exists: {roaming_appdata.exists()}")
+print(f"  Exists: {appdata.exists()}")
 print(f"  Config Exists: {config_file.exists()}")
 print()
 
-print("LOCAL DATA (Machine-specific, not roamed):")
-print(f"  Directory: {local_appdata}")
-print(f"  Exists: {local_appdata.exists()}")
-print()
-
-if roaming_appdata.exists():
-    print("Files in roaming config dir:")
-    for f in roaming_appdata.iterdir():
-        if f.is_dir():
-            print(f"  - {f.name}/")
-        else:
-            print(f"  - {f.name}")
-    print()
-
-if local_appdata.exists():
-    print("Files in local data dir:")
-    for f in local_appdata.iterdir():
+if appdata.exists():
+    print("Files in AppData dir:")
+    for f in appdata.iterdir():
         if f.is_dir():
             print(f"  - {f.name}/")
             # List contents of subdirectories
-            if f.name in ['data', 'auth']:
+            if f.name in ['data', 'auth', 'logs']:
                 for subf in f.iterdir():
                     print(f"      - {subf.name}")
         else:

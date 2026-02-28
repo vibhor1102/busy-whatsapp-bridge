@@ -34,7 +34,7 @@ def start_baileys():
     print()
     
     env = os.environ.copy()
-    env['BAILEYS_AUTH_DIR'] = str(Path.home() / 'AppData/Local/BusyWhatsappBridge/auth/baileys_session')
+    env['BAILEYS_AUTH_DIR'] = str(Path.home() / 'AppData/Roaming/BusyWhatsappBridge/auth/baileys_session')
     env['BAILEYS_PORT'] = '3001'
     
     proc = subprocess.Popen(

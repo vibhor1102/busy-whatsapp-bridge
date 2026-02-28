@@ -37,7 +37,7 @@ from app.services.pdf_inflation_service import pdf_inflation_service
 from app.services.whatsapp import BaileysProvider
 from app.database.message_queue import message_db
 from app.database.reminder_snapshot import reminder_snapshot_db
-from app.config import get_local_appdata_path, get_settings
+from app.config import get_roaming_appdata_path, get_settings
 from app.services.reminder_snapshot_service import reminder_snapshot_service
 from app.constants.reminder_constants import (
     REMINDER_STATUS_COMPLETED,
@@ -58,7 +58,7 @@ class ReminderService:
         self.template_svc = template_service
         self.snapshot_db = reminder_snapshot_db
         self.snapshot_service = reminder_snapshot_service
-        self._ledger_dir = get_local_appdata_path() / "data" / "reminder_ledgers"
+        self._ledger_dir = get_roaming_appdata_path() / "data" / "reminder_ledgers"
         self._ledger_dir.mkdir(parents=True, exist_ok=True)
         self._settings = get_settings()
 
