@@ -1,20 +1,20 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { 
-  RefreshCw, 
-  LogOut, 
-  QrCode, 
-  CheckCircle, 
+import {
+  RefreshCw,
+  LogOut,
+  QrCode,
+  CheckCircle,
   XCircle,
   Smartphone,
   AlertTriangle,
-  Loader2
+  Loader2,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { useSystemStore } from '../stores/systemStore';
 import { LoadingState } from '../components/ui/LoadingState';
-import { getStatusColor } from '../utils/statusColors';
+import { getStatusStyle } from '../utils/statusColors';
 import { REFETCH_INTERVALS } from '../constants';
 import { toast } from 'sonner';
 
@@ -74,8 +74,6 @@ export function WhatsAppManager() {
     setIsRefreshing(false);
   }, [queryClient]);
 
-  // Using getStatusColor from utils/statusColors.ts
-
   const getStatusIcon = (state: string) => {
     switch (state) {
       case 'connected':
@@ -96,20 +94,21 @@ export function WhatsAppManager() {
 
   const isConnected = status?.state === 'connected';
   const isQrReady = status?.state === 'qr_ready';
+  const statusStyle = getStatusStyle(status?.state || 'unknown');
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-100">WhatsApp Manager</h2>
-          <p className="text-slate-400 mt-1">Manage WhatsApp Web connection and session</p>
+          <h2 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+            WhatsApp
+          </h2>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+            Manage connection and session
+          </p>
         </div>
-        <button
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors disabled:opacity-50"
-        >
+        <button onClick={handleRefresh} disabled={isRefreshing} className="btn-secondary">
           <RefreshCw className={`w-4 h-4 ${isRefreshing && 'animate-spin'}`} />
           Refresh
         </button>
@@ -117,29 +116,32 @@ export function WhatsAppManager() {
 
       {/* Status Card */}
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bg-dark-800 border border-slate-700 rounded-xl p-6"
+        className="card p-5"
       >
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-4">
-            <div className={`p-4 rounded-xl ${getStatusColor(status?.state || 'unknown')}`}>
+            <div
+              className="p-3 rounded-xl"
+              style={{ background: statusStyle.bg, color: statusStyle.color, border: `1px solid ${statusStyle.border}` }}
+            >
               {getStatusIcon(status?.state || 'unknown')}
             </div>
-            
+
             <div>
-              <p className="text-sm text-slate-400">Connection Status</p>
-              <p className="text-2xl font-bold text-slate-100 capitalize">
+              <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Connection Status</p>
+              <p className="text-xl font-bold capitalize" style={{ color: 'var(--text-primary)' }}>
                 {(status?.state || 'unknown').replace('_', ' ')}
               </p>
             </div>
           </div>
 
-          <div className="flex gap-3">
+          <div className="flex gap-2">
             <button
               onClick={() => restartMutation.mutate()}
               disabled={restartMutation.isPending}
-              className="flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors disabled:opacity-50"
+              className="btn-primary"
             >
               {restartMutation.isPending ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -153,7 +155,7 @@ export function WhatsAppManager() {
               <button
                 onClick={() => disconnectMutation.mutate()}
                 disabled={disconnectMutation.isPending}
-                className="flex items-center gap-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 rounded-lg transition-colors disabled:opacity-50"
+                className="btn-danger"
               >
                 {disconnectMutation.isPending ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -167,24 +169,31 @@ export function WhatsAppManager() {
         </div>
 
         {status?.error && (
-          <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-              <p className="text-red-400">{status.error}</p>
-            </div>
+          <div
+            className="p-3 rounded-lg flex items-start gap-2.5"
+            style={{
+              background: 'var(--danger-soft)',
+              border: '1px solid var(--danger-soft-border)',
+            }}
+          >
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: 'var(--danger)' }} />
+            <p className="text-sm" style={{ color: 'var(--danger)' }}>{status.error}</p>
           </div>
         )}
 
         {isConnected && status?.user && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-            <div className="p-4 rounded-lg bg-slate-700/30">
-              <p className="text-sm text-slate-400">Connected Account</p>
-              <p className="text-lg font-medium text-slate-100 mt-1">{status.user.name}</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-5">
+            <div className="p-3 rounded-lg" style={{ background: 'var(--bg-input)' }}>
+              <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Connected Account</p>
+              <p className="text-sm font-medium mt-0.5" style={{ color: 'var(--text-primary)' }}>
+                {status.user.name}
+              </p>
             </div>
-            
-            <div className="p-4 rounded-lg bg-slate-700/30">
-              <p className="text-sm text-slate-400">Phone Number</p>
-              <p className="text-lg font-medium text-slate-100 mt-1">{status.user.phone}</p>
+            <div className="p-3 rounded-lg" style={{ background: 'var(--bg-input)' }}>
+              <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Phone Number</p>
+              <p className="text-sm font-medium mt-0.5" style={{ color: 'var(--text-primary)' }}>
+                {status.user.phone}
+              </p>
             </div>
           </div>
         )}
@@ -195,23 +204,28 @@ export function WhatsAppManager() {
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="bg-dark-800 border border-slate-700 rounded-xl p-8"
+          className="card p-8"
         >
           <div className="text-center">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-yellow-500/20 mb-4">
-              <QrCode className="w-8 h-8 text-yellow-400" />
+            <div
+              className="inline-flex items-center justify-center w-14 h-14 rounded-full mb-4"
+              style={{ background: 'var(--warning-soft)' }}
+            >
+              <QrCode className="w-7 h-7" style={{ color: 'var(--warning)' }} />
             </div>
-            
-            <h3 className="text-xl font-semibold text-slate-100 mb-2">Scan QR Code</h3>
-            <p className="text-slate-400 mb-6 max-w-md mx-auto">
+
+            <h3 className="text-lg font-semibold mb-1.5" style={{ color: 'var(--text-primary)' }}>
+              Scan QR Code
+            </h3>
+            <p className="text-sm mb-6 max-w-md mx-auto" style={{ color: 'var(--text-tertiary)' }}>
               Open WhatsApp on your phone, go to Settings &gt; Linked Devices, and scan this QR code to connect
             </p>
-            
-            <div className="inline-block p-6 bg-white rounded-xl">
+
+            <div className="inline-block p-5 bg-white rounded-xl shadow-lg">
               <img
                 src={`data:image/png;base64,${status?.qr_image}`}
                 alt="WhatsApp QR Code"
-                className="w-64 h-64"
+                className="w-56 h-56"
               />
             </div>
           </div>
@@ -220,35 +234,42 @@ export function WhatsAppManager() {
 
       {/* Session Management */}
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-        className="bg-dark-800 border border-slate-700 rounded-xl p-6"
+        transition={{ delay: 0.15 }}
+        className="card p-5"
       >
-        <h3 className="text-lg font-semibold text-slate-100 mb-4">Session Management</h3>
-        
-        <div className="space-y-4">
-          <div className="flex items-center justify-between p-4 rounded-lg bg-slate-700/30">
-            <div className="flex items-center gap-3">
-              <Smartphone className="w-5 h-5 text-slate-400" />
-              <div>
-                <p className="font-medium text-slate-200">Clear Session Data</p>
-                <p className="text-sm text-slate-400">Remove saved credentials and require re-authentication</p>
-              </div>
+        <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
+          Session Management
+        </h3>
+
+        <div
+          className="flex items-center justify-between p-3.5 rounded-lg"
+          style={{ background: 'var(--bg-input)' }}
+        >
+          <div className="flex items-center gap-3">
+            <Smartphone className="w-4 h-4" style={{ color: 'var(--text-tertiary)' }} />
+            <div>
+              <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                Clear Session Data
+              </p>
+              <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                Remove saved credentials and require re-authentication
+              </p>
             </div>
-            
-            <button
-              onClick={() => clearSessionMutation.mutate()}
-              disabled={clearSessionMutation.isPending}
-              className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 rounded-lg transition-colors disabled:opacity-50"
-            >
-              {clearSessionMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                'Clear Session'
-              )}
-            </button>
           </div>
+
+          <button
+            onClick={() => clearSessionMutation.mutate()}
+            disabled={clearSessionMutation.isPending}
+            className="btn-danger text-xs"
+          >
+            {clearSessionMutation.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              'Clear Session'
+            )}
+          </button>
         </div>
       </motion.div>
     </div>

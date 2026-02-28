@@ -1,18 +1,18 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { 
-  Inbox, 
-  RefreshCw, 
-  Clock, 
-  AlertTriangle, 
+import {
+  Inbox,
+  RefreshCw,
+  Clock,
+  AlertTriangle,
   CheckCircle,
-  XCircle
+  XCircle,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { useQueueStore } from '../stores/queueStore';
 import { LoadingState } from '../components/ui/LoadingState';
-import { getStatusColor } from '../utils/statusColors';
+import { getStatusStyle } from '../utils/statusColors';
 import { REFETCH_INTERVALS, LIMITS } from '../constants';
 import type { Message } from '../types';
 
@@ -22,13 +22,6 @@ const tabs = [
   { id: 'deadLetter', label: 'Dead Letter', icon: AlertTriangle },
   { id: 'history', label: 'History', icon: CheckCircle },
 ] as const;
-
-const colorStyles: Record<string, { bg: string; border: string }> = {
-  yellow: { bg: 'bg-yellow-500/10', border: 'border-yellow-500/30' },
-  blue: { bg: 'bg-blue-500/10', border: 'border-blue-500/30' },
-  red: { bg: 'bg-red-500/10', border: 'border-red-500/30' },
-  green: { bg: 'bg-green-500/10', border: 'border-green-500/30' },
-};
 
 export function MessageQueue() {
   const [activeTab, setActiveTab] = useState<typeof tabs[number]['id']>('pending');
@@ -67,82 +60,105 @@ export function MessageQueue() {
 
   const isLoading = statsLoading || messagesLoading;
 
-  // Using getStatusColor from utils/statusColors.ts
-
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'sent':
-        return <CheckCircle className="w-4 h-4" />;
+        return <CheckCircle className="w-3.5 h-3.5" />;
       case 'failed':
-        return <XCircle className="w-4 h-4" />;
+        return <XCircle className="w-3.5 h-3.5" />;
       case 'retrying':
-        return <RefreshCw className="w-4 h-4" />;
+        return <RefreshCw className="w-3.5 h-3.5" />;
       default:
-        return <Clock className="w-4 h-4" />;
+        return <Clock className="w-3.5 h-3.5" />;
     }
   };
 
+  const statCards = [
+    { label: 'Pending', value: stats?.pending || 0, variant: 'warning' as const },
+    { label: 'Retrying', value: stats?.retrying || 0, variant: 'info' as const },
+    { label: 'Dead Letter', value: stats?.dead_letter || 0, variant: 'danger' as const },
+    { label: 'Sent Today', value: stats?.sent_today || 0, variant: 'success' as const },
+  ];
+
+  const variantStyles = {
+    warning: { bg: 'var(--warning-soft)', border: 'var(--warning-soft-border)' },
+    info: { bg: 'var(--info-soft)', border: 'var(--info-soft-border)' },
+    danger: { bg: 'var(--danger-soft)', border: 'var(--danger-soft-border)' },
+    success: { bg: 'var(--success-soft)', border: 'var(--success-soft-border)' },
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-100">Message Queue</h2>
-          <p className="text-slate-400 mt-1">Monitor and manage message queue status</p>
-        </div>
+      <div>
+        <h2 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+          Message Queue
+        </h2>
+        <p className="text-sm mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+          Monitor and manage message queue status
+        </p>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: 'Pending', value: stats?.pending || 0, color: 'yellow' },
-          { label: 'Retrying', value: stats?.retrying || 0, color: 'blue' },
-          { label: 'Dead Letter', value: stats?.dead_letter || 0, color: 'red' },
-          { label: 'Sent Today', value: stats?.sent_today || 0, color: 'green' },
-        ].map((stat) => (
-          <motion.div
-            key={stat.label}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className={`p-4 rounded-xl ${colorStyles[stat.color].bg} ${colorStyles[stat.color].border}`}
-          >
-            <p className="text-sm text-slate-400">{stat.label}</p>
-            <p className="text-2xl font-bold text-slate-100 mt-1">{stat.value}</p>
-          </motion.div>
-        ))}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {statCards.map((stat, i) => {
+          const s = variantStyles[stat.variant];
+          return (
+            <motion.div
+              key={stat.label}
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05 }}
+              className="p-4 rounded-xl"
+              style={{ background: s.bg, border: `1px solid ${s.border}` }}
+            >
+              <p className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
+                {stat.label}
+              </p>
+              <p className="text-xl font-bold mt-1" style={{ color: 'var(--text-primary)' }}>
+                {stat.value}
+              </p>
+            </motion.div>
+          );
+        })}
       </div>
 
       {/* Tabs */}
-      <div className="bg-dark-800 border border-slate-700 rounded-xl overflow-hidden">
+      <div className="card overflow-hidden">
         <div
-          className="flex border-b border-slate-700"
+          className="flex border-b"
           role="tablist"
           aria-label="Message queue tabs"
+          style={{ borderColor: 'var(--border-default)' }}
         >
           {tabs.map((tab) => {
             const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 role="tab"
-                aria-selected={activeTab === tab.id}
+                aria-selected={isActive}
                 aria-controls={`tabpanel-${tab.id}`}
                 id={`tab-${tab.id}`}
-                className={`flex items-center gap-2 px-6 py-4 font-medium transition-colors ${
-                  activeTab === tab.id
-                    ? 'text-brand-400 border-b-2 border-brand-400 bg-brand-500/10'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/30'
-                }`}
+                className="flex items-center gap-2 px-5 py-3 text-sm font-medium transition-colors"
+                style={{
+                  color: isActive ? 'var(--brand-accent)' : 'var(--text-tertiary)',
+                  borderBottom: isActive ? '2px solid var(--brand-accent)' : '2px solid transparent',
+                  background: isActive ? 'var(--brand-soft)' : 'transparent',
+                }}
+                onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = 'var(--bg-input)'; }}
+                onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
               >
-                <Icon className="w-4 h-4" aria-hidden="true" />
+                <Icon className="w-3.5 h-3.5" aria-hidden="true" />
                 {tab.label}
               </button>
             );
           })}
         </div>
 
-        {/* Table - Tab Panel */}
+        {/* Table */}
         <div
           role="tabpanel"
           id={`tabpanel-${activeTab}`}
@@ -157,42 +173,60 @@ export function MessageQueue() {
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-slate-700">
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">Phone</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">Message</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">Status</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">Retries</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">Created</th>
+                  <tr style={{ borderBottom: '1px solid var(--border-default)' }}>
+                    {['Phone', 'Message', 'Status', 'Retries', 'Created'].map(h => (
+                      <th
+                        key={h}
+                        className="text-left py-2.5 px-3 text-xs font-medium uppercase tracking-wider"
+                        style={{ color: 'var(--text-tertiary)' }}
+                      >
+                        {h}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {messages?.messages?.map((message: Message) => (
-                    <tr key={message.id} className="border-b border-slate-700/50 hover:bg-slate-700/20">
-                      <td className="py-3 px-4 text-slate-300">{message.phone}</td>
-                      <td className="py-3 px-4 text-slate-300 truncate max-w-xs">
-                        {message.message.substring(0, 50)}...
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className={`flex items-center gap-2 ${getStatusColor(message.status)}`}>
-                          {getStatusIcon(message.status)}
-                          <span className="capitalize">{message.status}</span>
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-slate-300">
-                        {message.retry_count} / {message.max_retries}
-                      </td>
-                      <td className="py-3 px-4 text-slate-400 text-sm">
-                        {new Date(message.created_at).toLocaleString()}
-                      </td>
-                    </tr>
-                  ))}
-                  
+                  {messages?.messages?.map((message: Message) => {
+                    const ms = getStatusStyle(message.status);
+                    return (
+                      <tr
+                        key={message.id}
+                        className="transition-colors"
+                        style={{ borderBottom: '1px solid var(--border-subtle)' }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-input)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        <td className="py-2.5 px-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                          {message.phone}
+                        </td>
+                        <td className="py-2.5 px-3 text-sm truncate max-w-xs" style={{ color: 'var(--text-secondary)' }}>
+                          {message.message.substring(0, 50)}...
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span
+                            className="inline-flex items-center gap-1.5 text-xs font-medium"
+                            style={{ color: ms.color }}
+                          >
+                            {getStatusIcon(message.status)}
+                            <span className="capitalize">{message.status}</span>
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                          {message.retry_count} / {message.max_retries}
+                        </td>
+                        <td className="py-2.5 px-3 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                          {new Date(message.created_at).toLocaleString()}
+                        </td>
+                      </tr>
+                    );
+                  })}
+
                   {messages?.messages?.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="py-12 text-center text-slate-400">
+                      <td colSpan={5} className="py-12 text-center" style={{ color: 'var(--text-tertiary)' }}>
                         <div className="flex flex-col items-center gap-2">
-                          <Inbox className="w-12 h-12 opacity-50" />
-                          <p>No messages found</p>
+                          <Inbox className="w-10 h-10 opacity-40" />
+                          <p className="text-sm">No messages found</p>
                         </div>
                       </td>
                     </tr>

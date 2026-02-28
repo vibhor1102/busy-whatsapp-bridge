@@ -71,6 +71,20 @@ source venv/Scripts/activate  # Git Bash
 
 ---
 
+## Build System Guide
+
+Reference: `BUILD_SYSTEM_GUIDE.md` - Complete Windows application build instructions.
+
+**Dashboard:** React 19 + TypeScript in `dashboard-react/` (not `dashboard/`)
+
+**One-File Philosophy:**
+- `run-dev.bat` - Development launcher (one file, auto-builds dashboard)
+- `run.py` - Production launcher (one file, system tray, process orchestration)
+
+**Production Build:** `./build-all.bat` - Builds dashboard → EXE → installer
+
+---
+
 ## Bundled Distribution (No Python Required!)
 
 This is a **portable bundled distribution** with Python and all dependencies included.

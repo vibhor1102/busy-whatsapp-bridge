@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { 
-  FileText, 
-  RefreshCw, 
+import {
+  FileText,
+  RefreshCw,
   Filter,
   AlertTriangle,
   Info,
   AlertCircle,
-  Bug
+  Bug,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { LoadingState } from '../components/ui/LoadingState';
@@ -45,53 +45,54 @@ export function LiveLogs() {
   const getLevelIcon = (level: string) => {
     switch (level) {
       case 'ERROR':
-        return <AlertCircle className="w-4 h-4 text-red-400" />;
+        return <AlertCircle className="w-3.5 h-3.5" style={{ color: 'var(--danger)' }} />;
       case 'WARNING':
-        return <AlertTriangle className="w-4 h-4 text-yellow-400" />;
+        return <AlertTriangle className="w-3.5 h-3.5" style={{ color: 'var(--warning)' }} />;
       case 'DEBUG':
-        return <Bug className="w-4 h-4 text-purple-400" />;
+        return <Bug className="w-3.5 h-3.5" style={{ color: 'var(--info)' }} />;
       default:
-        return <Info className="w-4 h-4 text-blue-400" />;
+        return <Info className="w-3.5 h-3.5" style={{ color: 'var(--brand-accent)' }} />;
     }
   };
 
-  const getLevelColor = (level: string) => {
+  const getLevelStyle = (level: string) => {
     switch (level) {
       case 'ERROR':
-        return 'bg-red-500/10 text-red-400 border-red-500/30';
+        return { bg: 'var(--danger-soft)', color: 'var(--danger)', border: 'var(--danger-soft-border)' };
       case 'WARNING':
-        return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30';
+        return { bg: 'var(--warning-soft)', color: 'var(--warning)', border: 'var(--warning-soft-border)' };
       case 'DEBUG':
-        return 'bg-purple-500/10 text-purple-400 border-purple-500/30';
+        return { bg: 'var(--info-soft)', color: 'var(--info)', border: 'var(--info-soft-border)' };
       default:
-        return 'bg-blue-500/10 text-blue-400 border-blue-500/30';
+        return { bg: 'var(--brand-soft)', color: 'var(--brand-accent)', border: 'var(--brand-soft-border)' };
     }
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-100">Live Logs</h2>
-          <p className="text-slate-400 mt-1">Real-time application logs and events</p>
+          <h2 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+            Live Logs
+          </h2>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+            Real-time application logs and events
+          </p>
         </div>
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-slate-300">
-            <input
-              type="checkbox"
-              checked={autoRefresh}
-              onChange={(e) => setAutoRefresh(e.target.checked)}
-              className="w-4 h-4 rounded border-slate-600 text-brand-500 focus:ring-brand-500"
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <button
+              onClick={() => setAutoRefresh(!autoRefresh)}
+              className={`toggle ${autoRefresh ? 'active' : ''}`}
+              role="switch"
+              aria-checked={autoRefresh}
               aria-label="Enable automatic refresh"
             />
-            Auto-refresh
+            <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Auto</span>
           </label>
-          
-          <button
-            onClick={() => refetch()}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors"
-          >
+
+          <button onClick={() => refetch()} className="btn-secondary">
             <RefreshCw className="w-4 h-4" />
             Refresh
           </button>
@@ -100,31 +101,31 @@ export function LiveLogs() {
 
       {/* Filters */}
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bg-dark-800 border border-slate-700 rounded-xl p-4"
+        className="card p-4"
       >
-        <div className="flex items-center gap-4 flex-wrap">
-          <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-slate-400" />
-            <span className="text-slate-400">Filters:</span>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <Filter className="w-3.5 h-3.5" style={{ color: 'var(--text-tertiary)' }} />
+            <span className="text-xs font-medium" style={{ color: 'var(--text-tertiary)' }}>Filters:</span>
           </div>
-          
+
           <select
             value={level}
             onChange={(e) => setLevel(e.target.value)}
-            className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="input w-auto text-xs"
             aria-label="Filter by log level"
           >
             {levels.map((l) => (
               <option key={l.value} value={l.value}>{l.label}</option>
             ))}
           </select>
-          
+
           <select
             value={source}
             onChange={(e) => setSource(e.target.value)}
-            className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="input w-auto text-xs"
             aria-label="Filter by log source"
           >
             {sources.map((s) => (
@@ -136,10 +137,10 @@ export function LiveLogs() {
 
       {/* Logs */}
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
-        className="bg-dark-800 border border-slate-700 rounded-xl overflow-hidden"
+        className="card overflow-hidden"
       >
         <div className="max-h-[600px] overflow-y-auto">
           {isLoading ? (
@@ -147,43 +148,63 @@ export function LiveLogs() {
               <LoadingState size="md" />
             </div>
           ) : (
-            <div className="divide-y divide-slate-700">
-              {logs?.logs?.map((log: LogEntry) => (
-                <div key={log.id} className="p-4 hover:bg-slate-700/20 transition-colors">
-                  <div className="flex items-start gap-4">
-                    <div className="flex-shrink-0 mt-0.5">
-                      {getLevelIcon(log.level)}
-                    </div>
-                    
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-3 mb-1">
-                        <span className={`px-2 py-0.5 text-xs font-medium rounded border ${getLevelColor(log.level)}`}>
-                          {log.level}
-                        </span>
-                        
-                        <span className="text-xs text-slate-500">
-                          {new Date(log.timestamp).toLocaleString()}
-                        </span>
-                        
-                        {log.source && (
-                          <span className="text-xs text-slate-500">
-                            [{log.source}]
-                          </span>
-                        )}
+            <div>
+              {logs?.logs?.map((log: LogEntry) => {
+                const ls = getLevelStyle(log.level);
+                return (
+                  <div
+                    key={log.id}
+                    className="px-4 py-3 transition-colors"
+                    style={{ borderBottom: '1px solid var(--border-subtle)' }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-input)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex-shrink-0 mt-0.5">
+                        {getLevelIcon(log.level)}
                       </div>
-                      
-                      <p className="text-sm text-slate-300 font-mono">{log.logger}</p>
-                      <p className="text-slate-200 mt-1">{log.message}</p>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span
+                            className="px-1.5 py-0.5 text-[10px] font-semibold rounded"
+                            style={{
+                              background: ls.bg,
+                              color: ls.color,
+                              border: `1px solid ${ls.border}`,
+                            }}
+                          >
+                            {log.level}
+                          </span>
+
+                          <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                            {new Date(log.timestamp).toLocaleString()}
+                          </span>
+
+                          {log.source && (
+                            <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                              [{log.source}]
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-xs font-mono" style={{ color: 'var(--text-tertiary)' }}>
+                          {log.logger}
+                        </p>
+                        <p className="text-sm mt-0.5" style={{ color: 'var(--text-primary)' }}>
+                          {log.message}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-              
+                );
+              })}
+
               {logs?.logs?.length === 0 && (
-                <div className="py-12 text-center text-slate-400">
+                <div className="py-12 text-center" style={{ color: 'var(--text-tertiary)' }}>
                   <div className="flex flex-col items-center gap-2">
-                    <FileText className="w-12 h-12 opacity-50" />
-                    <p>No logs found</p>
+                    <FileText className="w-10 h-10 opacity-40" />
+                    <p className="text-sm">No logs found</p>
                   </div>
                 </div>
               )}

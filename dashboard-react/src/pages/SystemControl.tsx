@@ -2,38 +2,37 @@ import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
-import { 
-  Cpu, 
-  HardDrive, 
-  MemoryStick, 
-  RefreshCw, 
-  Play, 
+import {
+  Cpu,
+  HardDrive,
+  MemoryStick,
+  RefreshCw,
+  Play,
   Square,
   Loader2,
   Server,
-  Activity
+  Activity,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { LoadingState } from '../components/ui/LoadingState';
 import { formatBytes } from '../utils/formatters';
 import { REFETCH_INTERVALS } from '../constants';
 
-function ProgressBar({ value, color = 'brand' }: { value: number; color?: string }) {
-  const colorClasses: Record<string, string> = {
-    brand: 'bg-brand-500',
-    green: 'bg-green-500',
-    yellow: 'bg-yellow-500',
-    red: 'bg-red-500',
-  };
-
+function ProgressBar({ value, color }: { value: number; color: string }) {
   return (
-    <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+    <div className="h-2 rounded-full overflow-hidden" style={{ background: 'var(--bg-input)' }}>
       <div
-        className={`h-full ${colorClasses[color]} transition-all duration-500`}
-        style={{ width: `${Math.min(value, 100)}%` }}
+        className="h-full rounded-full transition-all duration-500"
+        style={{ width: `${Math.min(value, 100)}%`, background: color }}
       />
     </div>
   );
+}
+
+function getBarColor(percent: number): string {
+  if (percent > 80) return 'var(--danger)';
+  if (percent > 60) return 'var(--warning)';
+  return 'var(--success)';
 }
 
 export function SystemControl() {
@@ -92,17 +91,54 @@ export function SystemControl() {
     return <LoadingState size="lg" fullPage />;
   }
 
+  const cpuPercent = resources?.cpu_percent ?? 0;
+  const memPercent = resources?.memory?.percent ?? 0;
+  const diskPercent = resources?.disk?.percent ?? 0;
+
+  const resourceCards = [
+    {
+      label: 'CPU Usage',
+      value: `${cpuPercent.toFixed(1)}%`,
+      percent: cpuPercent,
+      icon: Cpu,
+      iconBg: 'var(--info-soft)',
+      iconColor: 'var(--info)',
+    },
+    {
+      label: 'Memory Usage',
+      value: `${memPercent.toFixed(1)}%`,
+      percent: memPercent,
+      icon: MemoryStick,
+      iconBg: 'var(--brand-soft)',
+      iconColor: 'var(--brand-accent)',
+      detail: `${formatBytes(resources?.memory.used || 0)} / ${formatBytes(resources?.memory.total || 0)}`,
+    },
+    {
+      label: 'Disk Usage',
+      value: `${diskPercent.toFixed(1)}%`,
+      percent: diskPercent,
+      icon: HardDrive,
+      iconBg: 'var(--warning-soft)',
+      iconColor: 'var(--warning)',
+      detail: `${formatBytes(resources?.disk?.used ?? 0)} / ${formatBytes(resources?.disk?.total ?? 0)}`,
+    },
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-100">System Control</h2>
-          <p className="text-slate-400 mt-1">Monitor system resources and control services</p>
+          <h2 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+            System
+          </h2>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+            Monitor resources and control services
+          </p>
         </div>
         <button
           onClick={() => queryClient.invalidateQueries({ queryKey: ['system-resources'] })}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors"
+          className="btn-secondary"
         >
           <RefreshCw className="w-4 h-4" />
           Refresh
@@ -111,133 +147,96 @@ export function SystemControl() {
 
       {/* Resource Usage Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* CPU */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-dark-800 border border-slate-700 rounded-xl p-6"
-        >
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-3 bg-blue-500/20 rounded-lg">
-                <Cpu className="w-6 h-6 text-blue-400" />
+        {resourceCards.map((card, i) => {
+          const Icon = card.icon;
+          return (
+            <motion.div
+              key={card.label}
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05 }}
+              className="card p-5"
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div
+                  className="p-2.5 rounded-lg"
+                  style={{ background: card.iconBg }}
+                >
+                  <Icon className="w-5 h-5" style={{ color: card.iconColor }} />
+                </div>
+                <div>
+                  <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>{card.label}</p>
+                  <p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{card.value}</p>
+                </div>
               </div>
-              <div>
-                <p className="text-slate-400">CPU Usage</p>
-                <p className="text-2xl font-bold text-slate-100">{(resources?.cpu_percent ?? 0).toFixed(1)}%</p>
-              </div>
-            </div>
-          </div>
-            <ProgressBar 
-            value={resources?.cpu_percent ?? 0} 
-            color={(resources?.cpu_percent ?? 0) > 80 ? 'red' : (resources?.cpu_percent ?? 0) > 60 ? 'yellow' : 'green'}
-          />
-        </motion.div>
 
-        {/* Memory */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="bg-dark-800 border border-slate-700 rounded-xl p-6"
-        >
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-3 bg-purple-500/20 rounded-lg">
-                <MemoryStick className="w-6 h-6 text-purple-400" />
-              </div>
-              <div>
-                <p className="text-slate-400">Memory Usage</p>
-                <p className="text-2xl font-bold text-slate-100">{(resources?.memory?.percent ?? 0).toFixed(1)}%</p>
-              </div>
-            </div>
-          </div>
-          
-          <ProgressBar 
-            value={resources?.memory?.percent ?? 0}
-            color={(resources?.memory?.percent ?? 0) > 80 ? 'red' : (resources?.memory?.percent ?? 0) > 60 ? 'yellow' : 'green'}
-          />
-          
-          <p className="text-sm text-slate-400 mt-2">
-            {formatBytes(resources?.memory.used || 0)} / {formatBytes(resources?.memory.total || 0)}
-          </p>
-        </motion.div>
+              <ProgressBar value={card.percent} color={getBarColor(card.percent)} />
 
-        {/* Disk */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="bg-dark-800 border border-slate-700 rounded-xl p-6"
-        >
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-3 bg-yellow-500/20 rounded-lg">
-                <HardDrive className="w-6 h-6 text-yellow-400" />
-              </div>
-              <div>
-                <p className="text-slate-400">Disk Usage</p>
-                <p className="text-2xl font-bold text-slate-100">{(resources?.disk?.percent ?? 0).toFixed(1)}%</p>
-              </div>
-            </div>
-          </div>
-          
-          <ProgressBar 
-            value={resources?.disk?.percent ?? 0}
-            color={(resources?.disk?.percent ?? 0) > 80 ? 'red' : (resources?.disk?.percent ?? 0) > 60 ? 'yellow' : 'green'}
-          />
-          
-          <p className="text-sm text-slate-400 mt-2">
-            {formatBytes(resources?.disk?.used ?? 0)} / {formatBytes(resources?.disk?.total ?? 0)}
-          </p>
-        </motion.div>
+              {card.detail && (
+                <p className="text-xs mt-2" style={{ color: 'var(--text-tertiary)' }}>{card.detail}</p>
+              )}
+            </motion.div>
+          );
+        })}
       </div>
 
       {/* Service Controls */}
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3 }}
-        className="bg-dark-800 border border-slate-700 rounded-xl p-6"
+        transition={{ delay: 0.2 }}
+        className="card p-5"
       >
-        <h3 className="text-lg font-semibold text-slate-100 mb-4">Service Controls</h3>
-        
-        <div className="space-y-4">
+        <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
+          Service Controls
+        </h3>
+
+        <div className="space-y-3">
           {/* Queue Worker */}
-          <div className="flex items-center justify-between p-4 rounded-lg bg-slate-700/30">
+          <div
+            className="flex items-center justify-between p-3.5 rounded-lg"
+            style={{ background: 'var(--bg-input)' }}
+          >
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-slate-600 rounded-lg">
-                <Server className="w-5 h-5 text-slate-300" />
-              </div>
+              <Server className="w-4 h-4" style={{ color: 'var(--text-tertiary)' }} />
               <div>
-                <p className="font-medium text-slate-200">Queue Worker</p>
-                <p className="text-sm text-slate-400">Process pending messages in queue</p>
+                <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                  Queue Worker
+                </p>
+                <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                  Process pending messages in queue
+                </p>
               </div>
             </div>
-            
+
             <div className="flex gap-2">
               <button
                 onClick={() => handleAction('start-queue', startQueueMutation)}
                 disabled={actionLoading === 'start-queue'}
-                className="flex items-center gap-2 px-4 py-2 bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/30 rounded-lg transition-colors disabled:opacity-50"
+                className="text-xs py-1.5 px-3 rounded-lg flex items-center gap-1.5 font-medium transition-colors"
+                style={{
+                  background: 'var(--success-soft)',
+                  color: 'var(--success)',
+                  border: '1px solid var(--success-soft-border)',
+                }}
               >
                 {actionLoading === 'start-queue' ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
-                  <Play className="w-4 h-4" />
+                  <Play className="w-3.5 h-3.5" />
                 )}
                 Start
               </button>
-              
+
               <button
                 onClick={() => handleAction('stop-queue', stopQueueMutation)}
                 disabled={actionLoading === 'stop-queue'}
-                className="flex items-center gap-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 rounded-lg transition-colors disabled:opacity-50"
+                className="btn-danger text-xs py-1.5 px-3"
               >
                 {actionLoading === 'stop-queue' ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
-                  <Square className="w-4 h-4" />
+                  <Square className="w-3.5 h-3.5" />
                 )}
                 Stop
               </button>
@@ -245,26 +244,31 @@ export function SystemControl() {
           </div>
 
           {/* Baileys */}
-          <div className="flex items-center justify-between p-4 rounded-lg bg-slate-700/30">
+          <div
+            className="flex items-center justify-between p-3.5 rounded-lg"
+            style={{ background: 'var(--bg-input)' }}
+          >
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-slate-600 rounded-lg">
-                <Activity className="w-5 h-5 text-slate-300" />
-              </div>
+              <Activity className="w-4 h-4" style={{ color: 'var(--text-tertiary)' }} />
               <div>
-                <p className="font-medium text-slate-200">Baileys Service</p>
-                <p className="text-sm text-slate-400">Restart WhatsApp Web connection</p>
+                <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                  Baileys Service
+                </p>
+                <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                  Restart WhatsApp Web connection
+                </p>
               </div>
             </div>
-            
+
             <button
               onClick={() => handleAction('restart-baileys', restartBaileysMutation)}
               disabled={actionLoading === 'restart-baileys'}
-              className="flex items-center gap-2 px-4 py-2 bg-brand-500/20 hover:bg-brand-500/30 text-brand-400 border border-brand-500/30 rounded-lg transition-colors disabled:opacity-50"
+              className="btn-primary text-xs py-1.5 px-3"
             >
               {actionLoading === 'restart-baileys' ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <RefreshCw className="w-4 h-4" />
+                <RefreshCw className="w-3.5 h-3.5" />
               )}
               Restart
             </button>

@@ -2,11 +2,11 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  RefreshCw, 
-  Send, 
-  Pause, 
-  Play, 
+import {
+  RefreshCw,
+  Send,
+  Pause,
+  Play,
   Square,
   ChevronDown,
   ChevronUp,
@@ -17,118 +17,182 @@ import {
   CheckCircle,
   Search,
   X,
-  Loader2
+  Loader2,
+  CheckSquare,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { useRemindersStore } from '../stores/remindersStore';
 import { LoadingState } from '../components/ui/LoadingState';
-import { getStatusColor } from '../utils/statusColors';
+import { getStatusDotColor } from '../utils/statusColors';
 import { formatCurrency, formatDateTime, formatDuration } from '../utils/formatters';
 import { REFETCH_INTERVALS, LIMITS, RETRY_DELAYS, POLLING } from '../constants';
 import { toast } from 'sonner';
 import type { MessageTemplate, ReminderSession } from '../types';
 
-// Using formatters from utils/formatters.ts
+// ─── Sub-Components ────────────────────────────────────
 
-// Components
-function StatCard({ title, value, subtitle }: { title: string; value: string | number; subtitle?: string }) {
+function StatCard({ title, value, subtitle, accent }: {
+  title: string;
+  value: string | number;
+  subtitle?: string;
+  accent?: boolean;
+}) {
   return (
-    <div className="bg-dark-800 border border-slate-700 rounded-xl p-4">
-      <p className="text-sm text-slate-400">{title}</p>
-      <p className="text-2xl font-bold text-slate-100 mt-1">{value}</p>
-      {subtitle && <p className="text-sm text-slate-500 mt-1">{subtitle}</p>}
+    <div
+      className="card p-4"
+      style={accent ? { borderColor: 'var(--brand-accent)', borderWidth: '1px' } : {}}
+    >
+      <p className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
+        {title}
+      </p>
+      <p className="text-xl font-bold mt-1" style={{ color: 'var(--text-primary)' }}>
+        {value}
+      </p>
+      {subtitle && (
+        <p className="text-xs mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+          {subtitle}
+        </p>
+      )}
     </div>
   );
 }
 
-function SessionPanel({ session, onPause, onResume, onStop }: { 
-  session: ReminderSession; 
-  onPause: () => void; 
-  onResume: () => void; 
+function SessionPanel({ session, onPause, onResume, onStop }: {
+  session: ReminderSession;
+  onPause: () => void;
+  onResume: () => void;
   onStop: () => void;
 }) {
-  // Using getStatusColor from utils/statusColors.ts
+  const dotColor = getStatusDotColor(session.state);
 
   return (
     <motion.div
       initial={{ opacity: 0, height: 0 }}
       animate={{ opacity: 1, height: 'auto' }}
       exit={{ opacity: 0, height: 0 }}
-      className="bg-dark-800 border-l-4 border-brand-500 rounded-xl p-6 mb-6"
+      className="card p-5 overflow-hidden"
+      style={{ borderLeft: `3px solid var(--brand-accent)` }}
     >
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <div className={`w-3 h-3 rounded-full ${getStatusColor(session.state)} animate-pulse`} />
+          <div
+            className="w-2.5 h-2.5 rounded-full animate-pulse"
+            style={{ backgroundColor: dotColor }}
+          />
           <div>
-            <p className="font-semibold text-slate-100">Active Session: {session.session_id}</p>
-            <p className="text-sm text-slate-400 capitalize">{session.state}</p>
+            <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              Session: {session.session_id}
+            </p>
+            <p className="text-xs capitalize" style={{ color: 'var(--text-tertiary)' }}>
+              {session.state}
+            </p>
           </div>
         </div>
-        
+
         <div className="flex gap-2">
           {session.state === 'paused' ? (
-            <button
-              onClick={onResume}
-              className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30 transition-colors"
-            >
-              <Play className="w-4 h-4" />
+            <button onClick={onResume} className="btn-primary text-xs py-1.5 px-3" style={{ background: 'var(--success)' }}>
+              <Play className="w-3.5 h-3.5" />
               Resume
             </button>
           ) : (
             <button
               onClick={onPause}
-              className="flex items-center gap-2 px-3 py-1.5 bg-yellow-500/20 text-yellow-400 rounded-lg hover:bg-yellow-500/30 transition-colors"
+              className="text-xs py-1.5 px-3 rounded-lg flex items-center gap-1.5 font-medium transition-colors"
+              style={{
+                background: 'var(--warning-soft)',
+                color: 'var(--warning)',
+                border: '1px solid var(--warning-soft-border)',
+              }}
             >
-              <Pause className="w-4 h-4" />
+              <Pause className="w-3.5 h-3.5" />
               Pause
             </button>
           )}
-          
-          <button
-            onClick={onStop}
-            className="flex items-center gap-2 px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors"
-          >
-            <Square className="w-4 h-4" />
+
+          <button onClick={onStop} className="btn-danger text-xs py-1.5 px-3">
+            <Square className="w-3.5 h-3.5" />
             Stop
           </button>
         </div>
       </div>
-      
-      <div className="space-y-3">
-        <div>
-          <div className="flex justify-between text-sm mb-1">
-            <span className="text-slate-400">Progress</span>
-            <span className="text-slate-200">{session.progress.current} / {session.progress.total} ({session.progress.percentage}%)</span>
-          </div>
-          <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-brand-500 transition-all duration-500"
-              style={{ width: `${session.progress.percentage}%` }}
-            />
-          </div>
+
+      {/* Progress */}
+      <div className="space-y-2">
+        <div className="flex justify-between text-xs">
+          <span style={{ color: 'var(--text-tertiary)' }}>Progress</span>
+          <span style={{ color: 'var(--text-primary)' }}>
+            {session.progress.current} / {session.progress.total} ({session.progress.percentage}%)
+          </span>
         </div>
-        
-        {session.metrics && (
-          <div className="flex gap-6 text-sm">
-            <span className="text-slate-400">
-              Duration: <span className="text-slate-200">{formatDuration(session.metrics.duration_seconds)}</span>
-            </span>
-            {session.metrics.avg_delay_seconds && (
-              <span className="text-slate-400">
-                Avg Delay: <span className="text-slate-200">{session.metrics.avg_delay_seconds.toFixed(1)}s</span>
-              </span>
-            )}
-            {session.metrics.typing_time_total && (
-              <span className="text-slate-400">
-                Typing: <span className="text-slate-200">{session.metrics.typing_time_total.toFixed(0)}s</span>
-              </span>
-            )}
-          </div>
-        )}
+        <div className="h-2 rounded-full overflow-hidden" style={{ background: 'var(--bg-input)' }}>
+          <div
+            className="h-full rounded-full transition-all duration-500"
+            style={{
+              width: `${session.progress.percentage}%`,
+              background: 'linear-gradient(90deg, var(--brand-accent), #818cf8)',
+            }}
+          />
+        </div>
       </div>
+
+      {session.metrics && (
+        <div className="flex gap-4 mt-3 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+          <span>
+            Duration: <strong style={{ color: 'var(--text-secondary)' }}>
+              {formatDuration(session.metrics.duration_seconds)}
+            </strong>
+          </span>
+          {session.metrics.avg_delay_seconds && (
+            <span>
+              Avg Delay: <strong style={{ color: 'var(--text-secondary)' }}>
+                {session.metrics.avg_delay_seconds.toFixed(1)}s
+              </strong>
+            </span>
+          )}
+          {session.metrics.typing_time_total && (
+            <span>
+              Typing: <strong style={{ color: 'var(--text-secondary)' }}>
+                {session.metrics.typing_time_total.toFixed(0)}s
+              </strong>
+            </span>
+          )}
+        </div>
+      )}
     </motion.div>
   );
 }
+
+// Toggle switch component
+function Toggle({ checked, onChange, label, description }: {
+  checked: boolean;
+  onChange: (val: boolean) => void;
+  label: string;
+  description?: string;
+}) {
+  return (
+    <div
+      className="flex items-center justify-between p-3 rounded-lg"
+      style={{ background: 'var(--bg-input)' }}
+    >
+      <div className="min-w-0">
+        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{label}</p>
+        {description && (
+          <p className="text-xs mt-0.5" style={{ color: 'var(--text-tertiary)' }}>{description}</p>
+        )}
+      </div>
+      <button
+        onClick={() => onChange(!checked)}
+        className={`toggle ${checked ? 'active' : ''}`}
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
+      />
+    </div>
+  );
+}
+
+// ─── Main Component ────────────────────────────────────
 
 export function Reminders() {
   const queryClient = useQueryClient();
@@ -182,7 +246,7 @@ export function Reminders() {
     if (partiesData) setParties(partiesData.items);
   }, [config, templates, stats, snapshotStatus, partiesData, setConfig, setTemplates, setStats, setSnapshotStatus, setParties]);
 
-  // Session polling with proper cleanup and abort controller
+  // Session polling
   const sessionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -209,8 +273,7 @@ export function Reminders() {
         }
       } catch (error) {
         if (!isActive) return;
-        // Don't log aborted requests (they're expected on cleanup)
-        const isCanceled = axios.isCancel?.(error) || 
+        const isCanceled = axios.isCancel?.(error) ||
           (error instanceof Error && error.name === 'AbortError');
         if (!isCanceled) {
           console.error('Session polling error:', error);
@@ -221,7 +284,7 @@ export function Reminders() {
     };
 
     const interval = setInterval(pollSession, POLLING.SESSION_INTERVAL);
-    pollSession(); // Initial poll
+    pollSession();
 
     return () => {
       isActive = false;
@@ -275,6 +338,15 @@ export function Reminders() {
     store.togglePartySelection(code);
   }, [store]);
 
+  const handleSelectAll = useCallback(() => {
+    const allAvailableCodes = availableParties.map(p => p.code);
+    allAvailableCodes.forEach(code => {
+      if (!store.selectedPartyCodes.has(code)) {
+        store.togglePartySelection(code);
+      }
+    });
+  }, [store]);
+
   const handleSendReminders = useCallback(() => {
     const selectedCodes = Array.from(store.selectedPartyCodes);
     if (selectedCodes.length === 0 || !store.defaultTemplateId) return;
@@ -286,17 +358,17 @@ export function Reminders() {
     });
   }, [store, sendRemindersMutation]);
 
-  const selectedParties = useMemo(() => 
+  const selectedParties = useMemo(() =>
     store.parties.filter((p) => store.selectedPartyCodes.has(p.code)),
     [store.parties, store.selectedPartyCodes]
   );
-  
-  const availableParties = useMemo(() => 
+
+  const availableParties = useMemo(() =>
     store.parties.filter((p) => !store.selectedPartyCodes.has(p.code)),
     [store.parties, store.selectedPartyCodes]
   );
-  
-  const selectedTotalAmount = useMemo(() => 
+
+  const selectedTotalAmount = useMemo(() =>
     selectedParties.reduce((sum, p) => sum + (p.amount_due || 0), 0),
     [selectedParties]
   );
@@ -308,22 +380,24 @@ export function Reminders() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-100">Payment Reminders</h2>
-          <p className="text-slate-400 mt-1">Send payment reminders with attached ledgers</p>
-          {snapshotStatus?.has_snapshot && (
-            <p className="text-sm text-slate-500 mt-1">
-              Last refreshed: {formatDateTime(snapshotStatus.last_refreshed_at || null)}
-            </p>
-          )}
+          <h2 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+            Payment Reminders
+          </h2>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+            Send reminders with attached ledgers
+            {snapshotStatus?.has_snapshot && (
+              <> · Last refreshed {formatDateTime(snapshotStatus.last_refreshed_at || null)}</>
+            )}
+          </p>
         </div>
         <button
           onClick={() => refreshSnapshotMutation.mutate()}
           disabled={refreshSnapshotMutation.isPending}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors disabled:opacity-50"
+          className="btn-secondary"
         >
           <RefreshCw className={`w-4 h-4 ${refreshSnapshotMutation.isPending && 'animate-spin'}`} />
           Refresh Data
@@ -331,19 +405,18 @@ export function Reminders() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard title="Eligible Parties" value={stats?.eligible_parties || 0} />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard title="Eligible" value={stats?.eligible_parties || 0} />
         <StatCard title="Enabled" value={stats?.enabled_parties || 0} />
-        <StatCard 
-          title="Total Due" 
-          value={formatCurrency(stats?.total_amount_due || 0)} 
+        <StatCard
+          title="Total Due"
+          value={formatCurrency(stats?.total_amount_due || 0)}
         />
-        <div className={`bg-dark-800 border rounded-xl p-4 ${sessionData ? 'border-brand-500' : 'border-slate-700'}`}>
-          <p className="text-sm text-slate-400">Session Status</p>
-          <p className="text-2xl font-bold text-slate-100 mt-1">
-            {sessionData ? `${sessionData.progress.percentage}%` : 'Ready'}
-          </p>
-        </div>
+        <StatCard
+          title="Session"
+          value={sessionData ? `${sessionData.progress.percentage}%` : 'Ready'}
+          accent={!!sessionData}
+        />
       </div>
 
       {/* Active Session */}
@@ -359,25 +432,27 @@ export function Reminders() {
       </AnimatePresence>
 
       {/* Template Selection */}
-      <div className="bg-dark-800 border border-slate-700 rounded-xl p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <FileText className="w-5 h-5 text-brand-400" />
-            <h3 className="font-semibold text-slate-100">Message Template</h3>
+      <div className="card p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4" style={{ color: 'var(--brand-accent)' }} />
+            <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              Message Template
+            </h3>
           </div>
-          
           <button
             onClick={() => window.open('/api/v1/reminders/templates', '_blank')}
-            className="text-sm text-brand-400 hover:text-brand-300"
+            className="text-xs font-medium"
+            style={{ color: 'var(--brand-accent)' }}
           >
             Manage Templates
           </button>
         </div>
-        
+
         <select
           value={store.defaultTemplateId}
           onChange={(e) => store.setDefaultTemplateId(e.target.value)}
-          className="w-full md:w-96 px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="input max-w-md"
           aria-label="Select message template"
         >
           <option value="">Select a template...</option>
@@ -385,11 +460,17 @@ export function Reminders() {
             <option key={t.id} value={t.id}>{t.name} {t.is_default && '(Default)'}</option>
           ))}
         </select>
-        
+
         {store.defaultTemplateId && (
-          <div className="mt-4 p-4 bg-slate-700/30 rounded-lg">
-            <p className="text-sm text-slate-400 mb-1">Preview:</p>
-            <pre className="text-sm text-slate-300 whitespace-pre-wrap">
+          <div
+            className="mt-3 p-3 rounded-lg"
+            style={{ background: 'var(--bg-input)' }}
+          >
+            <p className="text-xs mb-1" style={{ color: 'var(--text-tertiary)' }}>Preview:</p>
+            <pre
+              className="text-xs whitespace-pre-wrap font-mono"
+              style={{ color: 'var(--text-secondary)' }}
+            >
               {templates?.find((t: MessageTemplate) => t.id === store.defaultTemplateId)?.content}
             </pre>
           </div>
@@ -397,104 +478,88 @@ export function Reminders() {
       </div>
 
       {/* Anti-Spam Panel */}
-      <div className="bg-dark-800 border border-slate-700 rounded-xl overflow-hidden">
+      <div className="card overflow-hidden">
         <button
           onClick={() => setShowAntiSpam(!showAntiSpam)}
-          className="w-full flex items-center justify-between p-4 hover:bg-slate-700/30 transition-colors"
+          className="w-full flex items-center justify-between p-4 transition-colors"
+          style={{ color: 'var(--text-primary)' }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-input)')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
         >
-          <div className="flex items-center gap-3">
-            <Shield className="w-5 h-5 text-brand-400" />
+          <div className="flex items-center gap-2.5">
+            <Shield className="w-4 h-4" style={{ color: 'var(--brand-accent)' }} />
             <div className="text-left">
-              <h3 className="font-semibold text-slate-100">Anti-Spam Protection</h3>
-              <p className="text-sm text-slate-400">{store.antiSpamConfig.enabled ? 'Enabled' : 'Disabled'}</p>
+              <h3 className="text-sm font-semibold">Anti-Spam Protection</h3>
+              <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                {store.antiSpamConfig.enabled ? 'Enabled' : 'Disabled'}
+              </p>
             </div>
           </div>
-          {showAntiSpam ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
+          {showAntiSpam
+            ? <ChevronUp className="w-4 h-4" style={{ color: 'var(--text-tertiary)' }} />
+            : <ChevronDown className="w-4 h-4" style={{ color: 'var(--text-tertiary)' }} />
+          }
         </button>
-        
+
         <AnimatePresence>
           {showAntiSpam && (
             <motion.div
               initial={{ height: 0 }}
               animate={{ height: 'auto' }}
               exit={{ height: 0 }}
-              className="border-t border-slate-700 overflow-hidden"
+              className="overflow-hidden border-t"
+              style={{ borderColor: 'var(--border-default)' }}
             >
-              <div className="p-4 space-y-4">
-                <label className="flex items-center justify-between p-3 bg-slate-700/30 rounded-lg">
-                  <div>
-                    <p className="font-medium text-slate-200">Enable Anti-Spam</p>
-                    <p className="text-sm text-slate-400">Protect against WhatsApp bulk detection</p>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={store.antiSpamConfig.enabled}
-                    onChange={(e) => {
-                      const newConfig = { ...store.antiSpamConfig, enabled: e.target.checked };
-                      store.setAntiSpamConfig(newConfig);
-                      updateAntiSpamMutation.mutate(newConfig);
-                    }}
-                    className="w-5 h-5 rounded border-slate-600 text-brand-500"
-                  />
-                </label>
+              <div className="p-4 space-y-2">
+                <Toggle
+                  checked={store.antiSpamConfig.enabled}
+                  onChange={(val) => {
+                    const newConfig = { ...store.antiSpamConfig, enabled: val };
+                    store.setAntiSpamConfig(newConfig);
+                    updateAntiSpamMutation.mutate(newConfig);
+                  }}
+                  label="Enable Anti-Spam"
+                  description="Protect against WhatsApp bulk detection"
+                />
 
                 {store.antiSpamConfig.enabled && (
                   <>
-                    <label className="flex items-center justify-between p-3 bg-slate-700/30 rounded-lg">
-                      <span className="text-slate-200">Message Size Inflation</span>
-                      <input
-                        type="checkbox"
-                        checked={store.antiSpamConfig.message_inflation}
-                        onChange={(e) => {
-                          const newConfig = { ...store.antiSpamConfig, message_inflation: e.target.checked };
-                          store.setAntiSpamConfig(newConfig);
-                          updateAntiSpamMutation.mutate(newConfig);
-                        }}
-                        className="w-5 h-5 rounded border-slate-600 text-brand-500"
-                      />
-                    </label>
-
-                    <label className="flex items-center justify-between p-3 bg-slate-700/30 rounded-lg">
-                      <span className="text-slate-200">PDF Size Inflation</span>
-                      <input
-                        type="checkbox"
-                        checked={store.antiSpamConfig.pdf_inflation}
-                        onChange={(e) => {
-                          const newConfig = { ...store.antiSpamConfig, pdf_inflation: e.target.checked };
-                          store.setAntiSpamConfig(newConfig);
-                          updateAntiSpamMutation.mutate(newConfig);
-                        }}
-                        className="w-5 h-5 rounded border-slate-600 text-brand-500"
-                      />
-                    </label>
-
-                    <label className="flex items-center justify-between p-3 bg-slate-700/30 rounded-lg">
-                      <span className="text-slate-200">Human Typing Simulation</span>
-                      <input
-                        type="checkbox"
-                        checked={store.antiSpamConfig.typing_simulation}
-                        onChange={(e) => {
-                          const newConfig = { ...store.antiSpamConfig, typing_simulation: e.target.checked };
-                          store.setAntiSpamConfig(newConfig);
-                          updateAntiSpamMutation.mutate(newConfig);
-                        }}
-                        className="w-5 h-5 rounded border-slate-600 text-brand-500"
-                      />
-                    </label>
-
-                    <label className="flex items-center justify-between p-3 bg-slate-700/30 rounded-lg">
-                      <span className="text-slate-200">Session Startup Delay</span>
-                      <input
-                        type="checkbox"
-                        checked={store.antiSpamConfig.startup_delay_enabled}
-                        onChange={(e) => {
-                          const newConfig = { ...store.antiSpamConfig, startup_delay_enabled: e.target.checked };
-                          store.setAntiSpamConfig(newConfig);
-                          updateAntiSpamMutation.mutate(newConfig);
-                        }}
-                        className="w-5 h-5 rounded border-slate-600 text-brand-500"
-                      />
-                    </label>
+                    <Toggle
+                      checked={store.antiSpamConfig.message_inflation}
+                      onChange={(val) => {
+                        const newConfig = { ...store.antiSpamConfig, message_inflation: val };
+                        store.setAntiSpamConfig(newConfig);
+                        updateAntiSpamMutation.mutate(newConfig);
+                      }}
+                      label="Message Size Inflation"
+                    />
+                    <Toggle
+                      checked={store.antiSpamConfig.pdf_inflation}
+                      onChange={(val) => {
+                        const newConfig = { ...store.antiSpamConfig, pdf_inflation: val };
+                        store.setAntiSpamConfig(newConfig);
+                        updateAntiSpamMutation.mutate(newConfig);
+                      }}
+                      label="PDF Size Inflation"
+                    />
+                    <Toggle
+                      checked={store.antiSpamConfig.typing_simulation}
+                      onChange={(val) => {
+                        const newConfig = { ...store.antiSpamConfig, typing_simulation: val };
+                        store.setAntiSpamConfig(newConfig);
+                        updateAntiSpamMutation.mutate(newConfig);
+                      }}
+                      label="Human Typing Simulation"
+                    />
+                    <Toggle
+                      checked={store.antiSpamConfig.startup_delay_enabled}
+                      onChange={(val) => {
+                        const newConfig = { ...store.antiSpamConfig, startup_delay_enabled: val };
+                        store.setAntiSpamConfig(newConfig);
+                        updateAntiSpamMutation.mutate(newConfig);
+                      }}
+                      label="Session Startup Delay"
+                    />
                   </>
                 )}
               </div>
@@ -504,47 +569,73 @@ export function Reminders() {
       </div>
 
       {/* Party Selection */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Selected Parties */}
-        <div className="bg-dark-800 border border-slate-700 rounded-xl overflow-hidden">
-          <div className="p-4 border-b border-slate-700 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <CheckCircle className="w-5 h-5 text-green-400" />
-              <h3 className="font-semibold text-slate-100">Selected Parties</h3>
-              <span className="px-2 py-0.5 bg-brand-500 text-white text-xs rounded-full">{selectedParties.length}</span>
+        <div className="card overflow-hidden">
+          <div
+            className="p-4 border-b flex items-center justify-between"
+            style={{ borderColor: 'var(--border-default)' }}
+          >
+            <div className="flex items-center gap-2">
+              <CheckCircle className="w-4 h-4" style={{ color: 'var(--success)' }} />
+              <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                Selected
+              </h3>
+              <span
+                className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                style={{ background: 'var(--brand-accent)', color: 'white' }}
+              >
+                {selectedParties.length}
+              </span>
             </div>
-            <span className="font-semibold text-brand-400">{formatCurrency(selectedTotalAmount)}</span>
+            <span className="text-sm font-semibold" style={{ color: 'var(--brand-accent)' }}>
+              {formatCurrency(selectedTotalAmount)}
+            </span>
           </div>
-          
+
           <div className="p-4">
             {selectedParties.length === 0 ? (
-              <div className="text-center py-8 text-slate-500">
-                <Users className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                <p>No parties selected</p>
+              <div className="text-center py-10" style={{ color: 'var(--text-tertiary)' }}>
+                <Users className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                <p className="text-sm">No parties selected</p>
               </div>
             ) : (
               <>
-                <div className="space-y-2 max-h-96 overflow-y-auto">
+                <div className="space-y-1.5 max-h-80 overflow-y-auto">
                   {selectedParties.map((party) => (
-                    <div key={party.code} className="flex items-center justify-between p-3 bg-slate-700/30 rounded-lg">
-                      <div>
-                        <p className="font-medium text-slate-200">{party.name}</p>
-                        <p className="text-sm text-slate-400">{party.code} • {formatCurrency(party.amount_due)}</p>
+                    <div
+                      key={party.code}
+                      className="flex items-center justify-between p-2.5 rounded-lg group"
+                      style={{ background: 'var(--bg-input)' }}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                          {party.name}
+                        </p>
+                        <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                          {party.code} · {formatCurrency(party.amount_due)}
+                        </p>
                       </div>
-                      
+
                       <button
                         onClick={() => handleToggleSelection(party.code)}
-                        className="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition-colors"
+                        className="p-1.5 rounded-md transition-colors opacity-60 hover:opacity-100"
+                        style={{ color: 'var(--danger)' }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--danger-soft)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                       >
-                        <X className="w-4 h-4" />
+                        <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   ))}
                 </div>
-                
+
                 <button
                   onClick={() => store.clearSelection()}
-                  className="mt-4 w-full py-2 text-red-400 hover:bg-red-500/20 rounded-lg transition-colors"
+                  className="mt-3 w-full py-2 text-xs font-medium rounded-lg transition-colors"
+                  style={{ color: 'var(--danger)' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--danger-soft)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                 >
                   Clear All
                 </button>
@@ -554,35 +645,60 @@ export function Reminders() {
         </div>
 
         {/* Available Parties */}
-        <div className="bg-dark-800 border border-slate-700 rounded-xl overflow-hidden">
-          <div className="p-4 border-b border-slate-700 space-y-3">
-            <div className="flex items-center gap-3">
-              <Users className="w-5 h-5 text-slate-400" />
-              <h3 className="font-semibold text-slate-100">Available Parties</h3>
-              <span className="px-2 py-0.5 bg-slate-600 text-slate-200 text-xs rounded-full">{availableParties.length}</span>
+        <div className="card overflow-hidden">
+          <div
+            className="p-4 border-b space-y-3"
+            style={{ borderColor: 'var(--border-default)' }}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4" style={{ color: 'var(--text-tertiary)' }} />
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  Available
+                </h3>
+                <span
+                  className="text-xs font-medium px-2 py-0.5 rounded-full"
+                  style={{
+                    background: 'var(--bg-input)',
+                    color: 'var(--text-secondary)',
+                  }}
+                >
+                  {availableParties.length}
+                </span>
+              </div>
+              {availableParties.length > 0 && (
+                <button
+                  onClick={handleSelectAll}
+                  className="flex items-center gap-1 text-xs font-medium"
+                  style={{ color: 'var(--brand-accent)' }}
+                >
+                  <CheckSquare className="w-3.5 h-3.5" />
+                  Select All
+                </button>
+              )}
             </div>
-            
+
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <label htmlFor="party-search" className="sr-only">
                   Search parties
                 </label>
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" aria-hidden="true" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--text-tertiary)' }} aria-hidden="true" />
                 <input
                   id="party-search"
                   type="text"
                   placeholder="Search parties..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  className="input pl-9"
                   aria-label="Search for parties by name or code"
                 />
               </div>
-              
+
               <select
                 value={filterBy}
                 onChange={(e) => setFilterBy(e.target.value)}
-                className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                className="input w-auto"
                 aria-label="Filter parties by status"
               >
                 <option value="all">All</option>
@@ -591,30 +707,39 @@ export function Reminders() {
               </select>
             </div>
           </div>
-          
+
           <div className="p-4">
-            <div className="space-y-2 max-h-96 overflow-y-auto">
+            <div className="space-y-1.5 max-h-80 overflow-y-auto">
               {availableParties.map((party) => (
                 <button
                   key={party.code}
                   onClick={() => handleToggleSelection(party.code)}
-                  className="w-full flex items-center justify-between p-3 bg-slate-700/30 rounded-lg hover:bg-slate-700/50 transition-colors text-left focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-dark-800"
+                  className="w-full flex items-center justify-between p-2.5 rounded-lg transition-colors text-left"
+                  style={{ background: 'var(--bg-input)' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-input-hover)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--bg-input)')}
                   aria-label={`Select ${party.name} (${party.code}) with amount due ${formatCurrency(party.amount_due)}`}
                 >
-                  <div>
-                    <p className="font-medium text-slate-200">{party.name}</p>
-                    <p className="text-sm text-slate-400">{party.code} • {formatCurrency(party.amount_due)}</p>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                      {party.name}
+                    </p>
+                    <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                      {party.code} · {formatCurrency(party.amount_due)}
+                    </p>
                   </div>
 
-                  <div className="w-5 h-5 border-2 border-slate-500 rounded flex items-center justify-center" aria-hidden="true">
-                    <div className="w-3 h-3 bg-brand-500 rounded-sm opacity-0 group-hover:opacity-100" />
-                  </div>
+                  <div
+                    className="w-4 h-4 border-2 rounded flex items-center justify-center flex-shrink-0"
+                    style={{ borderColor: 'var(--border-strong)' }}
+                    aria-hidden="true"
+                  />
                 </button>
               ))}
-              
+
               {availableParties.length === 0 && (
-                <div className="text-center py-8 text-slate-500">
-                  <p>No parties available</p>
+                <div className="text-center py-10" style={{ color: 'var(--text-tertiary)' }}>
+                  <p className="text-sm">No parties available</p>
                 </div>
               )}
             </div>
@@ -622,22 +747,33 @@ export function Reminders() {
         </div>
       </div>
 
-      {/* Action Bar */}
-      <div className="sticky bottom-4 bg-dark-800 border border-slate-700 rounded-xl p-4 shadow-xl">
+      {/* Sticky Action Bar */}
+      <div
+        className="sticky bottom-4 rounded-xl p-4 backdrop-blur-xl"
+        style={{
+          background: 'var(--bg-sidebar)',
+          border: '1px solid var(--border-default)',
+          boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.08)',
+        }}
+      >
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-5">
             <div>
-              <span className="text-slate-400">Selected: </span>
-              <span className="font-bold text-slate-100">{selectedParties.length}</span>
+              <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Selected: </span>
+              <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
+                {selectedParties.length}
+              </span>
             </div>
-            
+
             <div>
-              <span className="text-slate-400">Total: </span>
-              <span className="font-bold text-brand-400">{formatCurrency(selectedTotalAmount)}</span>
+              <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Total: </span>
+              <span className="text-sm font-bold" style={{ color: 'var(--brand-accent)' }}>
+                {formatCurrency(selectedTotalAmount)}
+              </span>
             </div>
           </div>
-          
-          <div className="flex items-center gap-3">
+
+          <div className="flex items-center gap-2">
             <button
               onClick={() => {
                 const csv = [
@@ -652,16 +788,16 @@ export function Reminders() {
                 a.click();
               }}
               disabled={selectedParties.length === 0}
-              className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors disabled:opacity-50"
+              className="btn-secondary text-xs"
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-3.5 h-3.5" />
               Export
             </button>
-            
+
             <button
               onClick={handleSendReminders}
               disabled={selectedParties.length === 0 || !store.defaultTemplateId || sendRemindersMutation.isPending || activeSessionId !== null}
-              className="flex items-center gap-2 px-6 py-2 bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors disabled:opacity-50 font-medium"
+              className="btn-primary"
             >
               {sendRemindersMutation.isPending ? (
                 <>
