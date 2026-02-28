@@ -80,7 +80,6 @@ Source: "dashboard-react\*"; DestDir: "{app}\dashboard-react"; Flags: ignorevers
 Source: "setup.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "uninstall.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Start-Gateway.py"; DestDir: "{app}"; Flags: ignoreversion
-Source: "migrate-to-appdata.py"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Main executable launcher
 Source: "BusyWhatsappBridge.exe"; DestDir: "{app}"; Flags: ignoreversion

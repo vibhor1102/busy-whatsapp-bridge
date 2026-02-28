@@ -67,13 +67,11 @@ source venv/Scripts/activate  # Git Bash
     └── service.log
 ```
 
-**Migration:** If upgrading from older versions, run `python migrate-to-appdata.py` once to migrate data from Program Files to AppData.
-
 ---
 
 ## Build System Guide
 
-Reference: `BUILD_SYSTEM_GUIDE.md` - Complete Windows application build instructions.
+Reference: `docs/BUILD_SYSTEM_GUIDE.md` - Complete Windows application build instructions.
 
 **Dashboard:** React 19 + TypeScript in `dashboard-react/` (not `dashboard/`)
 
@@ -123,9 +121,6 @@ This is a **portable bundled distribution** with Python and all dependencies inc
 ./venv/Scripts/python -m app.task_scheduler install    # Enable auto-start
 ./venv/Scripts/python -m app.task_scheduler status     # Check status
 ./manage-task.bat                                      # Interactive menu
-
-# Windows Service (legacy)
-./venv/Scripts/python app/service_wrapper.py install
 ```
 
 **Key Files:**
@@ -256,7 +251,7 @@ app/
 ├── __init__.py
 ├── main.py              # FastAPI app, routes
 ├── config.py            # Settings configuration
-├── service_wrapper.py   # Windows service wrapper
+├── task_scheduler.py    # Windows Task Scheduler integration
 ├── models/
 │   ├── __init__.py
 │   └── schemas.py       # Pydantic models
@@ -432,25 +427,14 @@ Node.js bridge service (`baileys-server/`) provides WhatsApp Web integration via
 
 ---
 
-## AppData Migration
+## AppData Structure
 
-**One-Time Migration:** Run `python migrate-to-appdata.py` once when upgrading from older versions:
-
-```bash
-python migrate-to-appdata.py
-```
-
-This migrates:
-- `data/messages.db` → AppData
-- `data/reminder_config.json` → AppData  
-- `baileys-server/auth/baileys_session/` → AppData
-- `logs/*` → AppData (copied, originals kept as backup)
-
-After migration completes successfully, you can delete:
-- The old directories from Program Files
-- The `migrate-to-appdata.py` script
+All user data is stored in `%APPDATA%\BusyWhatsappBridge\`:
+- `conf.json` - Main configuration
+- `data/` - Message queue and reminder config
+- `auth/` - Baileys session credentials
+- `logs/` - Application logs
 
 **Key Files:**
-- `migrate-to-appdata.py` - Standalone migration script (delete after use)
 - `app/config.py:get_appdata_path()` - Returns AppData base directory
 - All database/config services use AppData paths exclusively

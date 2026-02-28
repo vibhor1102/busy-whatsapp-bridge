@@ -21,7 +21,6 @@ app/
     ├── ledger_pdf_service.py     # PDF generation using fpdf2
     └── ledger_generator.py       # Main callable interface
 
-send_ledger_whatsapp.py            # WhatsApp integration utility
 LEDGER_GENERATOR_README.md         # This documentation
 requirements.txt                   # Updated with fpdf2 dependency
 ```

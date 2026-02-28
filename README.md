@@ -27,7 +27,7 @@ Enterprise-grade middleware that seamlessly integrates **Busy Accounting Softwar
 2. **Edit `.env` file** - Set your database path
 3. **Double-click the shortcut** - Runs in system tray
 
-📖 **See [USER-GUIDE.md](USER-GUIDE.md) for detailed instructions**
+📖 **See [docs/USER-GUIDE.md](docs/USER-GUIDE.md) for detailed instructions**
 
 ---
 
@@ -48,6 +48,23 @@ Enterprise-grade middleware that seamlessly integrates **Busy Accounting Softwar
                    │   (.bds)     │      │  Web Bridge  │        │    File)     │
                    └──────────────┘      └──────────────┘        └──────────────┘
 ```
+
+## 📚 Documentation
+
+For detailed documentation, see the `docs/` folder:
+
+| Document | Description |
+|----------|-------------|
+| [docs/QUICKSTART.md](docs/QUICKSTART.md) | Quick start guide |
+| [docs/INSTALL.md](docs/INSTALL.md) | Detailed installation |
+| [docs/USER-GUIDE.md](docs/USER-GUIDE.md) | User guide |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment guide |
+| [docs/BUILD_SYSTEM_GUIDE.md](docs/BUILD_SYSTEM_GUIDE.md) | Build system |
+| [docs/BUSY_CONFIG.md](docs/BUSY_CONFIG.md) | Busy Configuration |
+| [docs/BAILEYS_INTEGRATION.md](docs/BAILEYS_INTEGRATION.md) | Baileys setup |
+| [docs/LEDGER_GENERATOR_README.md](docs/LEDGER_GENERATOR_README.md) | Ledger PDF generation |
+
+---
 
 ## 🚀 Quick Start (Production)
 
@@ -86,11 +103,11 @@ BAILEYS_SERVER_URL=http://localhost:3001
 
 ```cmd
 # Interactive menu
-manage-service.bat
+manage-task.bat
 
 # Or command line
-python app\service_wrapper.py install
-python app\service_wrapper.py start
+python -m app.task_scheduler install
+python -m app.task_scheduler start
 ```
 
 ### 4. Configure Busy Software
@@ -109,22 +126,14 @@ http://localhost:8000/api/v1/send-invoice?phone={MobileNo}&msg={Message}&pdf_url
 
 ```cmd
 # Check service status
-python app\service_wrapper.py status
+python -m app.task_scheduler status
 
 # Test API
 run-tests.bat
 
 # View logs
-manage-service.bat logs
+manage-task.bat
 ```
-
-## 📚 Documentation
-
-| Document | Description |
-|----------|-------------|
-| [INSTALL.md](INSTALL.md) | Detailed installation guide |
-| [QUICKSTART.md](QUICKSTART.md) | Quick reference card |
-| [API Documentation](http://localhost:8000/docs) | Interactive Swagger UI (when running) |
 
 ## 🔧 Service Management
 
@@ -132,28 +141,28 @@ manage-service.bat logs
 
 ```cmd
 # Install service (auto-start on boot)
-python app\service_wrapper.py install
+python -m app.task_scheduler install
 
 # Start service
-python app\service_wrapper.py start
+python -m app.task_scheduler start
 
 # Stop service
-python app\service_wrapper.py stop
+python -m app.task_scheduler stop
 
 # Restart service
-python app\service_wrapper.py restart
+python -m app.task_scheduler restart
 
 # Check status
-python app\service_wrapper.py status
+python -m app.task_scheduler status
 
 # Remove service
-python app\service_wrapper.py remove
+python -m app.task_scheduler remove
 ```
 
 ### Interactive Menu
 
 ```cmd
-manage-service.bat
+manage-task.bat
 ```
 
 Provides menu-driven interface for all service operations.
@@ -280,7 +289,7 @@ server {
 ## 🤝 Support
 
 - **Issues:** Check `logs/service.log` and Windows Event Viewer
-- **Documentation:** See [INSTALL.md](INSTALL.md) for detailed guide
+- **Documentation:** See [docs/INSTALL.md](docs/INSTALL.md) for detailed guide
 - **API Docs:** Visit http://localhost:8000/docs when service is running
 
 ## 📝 License

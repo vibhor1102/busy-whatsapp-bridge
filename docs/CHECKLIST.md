@@ -59,13 +59,13 @@ manage-service.bat
 
 **Alternative:**
 ```cmd
-python app\service_wrapper.py install
-python app\service_wrapper.py start
+python -m app.task_scheduler install
+python -m app.task_scheduler start
 ```
 
 ### Step 6: Verify Service
 ```cmd
-python app\service_wrapper.py status
+python -m app.task_scheduler status
 ```
 **Expected:** `Service 'BusyWhatsappBridge': Running`
 
@@ -115,7 +115,7 @@ http://YOUR_SERVER_IP:8000/api/v1/send-invoice?phone={MobileNo}&msg={Message}&pd
 
 ### Check Service Status
 ```cmd
-python app\service_wrapper.py status
+python -m app.task_scheduler status
 ```
 
 ### View Recent Logs
@@ -125,7 +125,7 @@ powershell Get-Content logs\service.log -Tail 50
 
 ### Restart Service
 ```cmd
-python app\service_wrapper.py restart
+python -m app.task_scheduler restart
 ```
 
 ## 🚨 Emergency Commands
@@ -133,7 +133,7 @@ python app\service_wrapper.py restart
 **Service won't start:**
 ```cmd
 # Check what's wrong
-python app\service_wrapper.py status
+python -m app.task_scheduler status
 Get-Content logs\service.log -Tail 20
 
 # Run in debug mode
@@ -156,8 +156,8 @@ print('OK')
 
 **Complete restart:**
 ```cmd
-python app\service_wrapper.py stop
-python app\service_wrapper.py start
+python -m app.task_scheduler stop
+python -m app.task_scheduler start
 ```
 
 ## 📞 Support
@@ -190,4 +190,4 @@ python app\service_wrapper.py start
 
 ---
 
-**Need Help?** See DEPLOYMENT.md for detailed instructions
+**Need Help?** See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed instructions

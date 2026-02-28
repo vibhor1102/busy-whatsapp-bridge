@@ -82,7 +82,6 @@ async def lifespan(app: FastAPI):
         debug=settings.DEBUG,
         whatsapp_provider=settings.WHATSAPP_PROVIDER
     )
-    # REMOVED: meta_webhook_token_mismatch check - Meta Cloud API removed
     
     # Test database connection on startup
     db_status = db.test_connection()
@@ -589,43 +588,6 @@ async def get_message_history(
 # Only Baileys is now available as the WhatsApp provider.
 # TODO: Re-add via Baileys integration when needed
 # =============================================================================
-# @app.get("/api/v1/whatsapp/meta/webhook") - was Meta webhook verification
-# @app.post("/api/v1/whatsapp/meta/webhook") - was Meta webhook status updates
-# @app.get("/api/v1/whatsapp/meta/webhook/status") - was Meta webhook diagnostics
-
-@app.get("/api/v1/whatsapp/meta/webhook", tags=["WhatsApp"])
-async def meta_webhook_removed():
-    """Meta webhook endpoint - REMOVED.
-    
-    This endpoint has been removed. Only Baileys is now available as the WhatsApp provider.
-    TODO: Re-add via Baileys integration when needed.
-    """
-    return {
-        "error": "meta_webhook_removed",
-        "message": "Meta Cloud API webhook endpoints have been removed. Only Baileys is now available.",
-        "provider": "baileys"
-    }
-
-
-@app.post("/api/v1/whatsapp/meta/webhook")
-async def meta_webhook_post_removed():
-    """Meta webhook POST endpoint - REMOVED."""
-    return {
-        "error": "meta_webhook_removed",
-        "message": "Meta Cloud API webhook endpoints have been removed. Only Baileys is now available.",
-        "provider": "baileys"
-    }
-
-
-@app.get("/api/v1/whatsapp/meta/webhook/status")
-async def meta_webhook_status_removed():
-    """Meta webhook status endpoint - REMOVED."""
-    return {
-        "error": "meta_webhook_removed",
-        "message": "Meta Cloud API webhook endpoints have been removed. Only Baileys is now available.",
-        "provider": "baileys"
-    }
-
 
 @app.get("/api/v1/queue/dead-letter", tags=["Queue"])
 async def get_dead_letter_queue(

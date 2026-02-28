@@ -35,8 +35,8 @@ python/
 python-embed.zip
 get-pip.py
 
-# One-time migration script (delete after use)
-migrate-to-appdata.py
+# Migration script - kept for users upgrading from old versions
+# but not included in new installations
 
 # Installer downloads
 innosetup.exe

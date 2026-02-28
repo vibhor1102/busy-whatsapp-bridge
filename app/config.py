@@ -32,15 +32,6 @@ class WhatsAppSettings(BaseModel):
     # The following settings were for Meta, Evolution, and Webhook providers
     # which have been removed. Only Baileys is now used.
     # Configuration keys kept for backward compatibility but are no longer used.
-    # TODO: Re-add via Baileys integration when needed
-    # =============================================================================
-    # meta_api_version: str = "v18.0"  # Was Meta API version
-    # meta_phone_number_id: Optional[str] = None  # Was Meta phone number ID
-    # meta_access_token: Optional[str] = None  # Was Meta access token
-    # meta_business_id: Optional[str] = None  # Was Meta business ID
-    # meta_webhook_verify_token: Optional[str] = None  # Was Meta webhook verify token
-    # webhook_url: Optional[str] = None  # Was custom webhook URL
-    # webhook_auth_token: Optional[str] = None  # Was custom webhook auth token
     default_country_code: str = "91"
 
 
@@ -118,41 +109,6 @@ class Settings(BaseModel):
     def WHATSAPP_PROVIDER(self) -> str:
         return self.whatsapp.provider
     
-    # =============================================================================
-    # REMOVED: Meta and Webhook provider properties
-    # These were used for Meta Cloud API, Evolution API, and Webhook providers
-    # which have been removed. Only Baileys is now used.
-    # Properties kept for backward compatibility - return None or defaults.
-    # TODO: Re-add via Baileys integration when needed
-    # =============================================================================
-    # @property
-    # def META_API_VERSION(self) -> str:
-    #     return self.whatsapp.meta_api_version
-    #
-    # @property
-    # def META_PHONE_NUMBER_ID(self) -> Optional[str]:
-    #     return self.whatsapp.meta_phone_number_id
-    #
-    # @property
-    # def META_ACCESS_TOKEN(self) -> Optional[str]:
-    #     return self.whatsapp.meta_access_token
-    #
-    # @property
-    # def META_BUSINESS_ID(self) -> Optional[str]:
-    #     return self.whatsapp.meta_business_id
-    #
-    # @property
-    # def META_WEBHOOK_VERIFY_TOKEN(self) -> Optional[str]:
-    #     return self.whatsapp.meta_webhook_verify_token
-    #
-    # @property
-    # def WEBHOOK_URL(self) -> Optional[str]:
-    #     return self.whatsapp.webhook_url
-    #
-    # @property
-    # def WEBHOOK_AUTH_TOKEN(self) -> Optional[str]:
-    #     return self.whatsapp.webhook_auth_token
-
     @property
     def WHATSAPP_DEFAULT_COUNTRY_CODE(self) -> str:
         return self.whatsapp.default_country_code

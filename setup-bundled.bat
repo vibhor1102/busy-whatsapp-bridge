@@ -84,19 +84,12 @@ IF EXIST "%CONFIG_FILE%" (
 )
 echo.
 
-REM Run AppData migration if old data exists
-echo [4/4] Checking for existing data...
-IF EXIST "data\messages.db" (
-    echo      Found old data in Program Files.
-    echo      Migrating to AppData...
-    venv\Scripts\python.exe migrate-to-appdata.py --auto
-    echo      Migration complete!
+REM AppData is now the default location - no migration needed
+echo [4/4] AppData configuration...
+IF EXIST "%CONFIG_DIR%\data\messages.db" (
+    echo      Data already in AppData
 ) ELSE (
-    IF EXIST "%CONFIG_DIR%\data\messages.db" (
-        echo      Data already in AppData
-    ) ELSE (
-        echo      No existing data found
-    )
+    echo      No data found - will be created on first run
 )
 echo.
 

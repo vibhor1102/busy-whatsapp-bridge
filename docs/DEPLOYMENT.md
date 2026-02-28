@@ -138,13 +138,13 @@ LOG_FORMAT=json
 
 ```cmd
 # Install service
-python app\service_wrapper.py install
+python -m app.task_scheduler install
 
 # Start service
-python app\service_wrapper.py start
+python -m app.task_scheduler start
 
 # Verify
-python app\service_wrapper.py status
+python -m app.task_scheduler status
 ```
 
 ### Step 7: Configure Reverse Proxy (Recommended)
@@ -353,7 +353,7 @@ python -c "import struct; print(struct.calcsize('P') * 8)"
 python -c "import pyodbc; import fastapi; import uvicorn; print('OK')"
 
 # Run in foreground for debugging
-python app\service_wrapper.py
+python -m app.task_scheduler
 # Check for errors in console
 ```
 
@@ -397,12 +397,12 @@ If you need to handle high volume:
 
 ### Service Won't Start
 
-1. Stop service: `python app\service_wrapper.py stop`
+1. Stop service: `python -m app.task_scheduler stop`
 2. Check logs: `Get-Content logs\service.log -Tail 100`
 3. Test database: `python -c "from app.database.connection import db; db.test_connection()"`
 4. Test in development mode: `start-server.bat`
 5. Fix issues
-6. Restart service: `python app\service_wrapper.py start`
+6. Restart service: `python -m app.task_scheduler start`
 
 ### Complete Failure
 
