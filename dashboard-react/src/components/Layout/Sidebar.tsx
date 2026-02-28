@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, type NavLinkRenderProps } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard,
@@ -21,13 +21,13 @@ interface SidebarProps {
 }
 
 const navItems = [
-  { path: '/', label: 'Overview', icon: LayoutDashboard },
-  { path: '/whatsapp', label: 'WhatsApp', icon: MessageSquare },
-  { path: '/queue', label: 'Message Queue', icon: Inbox },
-  { path: '/reminders', label: 'Payment Reminders', icon: Bell },
-  { path: '/logs', label: 'Live Logs', icon: FileText },
-  { path: '/system', label: 'System', icon: Cpu },
-  { path: '/settings', label: 'Settings', icon: Settings },
+  { path: '.', label: 'Overview', icon: LayoutDashboard },
+  { path: 'whatsapp', label: 'WhatsApp', icon: MessageSquare },
+  { path: 'queue', label: 'Message Queue', icon: Inbox },
+  { path: 'reminders', label: 'Payment Reminders', icon: Bell },
+  { path: 'logs', label: 'Live Logs', icon: FileText },
+  { path: 'system', label: 'System', icon: Cpu },
+  { path: 'settings', label: 'Settings', icon: Settings },
 ];
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
@@ -83,7 +83,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             <NavLink
               key={item.path}
               to={item.path}
-              className={({ isActive }) =>
+              className={({ isActive }: NavLinkRenderProps) =>
                 `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative ${
                   isActive
                     ? 'bg-brand-500/20 text-brand-400 border border-brand-500/30'

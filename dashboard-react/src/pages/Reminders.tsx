@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import axios from 'axios';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -7,7 +8,6 @@ import {
   Pause, 
   Play, 
   Square,
-  Loader2,
   ChevronDown,
   ChevronUp,
   Users,
@@ -16,40 +16,19 @@ import {
   Download,
   CheckCircle,
   Search,
-  X
+  X,
+  Loader2
 } from 'lucide-react';
 import { api } from '../services/api';
 import { useRemindersStore } from '../stores/remindersStore';
-import type { MessageTemplate } from '../types';
+import { LoadingState } from '../components/ui/LoadingState';
+import { getStatusColor } from '../utils/statusColors';
+import { formatCurrency, formatDateTime, formatDuration } from '../utils/formatters';
+import { REFETCH_INTERVALS, LIMITS, RETRY_DELAYS, POLLING } from '../constants';
+import { toast } from 'sonner';
+import type { MessageTemplate, ReminderSession } from '../types';
 
-// Utility functions
-const formatCurrency = (amount: number, symbol = '₹') => {
-  return `${symbol}${new Intl.NumberFormat('en-IN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount)}`;
-};
-
-const formatDateTime = (dt: string | null) => {
-  if (!dt) return 'Never';
-  return new Date(dt).toLocaleString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-};
-
-const formatDuration = (seconds: number) => {
-  if (seconds < 60) return `${seconds}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  if (mins < 60) return `${mins}m ${secs}s`;
-  const hours = Math.floor(mins / 60);
-  const remainingMins = mins % 60;
-  return `${hours}h ${remainingMins}m`;
-};
+// Using formatters from utils/formatters.ts
 
 // Components
 function StatCard({ title, value, subtitle }: { title: string; value: string | number; subtitle?: string }) {
@@ -63,25 +42,12 @@ function StatCard({ title, value, subtitle }: { title: string; value: string | n
 }
 
 function SessionPanel({ session, onPause, onResume, onStop }: { 
-  session: any; 
+  session: ReminderSession; 
   onPause: () => void; 
   onResume: () => void; 
   onStop: () => void;
 }) {
-  const getStateColor = (state: string) => {
-    switch (state) {
-      case 'online':
-      case 'sending':
-        return 'bg-green-500';
-      case 'paused':
-        return 'bg-yellow-500';
-      case 'stopped':
-      case 'error':
-        return 'bg-red-500';
-      default:
-        return 'bg-brand-500';
-    }
-  };
+  // Using getStatusColor from utils/statusColors.ts
 
   return (
     <motion.div
@@ -92,7 +58,7 @@ function SessionPanel({ session, onPause, onResume, onStop }: {
     >
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <div className={`w-3 h-3 rounded-full ${getStateColor(session.state)} animate-pulse`} />
+          <div className={`w-3 h-3 rounded-full ${getStatusColor(session.state)} animate-pulse`} />
           <div>
             <p className="font-semibold text-slate-100">Active Session: {session.session_id}</p>
             <p className="text-sm text-slate-400 capitalize">{session.state}</p>
@@ -170,10 +136,11 @@ export function Reminders() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterBy, setFilterBy] = useState('all');
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [sessionData, setSessionData] = useState<any>(null);
+  const [sessionData, setSessionData] = useState<ReminderSession | null>(null);
 
   // Store
   const store = useRemindersStore();
+  const { setConfig, setTemplates, setStats, setSnapshotStatus, setParties } = store;
 
   // Queries
   const { data: config, isLoading: configLoading } = useQuery({
@@ -189,7 +156,7 @@ export function Reminders() {
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['reminder-stats'],
     queryFn: api.getReminderStats,
-    refetchInterval: 30000,
+    refetchInterval: REFETCH_INTERVALS.REMINDER_STATS,
   });
 
   const { data: snapshotStatus, isLoading: snapshotLoading } = useQuery({
@@ -202,48 +169,81 @@ export function Reminders() {
     queryFn: () => api.getEligibleParties({
       filter_by: filterBy,
       search: searchQuery,
-      limit: 100,
+      limit: LIMITS.MAX_PAGE_SIZE,
     }),
   });
 
   // Update store when data loads
   useEffect(() => {
-    if (config) store.setConfig(config);
-    if (templates) store.setTemplates(templates);
-    if (stats) store.setStats(stats);
-    if (snapshotStatus) store.setSnapshotStatus(snapshotStatus);
-    if (partiesData) store.setParties(partiesData.items);
-  }, [config, templates, stats, snapshotStatus, partiesData]);
+    if (config) setConfig(config);
+    if (templates) setTemplates(templates);
+    if (stats) setStats(stats);
+    if (snapshotStatus) setSnapshotStatus(snapshotStatus);
+    if (partiesData) setParties(partiesData.items);
+  }, [config, templates, stats, snapshotStatus, partiesData, setConfig, setTemplates, setStats, setSnapshotStatus, setParties]);
 
-  // Session polling
+  // Session polling with proper cleanup and abort controller
+  const sessionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (!activeSessionId) return;
 
-    const interval = setInterval(async () => {
+    const abortController = new AbortController();
+    let isActive = true;
+
+    const pollSession = async () => {
       try {
-        const status = await api.getSessionStatus(activeSessionId);
+        const status = await api.getSessionStatus(activeSessionId, abortController.signal);
+        if (!isActive) return;
+
         if (status) {
           setSessionData(status);
           if (['completed', 'stopped', 'error'].includes(status.state)) {
-            setTimeout(() => {
-              setActiveSessionId(null);
-              setSessionData(null);
-            }, 5000);
+            sessionTimeoutRef.current = setTimeout(() => {
+              if (isActive) {
+                setActiveSessionId(null);
+                setSessionData(null);
+              }
+            }, RETRY_DELAYS.SESSION_CLEANUP);
           }
         }
-      } catch {
+      } catch (error) {
+        if (!isActive) return;
+        // Don't log aborted requests (they're expected on cleanup)
+        const isCanceled = axios.isCancel?.(error) || 
+          (error instanceof Error && error.name === 'AbortError');
+        if (!isCanceled) {
+          console.error('Session polling error:', error);
+        }
         setActiveSessionId(null);
         setSessionData(null);
       }
-    }, 2000);
+    };
 
-    return () => clearInterval(interval);
+    const interval = setInterval(pollSession, POLLING.SESSION_INTERVAL);
+    pollSession(); // Initial poll
+
+    return () => {
+      isActive = false;
+      abortController.abort();
+      clearInterval(interval);
+      if (sessionTimeoutRef.current) {
+        clearTimeout(sessionTimeoutRef.current);
+        sessionTimeoutRef.current = null;
+      }
+    };
   }, [activeSessionId]);
 
   // Mutations
   const refreshSnapshotMutation = useMutation({
     mutationFn: api.refreshReminderSnapshot,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['reminder-snapshot'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reminder-snapshot'] });
+      toast.success('Data refreshed successfully');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to refresh data: ${error.message}`);
+    },
   });
 
   const sendRemindersMutation = useMutation({
@@ -254,18 +254,28 @@ export function Reminders() {
         setActiveSessionId(data.session_id);
         store.clearSelection();
       }
+      toast.success('Reminders queued successfully');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to send reminders: ${error.message}`);
     },
   });
 
   const updateAntiSpamMutation = useMutation({
     mutationFn: api.updateAntiSpamConfig,
+    onSuccess: () => {
+      toast.success('Anti-spam settings updated');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to update anti-spam settings: ${error.message}`);
+    },
   });
 
-  const handleToggleSelection = (code: string) => {
+  const handleToggleSelection = useCallback((code: string) => {
     store.togglePartySelection(code);
-  };
+  }, [store]);
 
-  const handleSendReminders = () => {
+  const handleSendReminders = useCallback(() => {
     const selectedCodes = Array.from(store.selectedPartyCodes);
     if (selectedCodes.length === 0 || !store.defaultTemplateId) return;
 
@@ -274,7 +284,7 @@ export function Reminders() {
       templateId: store.defaultTemplateId,
       partyTemplates: store.partyTemplates,
     });
-  };
+  }, [store, sendRemindersMutation]);
 
   const selectedParties = useMemo(() => 
     store.parties.filter((p) => store.selectedPartyCodes.has(p.code)),
@@ -294,11 +304,7 @@ export function Reminders() {
   const isLoading = configLoading || templatesLoading || statsLoading || snapshotLoading || partiesLoading;
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-96">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-500"></div>
-      </div>
-    );
+    return <LoadingState size="lg" fullPage />;
   }
 
   return (
@@ -372,6 +378,7 @@ export function Reminders() {
           value={store.defaultTemplateId}
           onChange={(e) => store.setDefaultTemplateId(e.target.value)}
           className="w-full md:w-96 px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+          aria-label="Select message template"
         >
           <option value="">Select a template...</option>
           {templates?.map((t: MessageTemplate) => (
@@ -557,13 +564,18 @@ export function Reminders() {
             
             <div className="flex gap-2">
               <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <label htmlFor="party-search" className="sr-only">
+                  Search parties
+                </label>
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" aria-hidden="true" />
                 <input
+                  id="party-search"
                   type="text"
                   placeholder="Search parties..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-10 pr-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  aria-label="Search for parties by name or code"
                 />
               </div>
               
@@ -571,6 +583,7 @@ export function Reminders() {
                 value={filterBy}
                 onChange={(e) => setFilterBy(e.target.value)}
                 className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                aria-label="Filter parties by status"
               >
                 <option value="all">All</option>
                 <option value="enabled">Enabled</option>
@@ -582,20 +595,21 @@ export function Reminders() {
           <div className="p-4">
             <div className="space-y-2 max-h-96 overflow-y-auto">
               {availableParties.map((party) => (
-                <div
+                <button
                   key={party.code}
                   onClick={() => handleToggleSelection(party.code)}
-                  className="flex items-center justify-between p-3 bg-slate-700/30 rounded-lg cursor-pointer hover:bg-slate-700/50 transition-colors"
+                  className="w-full flex items-center justify-between p-3 bg-slate-700/30 rounded-lg hover:bg-slate-700/50 transition-colors text-left focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-dark-800"
+                  aria-label={`Select ${party.name} (${party.code}) with amount due ${formatCurrency(party.amount_due)}`}
                 >
                   <div>
                     <p className="font-medium text-slate-200">{party.name}</p>
                     <p className="text-sm text-slate-400">{party.code} • {formatCurrency(party.amount_due)}</p>
                   </div>
-                  
-                  <div className="w-5 h-5 border-2 border-slate-500 rounded flex items-center justify-center">
+
+                  <div className="w-5 h-5 border-2 border-slate-500 rounded flex items-center justify-center" aria-hidden="true">
                     <div className="w-3 h-3 bg-brand-500 rounded-sm opacity-0 group-hover:opacity-100" />
                   </div>
-                </div>
+                </button>
               ))}
               
               {availableParties.length === 0 && (

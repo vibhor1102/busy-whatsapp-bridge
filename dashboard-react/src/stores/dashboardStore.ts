@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { LIMITS } from '../constants';
 import type { DashboardStats, LogEntry } from '../types';
 
 interface DashboardState {
@@ -31,7 +32,7 @@ export const useDashboardStore = create<DashboardState & DashboardActions>((set,
   
   addLog: (log) => {
     const { logs } = get();
-    const newLogs = [log, ...logs].slice(0, 1000);
+    const newLogs = [log, ...logs].slice(0, LIMITS.MAX_LOGS);
     set({ logs: newLogs });
   },
   
@@ -44,4 +45,4 @@ export const useDashboardStore = create<DashboardState & DashboardActions>((set,
 // Selectors
 export const selectDashboardStats = (state: DashboardState) => state.stats;
 export const selectHasError = (state: DashboardState) => !!state.error;
-export const selectLatestLogs = (state: DashboardState) => state.logs.slice(0, 100);
+export const selectLatestLogs = (state: DashboardState) => state.logs.slice(0, LIMITS.MAX_LOGS);

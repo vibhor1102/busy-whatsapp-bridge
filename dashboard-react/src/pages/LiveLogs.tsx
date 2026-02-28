@@ -11,6 +11,8 @@ import {
   Bug
 } from 'lucide-react';
 import { api } from '../services/api';
+import { LoadingState } from '../components/ui/LoadingState';
+import { REFETCH_INTERVALS, LIMITS } from '../constants';
 import type { LogEntry } from '../types';
 
 const levels = [
@@ -36,8 +38,8 @@ export function LiveLogs() {
 
   const { data: logs, isLoading, refetch } = useQuery({
     queryKey: ['logs', level, source],
-    queryFn: () => api.getLogs({ level: level || undefined, source: source || undefined, limit: 200 }),
-    refetchInterval: autoRefresh ? 3000 : false,
+    queryFn: () => api.getLogs({ level: level || undefined, source: source || undefined, limit: LIMITS.MAX_LOGS }),
+    refetchInterval: autoRefresh ? REFETCH_INTERVALS.LIVE_LOGS : false,
   });
 
   const getLevelIcon = (level: string) => {
@@ -81,6 +83,7 @@ export function LiveLogs() {
               checked={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.checked)}
               className="w-4 h-4 rounded border-slate-600 text-brand-500 focus:ring-brand-500"
+              aria-label="Enable automatic refresh"
             />
             Auto-refresh
           </label>
@@ -111,6 +114,7 @@ export function LiveLogs() {
             value={level}
             onChange={(e) => setLevel(e.target.value)}
             className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+            aria-label="Filter by log level"
           >
             {levels.map((l) => (
               <option key={l.value} value={l.value}>{l.label}</option>
@@ -121,6 +125,7 @@ export function LiveLogs() {
             value={source}
             onChange={(e) => setSource(e.target.value)}
             className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500"
+            aria-label="Filter by log source"
           >
             {sources.map((s) => (
               <option key={s.value} value={s.value}>{s.label}</option>
@@ -138,8 +143,8 @@ export function LiveLogs() {
       >
         <div className="max-h-[600px] overflow-y-auto">
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-500"></div>
+            <div className="py-12">
+              <LoadingState size="md" />
             </div>
           ) : (
             <div className="divide-y divide-slate-700">

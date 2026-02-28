@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
+import { toast } from 'sonner';
 import { 
   Cpu, 
   HardDrive, 
@@ -13,14 +14,9 @@ import {
   Activity
 } from 'lucide-react';
 import { api } from '../services/api';
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
+import { LoadingState } from '../components/ui/LoadingState';
+import { formatBytes } from '../utils/formatters';
+import { REFETCH_INTERVALS } from '../constants';
 
 function ProgressBar({ value, color = 'brand' }: { value: number; color?: string }) {
   const colorClasses: Record<string, string> = {
@@ -47,36 +43,53 @@ export function SystemControl() {
   const { data: resources, isLoading } = useQuery({
     queryKey: ['system-resources'],
     queryFn: api.getSystemResources,
-    refetchInterval: 5000,
+    refetchInterval: REFETCH_INTERVALS.QUEUE_STATS,
   });
 
   const startQueueMutation = useMutation({
     mutationFn: api.startQueueWorker,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['queue-stats'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['queue-messages'] });
+      toast.success('Queue worker started successfully');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to start queue worker: ${error.message}`);
+    },
   });
 
   const stopQueueMutation = useMutation({
     mutationFn: api.stopQueueWorker,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['queue-stats'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['queue-messages'] });
+      toast.success('Queue worker stopped successfully');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to stop queue worker: ${error.message}`);
+    },
   });
 
   const restartBaileysMutation = useMutation({
     mutationFn: api.restartBaileys,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['baileys-status'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['baileys-status'] });
+      toast.success('Baileys service restarted successfully');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to restart Baileys: ${error.message}`);
+    },
   });
 
-  const handleAction = async (action: string, mutation: any) => {
+  const handleAction = useCallback(async (
+    action: string,
+    mutation: { mutateAsync: () => Promise<unknown> }
+  ) => {
     setActionLoading(action);
     await mutation.mutateAsync();
     setActionLoading(null);
-  };
+  }, []);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-96">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-500"></div>
-      </div>
-    );
+    return <LoadingState size="lg" fullPage />;
   }
 
   return (

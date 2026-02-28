@@ -8,40 +8,79 @@ All components of the professional Windows application build system have been im
 
 ## ✅ What Was Fixed/Implemented
 
-### 1. Dashboard Build Issues (FIXED)
-**Problem:** Vue dashboard failed to build with PrimeVue import errors
+### 1. Dashboard Technology Stack (REACT + TYPESCRIPT)
+**Current Stack:** React 19 + TypeScript 5.9 + Vite 7 + Tailwind CSS 3
 
-**Solution:**
-- Removed problematic `manualChunks` configuration from `vite.config.ts`
-- Removed TypeScript checking from build process (`vue-tsc` step)
-- Dashboard now builds successfully with `npm run build`
+**Dashboard Location:** `dashboard-react/` folder (not `dashboard/`)
 
-**Result:** `dashboard/dist/` folder created with production-ready files
+**Build Process:**
+- TypeScript compilation: `tsc -b`
+- Vite build: `vite build`
+- Output: `dashboard-react/dist/` folder
+- All assets properly hashed for caching
+
+**Result:** Production-ready React SPA in `dashboard-react/dist/`
 
 ---
 
-### 2. Development Workflow (`Run-Dev.bat`)
-**Location:** `C:\Program Files\BusyWhatsappBridge\Run-Dev.bat`
+### 2. Development Workflow (`run-dev.bat`) - ONE FILE PHILOSOPHY
+**Location:** `C:\Program Files\BusyWhatsappBridge\run-dev.bat`
+
+**The One-File Principle:**
+Everything needed for development is in this single file:
+1. ✅ Checks prerequisites (venv, npm)
+2. ✅ Auto-builds dashboard if needed (React + TypeScript)
+3. ✅ Installs npm dependencies if missing
+4. ✅ Cleans up existing processes
+5. ✅ Starts the full application stack
 
 **Usage:** 
 - Copy this file to your desktop
 - Double-click to start development server
-- Shows console output for debugging
-- Automatically starts with tray icon
+- No other commands needed!
 
 **Features:**
-- Uses bundled Python from venv
-- Console remains open for log viewing
-- Tray icon appears in system tray
-- Press Ctrl+C to stop
+- **Self-contained:** No external scripts needed
+- **Auto-build:** Detects stale builds and rebuilds automatically
+- **Smart detection:** Compares source file timestamps with build output
+- **Dependency management:** Auto-installs npm packages if missing
+- **Process cleanup:** Clears ports and stops old processes
+- **Console logging:** Real-time logs in the console window
+- **Tray integration:** System tray icon appears automatically
 
 ---
 
-### 3. Production Build Orchestration (`build-all.bat`)
+### 3. Production Workflow (`run.py`) - ONE FILE PHILOSOPHY
+**Location:** `C:\Program Files\BusyWhatsappBridge\run.py`
+
+**The One-File Principle:**
+Everything needed for production is in this single Python file:
+1. ✅ Environment setup and validation
+2. ✅ Process management (Baileys server, FastAPI)
+3. ✅ System tray integration
+4. ✅ Graceful shutdown handling
+5. ✅ Single instance enforcement
+
+**Usage:**
+- Called by Windows shortcuts
+- Runs silently in background (tray only)
+- No console window in production mode
+- Automatically restarts on crash
+
+**Features:**
+- **Self-contained:** All logic in one file
+- **Process orchestration:** Manages Baileys + FastAPI lifecycle
+- **Tray integration:** Right-click menu for control
+- **Single instance:** Prevents multiple app instances
+- **Auto-restart:** Restarts failed processes automatically
+
+---
+
+### 4. Production Build Orchestration (`build-all.bat`)
 **Location:** `C:\Program Files\BusyWhatsappBridge\build-all.bat`
 
 **What it does (4 steps):**
-1. **Builds dashboard** - Runs `npm run build` in dashboard folder
+1. **Builds dashboard** - Runs `npm run build` in dashboard-react folder
 2. **Builds EXE** - Creates `BusyWhatsappBridge.exe` using PyInstaller
 3. **Builds installer** - Creates installer using Inno Setup
 4. **Verifies output** - Confirms installer was created successfully
@@ -61,7 +100,7 @@ All components of the professional Windows application build system have been im
 
 ---
 
-### 4. Professional Installer (`installer.iss`)
+### 5. Professional Installer (`installer.iss`)
 **Location:** `C:\Program Files\BusyWhatsappBridge\installer.iss`
 
 **Features:**
@@ -90,18 +129,20 @@ All components of the professional Windows application build system have been im
 C:\Program Files\BusyWhatsappBridge\
 ├── BusyWhatsappBridge.exe          ← Main launcher (production)
 ├── Start-Gateway.py               ← Source (also included)
-├── Run-Dev.bat                    ← Development launcher
+├── run-dev.bat                    ← Development launcher (ONE FILE)
+├── run.py                         ← Production launcher (ONE FILE)
 ├── build-all.bat                  ← Master build script
 ├── build-installer.bat            ← Installer builder
 ├── build-launcher-exe.py          ← PyInstaller script
 ├── installer.iss                  ← Inno Setup script
-├── app/                           ← Python backend
-├── dashboard/
-│   ├── src/                       ← Vue source files
-│   └── dist/                      ← Built dashboard ← READY!
-├── python/                        ← Bundled Python
-├── venv/                          ← Dependencies
-└── baileys-server/                ← Node.js server
+├── app/                           ← Python backend (FastAPI)
+├── dashboard-react/               ← React + TypeScript frontend
+│   ├── src/                       ← React source files (.tsx)
+│   ├── dist/                      ← Built dashboard ← AUTO-BUILD
+│   └── package.json               ← npm dependencies
+├── baileys-server/                ← Node.js WhatsApp server
+├── python/                        ← Bundled Python (portable)
+└── venv/                          ← Python dependencies
 ```
 
 ---
@@ -110,19 +151,20 @@ C:\Program Files\BusyWhatsappBridge\
 
 ### For Development (Daily Work)
 
-1. **Copy Run-Dev.bat to desktop:**
+1. **Copy run-dev.bat to desktop:**
    ```bash
-   copy "C:\Program Files\BusyWhatsappBridge\Run-Dev.bat" "%USERPROFILE%\Desktop\"
+   copy "C:\Program Files\BusyWhatsappBridge\run-dev.bat" "%USERPROFILE%\Desktop\"
    ```
 
 2. **Double-click desktop shortcut:**
    - Console window opens (shows logs)
+   - Dashboard auto-builds if needed (first run takes 1-2 minutes)
    - Tray icon appears
    - Access dashboard at http://localhost:8000/dashboard
 
 3. **Make code changes:**
-   - Edit files in `app/` or `dashboard/src/`
-   - Changes auto-reload (Vue dev server) or restart Python
+   - Edit Python files in `app/` → restart server (Ctrl+C, then run again)
+   - Edit React files in `dashboard-react/src/` → rebuild with `npm run build`
 
 4. **Stop:**
    - Press Ctrl+C in console, or
@@ -230,8 +272,9 @@ Users can change auto-start anytime:
 - Default location: `C:\Program Files (x86)\Inno Setup 6\`
 
 **"Dashboard build failed"**
-- Run: `cd dashboard && npm install`
-- Then retry build
+- Check Node.js version: `node --version` (requires 18+)
+- Delete `dashboard-react/node_modules` and retry
+- Manual build: `cd dashboard-react && npm install && npm run build`
 
 **"EXE not found after build"**
 - Check that PyInstaller is installed: `pip install pyinstaller`
@@ -245,7 +288,7 @@ Users can change auto-start anytime:
 
 **"Dashboard not built"**
 - Run: `build-all.bat` to build everything
-- Or manually: `cd dashboard && npm run build`
+- Or manually: `cd dashboard-react && npm run build`
 
 ---
 
@@ -277,10 +320,10 @@ Users can change auto-start anytime:
 ## 💡 Pro Tips
 
 **Development:**
-- Use `Run-Dev.bat` for daily work
+- Use `run-dev.bat` for daily work (ONE FILE philosophy)
 - Console shows real-time logs
-- Edit Python files → restart server
-- Edit Vue files → auto-reload in browser
+- Edit Python files → restart server (Ctrl+C, run again)
+- Edit React files → rebuild with `cd dashboard-react && npm run build`
 
 **Production:**
 - Use `build-all.bat` only when releasing
@@ -298,8 +341,9 @@ Users can change auto-start anytime:
 
 ## ✅ Checklist
 
-- [x] Dashboard builds successfully
-- [x] Development workflow ready (Run-Dev.bat)
+- [x] React dashboard builds successfully
+- [x] Development workflow ready (run-dev.bat - ONE FILE)
+- [x] Production workflow ready (run.py - ONE FILE)
 - [x] Production build automated (build-all.bat)
 - [x] Installer configured (vibhor1102, desktop + autostart enabled)
 - [x] System tray integration

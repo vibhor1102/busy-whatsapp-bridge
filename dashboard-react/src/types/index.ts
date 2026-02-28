@@ -49,13 +49,15 @@ export interface Message {
 }
 
 // WhatsApp/Baileys Types
+export interface BaileysUserInfo {
+  id: string;
+  name: string;
+  phone: string;
+}
+
 export interface BaileysStatus {
   state: 'connected' | 'qr_ready' | 'disconnected' | 'connecting' | 'reconnecting' | 'logged_out' | 'unreachable';
-  user?: {
-    id: string;
-    name: string;
-    phone: string;
-  };
+  user?: BaileysUserInfo;
   qr_image?: string;
   error?: string;
 }

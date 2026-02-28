@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AxiosInstance, AxiosResponse } from 'axios';
+import type { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestConfig } from 'axios';
 import type {
   DashboardStats,
   QueueStats,
@@ -20,9 +20,38 @@ import type {
   AntiSpamConfig,
   ReminderSession,
   MetaWebhookStatus,
+  BaileysUserInfo,
 } from '../types';
 
+// Type for reminder history counts
+export interface ReminderHistoryCounts {
+  sent?: number;
+  failed?: number;
+  pending?: number;
+  retrying?: number;
+  total?: number;
+}
+
 const API_BASE = '/api/v1';
+const DEFAULT_TIMEOUT = 30000; // 30 seconds
+
+export interface ApiError {
+  message: string;
+  status?: number;
+  code?: string;
+}
+
+export class ApiErrorException extends Error {
+  status?: number;
+  code?: string;
+
+  constructor(message: string, status?: number, code?: string) {
+    super(message);
+    this.name = 'ApiErrorException';
+    this.status = status;
+    this.code = code;
+  }
+}
 
 class ApiService {
   private client: AxiosInstance;
@@ -33,16 +62,95 @@ class ApiService {
       headers: {
         'Content-Type': 'application/json',
       },
+      timeout: DEFAULT_TIMEOUT,
     });
+
+    // Request interceptor for error logging
+    this.client.interceptors.request.use(
+      (config: InternalAxiosRequestConfig) => {
+        console.log(`[API Request] ${config.method?.toUpperCase()} ${config.url}`);
+        return config;
+      },
+      (error: AxiosError) => {
+        console.error('[API Request Error]', error);
+        return Promise.reject(error);
+      }
+    );
+
+    // Response interceptor for error transformation
+    this.client.interceptors.response.use(
+      (response: AxiosResponse) => response,
+      (error: AxiosError) => {
+        const apiError = this.transformError(error);
+        console.error('[API Response Error]', apiError);
+        return Promise.reject(apiError);
+      }
+    );
   }
 
-  private async fetch<T>(endpoint: string, options?: { method?: string; body?: any }): Promise<T> {
-    const response: AxiosResponse<T> = await this.client.request({
-      url: endpoint,
-      method: options?.method || 'GET',
-      data: options?.body,
-    });
-    return response.data;
+  private transformError(error: AxiosError): ApiErrorException {
+    if (error.response) {
+      const status = error.response.status;
+      const data = error.response.data as { message?: string; error?: string };
+      let message = data?.message || data?.error || 'An error occurred';
+
+      // Handle specific HTTP status codes
+      switch (status) {
+        case 401:
+          message = 'Authentication required. Please log in again.';
+          break;
+        case 403:
+          message = 'You do not have permission to perform this action.';
+          break;
+        case 404:
+          message = 'The requested resource was not found.';
+          break;
+        case 422:
+          message = data?.message || 'Invalid request data. Please check your input.';
+          break;
+        case 500:
+          message = 'Server error. Please try again later.';
+          break;
+        case 502:
+        case 503:
+        case 504:
+          message = 'Service unavailable. Please try again later.';
+          break;
+        default:
+          message = data?.message || `HTTP Error ${status}`;
+      }
+
+      return new ApiErrorException(message, status, error.code);
+    }
+
+    if (error.request) {
+      if (error.code === 'ECONNABORTED') {
+        return new ApiErrorException('Request timed out. Please try again.', 408, error.code);
+      }
+      if (error.code === 'ERR_NETWORK') {
+        return new ApiErrorException('Network error. Please check your connection.', 0, error.code);
+      }
+      return new ApiErrorException('No response received from server.', 0, error.code);
+    }
+
+    return new ApiErrorException(error.message || 'An unexpected error occurred');
+  }
+
+  private async fetch<T>(endpoint: string, options?: { method?: string; body?: unknown; signal?: AbortSignal }): Promise<T> {
+    try {
+      const response: AxiosResponse<T> = await this.client.request({
+        url: endpoint,
+        method: options?.method || 'GET',
+        data: options?.body,
+        signal: options?.signal,
+      });
+      return response.data;
+    } catch (error) {
+      if (error instanceof ApiErrorException) {
+        throw error;
+      }
+      throw new ApiErrorException('An unexpected error occurred');
+    }
   }
 
   // Dashboard
@@ -94,11 +202,11 @@ class ApiService {
   }
 
   // WhatsApp/Baileys
-  async getBaileysStatus(): Promise<{ success?: boolean; data?: BaileysStatus; error?: string }> {
+  async getBaileysStatus(): Promise<BaileysStatus> {
     return this.fetch('/baileys/status');
   }
 
-  async getBaileysQr(): Promise<{ data: { qrImage?: string; state?: string; user?: Record<string, any> } }> {
+  async getBaileysQr(): Promise<{ data: { qrImage?: string; state?: string; user?: BaileysUserInfo } }> {
     return this.fetch('/baileys/qr');
   }
 
@@ -154,7 +262,7 @@ class ApiService {
     return this.fetch('/settings');
   }
 
-  async getSettingsConfig(): Promise<{ content: Record<string, any> }> {
+  async getSettingsConfig(): Promise<{ content: Record<string, unknown> }> {
     return this.fetch('/settings/config');
   }
 
@@ -266,8 +374,8 @@ class ApiService {
     });
   }
 
-  async getSessionStatus(sessionId: string): Promise<ReminderSession | null> {
-    return this.fetch(`/reminders/sessions/${sessionId}/status`);
+  async getSessionStatus(sessionId: string, signal?: AbortSignal): Promise<ReminderSession> {
+    return this.fetch(`/reminders/sessions/${sessionId}/status`, { signal });
   }
 
   async pauseSession(sessionId: string): Promise<void> {
@@ -367,7 +475,7 @@ class ApiService {
     to_time?: string;
     limit?: number;
     offset?: number;
-  }): Promise<{ items: Message[]; total: number; limit: number; offset: number; counts: any }> {
+  }): Promise<{ items: Message[]; total: number; limit: number; offset: number; counts: ReminderHistoryCounts }> {
     const queryParams = new URLSearchParams();
     if (params?.status) queryParams.append('status', params.status);
     if (params?.delivery_status) queryParams.append('delivery_status', params.delivery_status);

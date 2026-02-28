@@ -11,6 +11,8 @@ import {
 import { motion } from 'framer-motion';
 import { api } from '../services/api';
 import { useDashboardStore } from '../stores/dashboardStore';
+import { LoadingState } from '../components/ui/LoadingState';
+import { REFETCH_INTERVALS } from '../constants';
 
 interface StatCardProps {
   title: string;
@@ -62,7 +64,7 @@ export function Overview() {
   const { data: stats, isLoading } = useQuery({
     queryKey: ['dashboard-stats'],
     queryFn: api.getDashboardStats,
-    refetchInterval: 30000,
+    refetchInterval: REFETCH_INTERVALS.DASHBOARD_STATS,
   });
 
   useEffect(() => {
@@ -72,11 +74,7 @@ export function Overview() {
   }, [stats, setStats]);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-96">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-500"></div>
-      </div>
-    );
+    return <LoadingState size="lg" fullPage />;
   }
 
   return (

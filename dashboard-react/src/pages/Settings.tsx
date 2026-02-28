@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { 
@@ -9,14 +9,21 @@ import {
   FileText
 } from 'lucide-react';
 import { api } from '../services/api';
+import { LoadingState } from '../components/ui/LoadingState';
+import { toast } from 'sonner';
+
+// Configuration defaults - can be overridden via environment variables
+const DEFAULT_BAILEYS_URL = import.meta.env.VITE_BAILEYS_SERVER_URL || 'http://localhost:3001';
+const DEFAULT_PROVIDER = 'baileys';
+const DEFAULT_LOG_LEVEL = 'INFO';
 
 export function Settings() {
   const queryClient = useQueryClient();
   const [formData, setFormData] = useState({
-    whatsapp_provider: 'baileys',
-    baileys_server_url: 'http://localhost:3001',
+    whatsapp_provider: DEFAULT_PROVIDER,
+    baileys_server_url: DEFAULT_BAILEYS_URL,
     baileys_enabled: true,
-    log_level: 'INFO',
+    log_level: DEFAULT_LOG_LEVEL,
     bds_file_path: '',
   });
 
@@ -25,14 +32,25 @@ export function Settings() {
     queryFn: api.getSettingsConfig,
   });
 
+  // Use ref to prevent form data race condition with user input
+  const hasInitializedRef = useRef(false);
+
   useEffect(() => {
-    if (settings?.content) {
+    if (settings?.content && !hasInitializedRef.current) {
+      hasInitializedRef.current = true;
+      const content = settings.content as {
+        whatsapp_provider?: string;
+        baileys_server_url?: string;
+        baileys_enabled?: boolean;
+        log_level?: string;
+        bds_file_path?: string;
+      };
       setFormData({
-        whatsapp_provider: settings.content.whatsapp_provider || 'baileys',
-        baileys_server_url: settings.content.baileys_server_url || 'http://localhost:3001',
-        baileys_enabled: settings.content.baileys_enabled ?? true,
-        log_level: settings.content.log_level || 'INFO',
-        bds_file_path: settings.content.bds_file_path || '',
+        whatsapp_provider: content.whatsapp_provider || DEFAULT_PROVIDER,
+        baileys_server_url: content.baileys_server_url || DEFAULT_BAILEYS_URL,
+        baileys_enabled: content.baileys_enabled ?? true,
+        log_level: content.log_level || DEFAULT_LOG_LEVEL,
+        bds_file_path: content.bds_file_path || '',
       });
     }
   }, [settings]);
@@ -41,20 +59,20 @@ export function Settings() {
     mutationFn: api.updateSettingsConfig,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
+      toast.success('Settings saved successfully');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to save settings: ${error.message}`);
     },
   });
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     await updateMutation.mutateAsync(formData);
-  };
+  }, [updateMutation, formData]);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-96">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-500"></div>
-      </div>
-    );
+    return <LoadingState size="lg" fullPage />;
   }
 
   return (

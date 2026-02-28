@@ -7,11 +7,13 @@ import {
   Clock, 
   AlertTriangle, 
   CheckCircle,
-  XCircle,
-  Loader2
+  XCircle
 } from 'lucide-react';
 import { api } from '../services/api';
 import { useQueueStore } from '../stores/queueStore';
+import { LoadingState } from '../components/ui/LoadingState';
+import { getStatusColor } from '../utils/statusColors';
+import { REFETCH_INTERVALS, LIMITS } from '../constants';
 import type { Message } from '../types';
 
 const tabs = [
@@ -21,6 +23,13 @@ const tabs = [
   { id: 'history', label: 'History', icon: CheckCircle },
 ] as const;
 
+const colorStyles: Record<string, { bg: string; border: string }> = {
+  yellow: { bg: 'bg-yellow-500/10', border: 'border-yellow-500/30' },
+  blue: { bg: 'bg-blue-500/10', border: 'border-blue-500/30' },
+  red: { bg: 'bg-red-500/10', border: 'border-red-500/30' },
+  green: { bg: 'bg-green-500/10', border: 'border-green-500/30' },
+};
+
 export function MessageQueue() {
   const [activeTab, setActiveTab] = useState<typeof tabs[number]['id']>('pending');
   const setQueueStats = useQueueStore((state) => state.setStats);
@@ -28,7 +37,7 @@ export function MessageQueue() {
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['queue-stats'],
     queryFn: api.getQueueStats,
-    refetchInterval: 5000,
+    refetchInterval: REFETCH_INTERVALS.QUEUE_STATS,
   });
 
   const { data: messages, isLoading: messagesLoading } = useQuery<{ messages: Message[] }>({
@@ -36,20 +45,20 @@ export function MessageQueue() {
     queryFn: async () => {
       switch (activeTab) {
         case 'pending':
-          return api.getPendingMessages(50);
+          return api.getPendingMessages(LIMITS.DEFAULT_PAGE_SIZE);
         case 'retrying':
-          return api.getPendingMessages(50);
+          return api.getPendingMessages(LIMITS.DEFAULT_PAGE_SIZE);
         case 'deadLetter':
-          return api.getDeadLetterMessages(50);
+          return api.getDeadLetterMessages(LIMITS.DEFAULT_PAGE_SIZE);
         case 'history': {
-          const result = await api.getQueueHistory({ limit: 50 });
+          const result = await api.getQueueHistory({ limit: LIMITS.DEFAULT_PAGE_SIZE });
           return { messages: result.items };
         }
         default:
-          return api.getPendingMessages(50);
+          return api.getPendingMessages(LIMITS.DEFAULT_PAGE_SIZE);
       }
     },
-    refetchInterval: 5000,
+    refetchInterval: REFETCH_INTERVALS.QUEUE_STATS,
   });
 
   if (stats) {
@@ -58,18 +67,7 @@ export function MessageQueue() {
 
   const isLoading = statsLoading || messagesLoading;
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'sent':
-        return 'text-green-400';
-      case 'failed':
-        return 'text-red-400';
-      case 'retrying':
-        return 'text-yellow-400';
-      default:
-        return 'text-slate-400';
-    }
-  };
+  // Using getStatusColor from utils/statusColors.ts
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -106,7 +104,7 @@ export function MessageQueue() {
             key={stat.label}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className={`p-4 rounded-xl bg-${stat.color}-500/10 border border-${stat.color}-500/30`}
+            className={`p-4 rounded-xl ${colorStyles[stat.color].bg} ${colorStyles[stat.color].border}`}
           >
             <p className="text-sm text-slate-400">{stat.label}</p>
             <p className="text-2xl font-bold text-slate-100 mt-1">{stat.value}</p>
@@ -116,31 +114,44 @@ export function MessageQueue() {
 
       {/* Tabs */}
       <div className="bg-dark-800 border border-slate-700 rounded-xl overflow-hidden">
-        <div className="flex border-b border-slate-700">
+        <div
+          className="flex border-b border-slate-700"
+          role="tablist"
+          aria-label="Message queue tabs"
+        >
           {tabs.map((tab) => {
             const Icon = tab.icon;
             return (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
+                role="tab"
+                aria-selected={activeTab === tab.id}
+                aria-controls={`tabpanel-${tab.id}`}
+                id={`tab-${tab.id}`}
                 className={`flex items-center gap-2 px-6 py-4 font-medium transition-colors ${
                   activeTab === tab.id
                     ? 'text-brand-400 border-b-2 border-brand-400 bg-brand-500/10'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/30'
                 }`}
               >
-                <Icon className="w-4 h-4" />
+                <Icon className="w-4 h-4" aria-hidden="true" />
                 {tab.label}
               </button>
             );
           })}
         </div>
 
-        {/* Table */}
-        <div className="p-4">
+        {/* Table - Tab Panel */}
+        <div
+          role="tabpanel"
+          id={`tabpanel-${activeTab}`}
+          aria-labelledby={`tab-${activeTab}`}
+          className="p-4"
+        >
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-8 h-8 animate-spin text-brand-500" />
+            <div className="py-12">
+              <LoadingState size="md" />
             </div>
           ) : (
             <div className="overflow-x-auto">

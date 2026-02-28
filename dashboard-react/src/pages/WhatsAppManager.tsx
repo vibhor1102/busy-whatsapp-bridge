@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { 
@@ -13,6 +13,10 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 import { useSystemStore } from '../stores/systemStore';
+import { LoadingState } from '../components/ui/LoadingState';
+import { getStatusColor } from '../utils/statusColors';
+import { REFETCH_INTERVALS } from '../constants';
+import { toast } from 'sonner';
 
 export function WhatsAppManager() {
   const queryClient = useQueryClient();
@@ -22,12 +26,12 @@ export function WhatsAppManager() {
   const { data: status, isLoading } = useQuery({
     queryKey: ['baileys-status'],
     queryFn: api.getBaileysStatus,
-    refetchInterval: 5000,
+    refetchInterval: REFETCH_INTERVALS.BAILEYS_STATUS,
   });
 
   useEffect(() => {
-    if (status?.data) {
-      setBaileysStatus(status.data);
+    if (status) {
+      setBaileysStatus(status);
     }
   }, [status, setBaileysStatus]);
 
@@ -35,6 +39,10 @@ export function WhatsAppManager() {
     mutationFn: api.restartBaileys,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['baileys-status'] });
+      toast.success('Baileys service restarted successfully');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to restart Baileys: ${error.message}`);
     },
   });
 
@@ -42,6 +50,10 @@ export function WhatsAppManager() {
     mutationFn: api.disconnectWhatsApp,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['baileys-status'] });
+      toast.success('WhatsApp disconnected successfully');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to disconnect WhatsApp: ${error.message}`);
     },
   });
 
@@ -49,32 +61,20 @@ export function WhatsAppManager() {
     mutationFn: api.clearWhatsAppSession,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['baileys-status'] });
+      toast.success('Session cleared successfully');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to clear session: ${error.message}`);
     },
   });
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     await queryClient.invalidateQueries({ queryKey: ['baileys-status'] });
     setIsRefreshing(false);
-  };
+  }, [queryClient]);
 
-  const getStatusColor = (state: string) => {
-    switch (state) {
-      case 'connected':
-        return 'bg-green-500/20 text-green-400 border-green-500/30';
-      case 'qr_ready':
-        return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
-      case 'connecting':
-      case 'reconnecting':
-        return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
-      case 'disconnected':
-      case 'logged_out':
-      case 'unreachable':
-        return 'bg-red-500/20 text-red-400 border-red-500/30';
-      default:
-        return 'bg-slate-500/20 text-slate-400 border-slate-500/30';
-    }
-  };
+  // Using getStatusColor from utils/statusColors.ts
 
   const getStatusIcon = (state: string) => {
     switch (state) {
@@ -91,15 +91,11 @@ export function WhatsAppManager() {
   };
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-96">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-500"></div>
-      </div>
-    );
+    return <LoadingState size="lg" fullPage />;
   }
 
-  const isConnected = status?.data?.state === 'connected';
-  const isQrReady = status?.data?.state === 'qr_ready';
+  const isConnected = status?.state === 'connected';
+  const isQrReady = status?.state === 'qr_ready';
 
   return (
     <div className="space-y-6">
@@ -127,14 +123,14 @@ export function WhatsAppManager() {
       >
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-4">
-            <div className={`p-4 rounded-xl ${getStatusColor(status?.data?.state || 'unknown')}`}>
-              {getStatusIcon(status?.data?.state || 'unknown')}
+            <div className={`p-4 rounded-xl ${getStatusColor(status?.state || 'unknown')}`}>
+              {getStatusIcon(status?.state || 'unknown')}
             </div>
             
             <div>
               <p className="text-sm text-slate-400">Connection Status</p>
               <p className="text-2xl font-bold text-slate-100 capitalize">
-                {(status?.data?.state || 'unknown').replace('_', ' ')}
+                {(status?.state || 'unknown').replace('_', ' ')}
               </p>
             </div>
           </div>
@@ -179,23 +175,23 @@ export function WhatsAppManager() {
           </div>
         )}
 
-        {isConnected && status?.data?.user && (
+        {isConnected && status?.user && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
             <div className="p-4 rounded-lg bg-slate-700/30">
               <p className="text-sm text-slate-400">Connected Account</p>
-              <p className="text-lg font-medium text-slate-100 mt-1">{status.data.user.name}</p>
+              <p className="text-lg font-medium text-slate-100 mt-1">{status.user.name}</p>
             </div>
             
             <div className="p-4 rounded-lg bg-slate-700/30">
               <p className="text-sm text-slate-400">Phone Number</p>
-              <p className="text-lg font-medium text-slate-100 mt-1">{status.data.user.phone}</p>
+              <p className="text-lg font-medium text-slate-100 mt-1">{status.user.phone}</p>
             </div>
           </div>
         )}
       </motion.div>
 
       {/* QR Code Section */}
-      {isQrReady && status?.data?.qr_image && (
+      {isQrReady && status?.qr_image && (
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -213,7 +209,7 @@ export function WhatsAppManager() {
             
             <div className="inline-block p-6 bg-white rounded-xl">
               <img
-                src={`data:image/png;base64,${status.data.qr_image}`}
+                src={`data:image/png;base64,${status?.qr_image}`}
                 alt="WhatsApp QR Code"
                 className="w-64 h-64"
               />

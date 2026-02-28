@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query, Depends, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
@@ -183,6 +184,12 @@ if dashboard_path.exists():
 
 
 @app.get("/dashboard")
+async def redirect_dashboard():
+    """Redirect /dashboard to /dashboard/ for React Router basename compatibility."""
+    return RedirectResponse(url="/dashboard/", status_code=301)
+
+
+@app.get("/dashboard/")
 async def serve_dashboard():
     """Serve the main dashboard page."""
     index_path = dashboard_path / "index.html"
@@ -202,6 +209,18 @@ async def serve_dashboard_routes(path: str):
         return FileResponse(str(index_path))
     return JSONResponse(
         content={"error": "Dashboard not built"},
+        status_code=404
+    )
+
+
+@app.get("/vite.svg")
+async def serve_vite_svg():
+    """Serve the Vite SVG favicon."""
+    svg_path = dashboard_path / "vite.svg"
+    if svg_path.exists():
+        return FileResponse(str(svg_path), media_type="image/svg+xml")
+    return JSONResponse(
+        content={"error": "vite.svg not found"},
         status_code=404
     )
 
@@ -234,13 +253,8 @@ app.include_router(reminder_router)
 
 @app.get("/", tags=["Root"])
 async def root():
-    """Root endpoint."""
-    return {
-        "app": settings.APP_NAME,
-        "version": settings.APP_VERSION,
-        "status": "running",
-        "docs": "/docs"
-    }
+    """Root endpoint - redirect to dashboard."""
+    return RedirectResponse(url="/dashboard/", status_code=302)
 
 
 @app.get("/api/v1/health", response_model=HealthResponse, tags=["Health"])
@@ -1032,6 +1046,74 @@ async def update_config_file(request: ConfigUpdateRequest):
         return {"success": True, "message": "Settings saved to conf.json. Restart required for changes to take effect."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write conf.json: {str(e)}")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request, exc):
+    """Handle HTTP exceptions including 404s with a friendly error page."""
+    if exc.status_code == 404:
+        # Check if this might be a dashboard route
+        path = request.url.path
+        if path.startswith("/dashboard"):
+            # Try to serve the dashboard for client-side routing
+            index_path = dashboard_path / "index.html"
+            if index_path.exists():
+                return FileResponse(str(index_path))
+        
+        # Return a friendly 404 page
+        html_content = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>404 - Page Not Found</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            text-align: center;
+            padding: 2rem;
+        }
+        h1 { font-size: 6rem; margin: 0; opacity: 0.8; }
+        h2 { font-size: 1.5rem; margin: 1rem 0; font-weight: 300; }
+        p { opacity: 0.9; margin: 1rem 0; }
+        a {
+            color: white;
+            text-decoration: none;
+            border: 2px solid white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 4px;
+            display: inline-block;
+            margin-top: 1rem;
+            transition: all 0.3s;
+        }
+        a:hover { background: white; color: #667eea; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>404</h1>
+        <h2>Page Not Found</h2>
+        <p>The page you're looking for doesn't exist or has been moved.</p>
+        <a href="/dashboard">Go to Dashboard</a>
+    </div>
+</body>
+</html>"""
+        return HTMLResponse(content=html_content, status_code=404)
+    
+    # For other HTTP errors, return JSON
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
 
 
 @app.exception_handler(Exception)
