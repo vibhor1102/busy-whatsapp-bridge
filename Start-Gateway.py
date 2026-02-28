@@ -158,6 +158,19 @@ def main():
             input("\nPress Enter to exit...")
             return 1
     
+    # Check if dashboard is built (for end users, it should be pre-built)
+    dashboard_path = program_dir / "dashboard-react" / "dist" / "index.html"
+    if not dashboard_path.exists():
+        print("\nWARNING: Dashboard not found!")
+        print("The dashboard needs to be built before first use.")
+        print("\nFor development:")
+        print(f"  cd \"{program_dir}\"")
+        print(f"  python check-dashboard-build.py --build")
+        print("\nFor production:")
+        print("  Please reinstall the application or contact support.")
+        input("\nPress Enter to exit...")
+        return 1
+    
     # Find Python executable
     python_exe = find_venv_python(program_dir)
     if not python_exe:

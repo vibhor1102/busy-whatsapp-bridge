@@ -253,4 +253,4 @@ All reminder settings are stored in:
 %LOCALAPPDATA%\BusyWhatsappBridge\reminder_config.json
 ```
 
-You can edit this file directly or use the API endpoints to update configuration.
+You can edit this file directly or use the API endpoints to update configuration.

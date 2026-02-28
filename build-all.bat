@@ -40,14 +40,19 @@ REM ============================================================================
 echo [Step 1/4] Building dashboard...
 echo.
 
-IF NOT EXIST "dashboard\node_modules" (
-    echo [ERROR] Dashboard dependencies not installed!
-    echo Please run: cd dashboard && npm install
-    pause
-    exit /b 1
+IF NOT EXIST "dashboard-react\node_modules" (
+    echo [INFO] Installing dashboard dependencies...
+    cd dashboard-react
+    call npm install
+    IF ERRORLEVEL 1 (
+        echo [ERROR] Failed to install dashboard dependencies!
+        pause
+        exit /b 1
+    )
+    cd ..
 )
 
-cd dashboard
+cd dashboard-react
 
 echo Running npm run build...
 call npm run build
@@ -167,4 +172,4 @@ IF EXIST "%INSTALLER_FILE%" (
 
 ENDLOCAL
 echo.
-pause
+pause

@@ -74,7 +74,7 @@ Source: "python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs
 Source: "venv\*"; DestDir: "{app}\venv"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
 
 ; Dashboard files
-Source: "dashboard\*"; DestDir: "{app}\dashboard"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dashboard-react\*"; DestDir: "{app}\dashboard-react"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Python scripts
 Source: "setup.py"; DestDir: "{app}"; Flags: ignoreversion

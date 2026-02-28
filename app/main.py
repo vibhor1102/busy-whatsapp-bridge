@@ -174,7 +174,7 @@ app = FastAPI(
 )
 
 # Mount static files for dashboard
-dashboard_path = Path(__file__).parent.parent / "dashboard" / "dist"
+dashboard_path = Path(__file__).parent.parent / "dashboard-react" / "dist"
 assets_path = dashboard_path / "assets"
 if assets_path.exists():
     app.mount("/assets", StaticFiles(directory=str(assets_path)), name="assets")
@@ -189,7 +189,7 @@ async def serve_dashboard():
     if index_path.exists():
         return FileResponse(str(index_path))
     return JSONResponse(
-        content={"error": "Dashboard not built. Run 'npm run build' in dashboard/ directory"},
+        content={"error": "Dashboard not built. Run 'npm run build' in dashboard-react/ directory or start the development server"},
         status_code=404
     )
 

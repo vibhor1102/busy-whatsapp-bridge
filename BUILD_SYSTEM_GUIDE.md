@@ -309,4 +309,4 @@ Users can change auto-start anytime:
 
 ---
 
-**You're all set!** The application now has a professional build and deployment system suitable for production use. 🚀
+**You're all set!** The application now has a professional build and deployment system suitable for production use. 🚀
