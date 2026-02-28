@@ -2,6 +2,7 @@
 REM ============================================================================
 REM Busy Whatsapp Bridge - Development Launcher
 REM One-file development workflow: builds dashboard if needed, then starts app
+REM Enhanced logging for transparency and diagnostics
 REM ============================================================================
 
 SETLOCAL EnableDelayedExpansion
@@ -11,101 +12,149 @@ SET "VENV_PYTHON=%SCRIPT_DIR%venv\Scripts\python.exe"
 SET "DASHBOARD_DIR=%SCRIPT_DIR%dashboard-react"
 SET "DASHBOARD_DIST=%DASHBOARD_DIR%\dist"
 SET "NODE_MODULES=%DASHBOARD_DIR%\node_modules"
+SET "CONFIG_DIR=%LOCALAPPDATA%\BusyWhatsappBridge"
+SET "CONFIG_FILE=%CONFIG_DIR%\conf.json"
+
+REM Get current timestamp
+for /f "tokens=2 delims==" %%a in ('wmic os get localdatetime /value') do set "DT=%%a"
+set "TIMESTAMP=%DT:~8,2%:%DT:~10,2%:%DT:~12,2%"
+
+REM Helper function to log with timestamp
+call :log_header "Busy Whatsapp Bridge - Development Mode"
+call :log_info "Script directory: %SCRIPT_DIR%"
+call :log_info "Working directory: %CD%"
+call :log_info "Python executable: %VENV_PYTHON%"
+echo.
+
+REM ============================================================================
+REM Pre-flight Configuration Check
+REM ============================================================================
+call :log_step "PRE-FLIGHT" "Checking configuration and prerequisites"
+
+REM Check if conf.json exists
+call :log_info "Configuration file: %CONFIG_FILE%"
+IF EXIST "%CONFIG_FILE%" (
+    call :log_success "Configuration file exists"
+    REM Try to parse basic info from it
+    powershell -NoProfile -Command "try { $c=Get-Content '%CONFIG_FILE%'|ConvertFrom-Json; Write-Host '[CONFIG] Provider:' $c.whatsapp.provider } catch { Write-Host '[CONFIG] Unable to parse config' }" 2>nul
+) ELSE (
+    call :log_warning "Configuration file NOT FOUND - will be created on first run"
+    call :log_info "You will need to edit %CONFIG_FILE% after first startup"
+)
+echo.
 
 REM Check prerequisites
+call :log_step "CHECK" "Verifying environment"
+
 IF NOT EXIST "%VENV_PYTHON%" (
-    echo.
-    echo [ERROR] Virtual environment not found at:
-    echo   %VENV_PYTHON%
-    echo.
-    echo Run setup-bundled.bat first to set up the environment.
+    call :log_error "Virtual environment not found at: %VENV_PYTHON%"
+    call :log_info "Run setup-bundled.bat first to set up the environment."
     pause
     exit /b 1
 )
+call :log_success "Virtual environment found"
 
-echo.
-echo ==========================================
-echo Busy Whatsapp Bridge - Development Mode
-echo ==========================================
+REM Check Node.js
+where node >nul 2>nul
+IF %ERRORLEVEL% NEQ 0 (
+    call :log_error "Node.js not found in PATH"
+    call :log_info "Please install Node.js 18+ from https://nodejs.org/"
+    pause
+    exit /b 1
+)
+for /f "delims=" %%v in ('node --version 2^>nul') do set "NODE_VERSION=%%v"
+call :log_success "Node.js found: %NODE_VERSION%"
+
+REM Check Python version
+for /f "delims=" %%v in ('"%VENV_PYTHON%" --version 2^>nul') do set "PYTHON_VERSION=%%v"
+call :log_success "Python found: %PYTHON_VERSION%"
 echo.
 
 REM ============================================================================
 REM Step 1: Check and Build Dashboard
 REM ============================================================================
-echo [STEP 1/3] Checking dashboard build status...
+call :log_step "STEP 1/3" "Checking dashboard build status"
 
 REM Check if dashboard needs building
 SET "NEEDS_BUILD=0"
 
-IF NOT EXIST "%DASHBOARD_DIST%" SET "NEEDS_BUILD=1"
-IF NOT EXIST "%DASHBOARD_DIST%\index.html" SET "NEEDS_BUILD=1"
-IF NOT EXIST "%NODE_MODULES%" SET "NEEDS_BUILD=1"
+IF NOT EXIST "%DASHBOARD_DIST%" (
+    call :log_info "Dashboard dist folder not found: %DASHBOARD_DIST%"
+    SET "NEEDS_BUILD=1"
+)
+IF NOT EXIST "%DASHBOARD_DIST%\index.html" (
+    call :log_info "Dashboard index.html not found"
+    SET "NEEDS_BUILD=1"
+)
+IF NOT EXIST "%NODE_MODULES%" (
+    call :log_info "Node modules not found"
+    SET "NEEDS_BUILD=1"
+)
 
 IF "!NEEDS_BUILD!"=="1" (
-    echo.
-    echo [BUILD] Dashboard needs to be built.
-    echo [BUILD] This may take 1-2 minutes for first build...
+    call :log_info "Dashboard needs to be built (first time or missing files)"
+    call :log_info "This may take 1-2 minutes for first build..."
     echo.
     
     REM Check if npm is available
     where npm >nul 2>nul
     IF %ERRORLEVEL% NEQ 0 (
-        echo [ERROR] npm not found. Please install Node.js from https://nodejs.org/
-        echo [ERROR] Node.js 18+ is required.
+        call :log_error "npm not found in PATH"
+        call :log_info "Please install Node.js 18+ from https://nodejs.org/"
         pause
         exit /b 1
     )
     
     REM Install dependencies if node_modules doesn't exist
     IF NOT EXIST "%NODE_MODULES%" (
-        echo [BUILD] Installing npm dependencies...
+        call :log_info "Installing npm dependencies in: %DASHBOARD_DIR%"
         cd /d "%DASHBOARD_DIR%"
+        call :log_cmd "npm install"
         call npm install
         IF %ERRORLEVEL% NEQ 0 (
-            echo [ERROR] Failed to install npm dependencies!
-            echo [ERROR] Check the error messages above.
+            call :log_error "Failed to install npm dependencies! (Exit code: %ERRORLEVEL%)"
+            call :log_info "Check the error messages above for details."
             pause
             exit /b 1
         )
-        echo [BUILD] Dependencies installed successfully.
+        call :log_success "Dependencies installed successfully"
         echo.
     )
     
     REM Build the dashboard - SHOW ALL OUTPUT
-    echo [BUILD] Building dashboard for production...
-    echo [BUILD] ==========================================
+    call :log_info "Building dashboard for production..."
+    call :log_info "Command: npm run build"
+    echo.
     cd /d "%DASHBOARD_DIR%"
     call npm run build
     SET "BUILD_RESULT=!ERRORLEVEL!"
-    echo [BUILD] ==========================================
     
     IF !BUILD_RESULT! NEQ 0 (
         echo.
-        echo [ERROR] Dashboard build failed with error code: !BUILD_RESULT!
-        echo [ERROR] Please check the error messages above.
+        call :log_error "Dashboard build failed with error code: !BUILD_RESULT!"
+        call :log_info "Please check the error messages above."
         echo.
         pause
         exit /b 1
     )
-    echo.
-    echo [BUILD] Dashboard built successfully!
+    call :log_success "Dashboard built successfully!"
 ) ELSE (
-    echo [INFO] Dashboard is up to date.
+    call :log_success "Dashboard is up to date"
 )
-
 echo.
 
 REM ============================================================================
 REM Step 2: Clean up existing processes
 REM ============================================================================
-echo [STEP 2/3] Stopping existing BusyWhatsappBridge processes...
+call :log_step "STEP 2/3" "Stopping existing BusyWhatsappBridge processes"
 
 REM Stop existing Python and Node processes related to BWB
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'BusyWhatsappBridge' -and ($_.CommandLine -match 'run\.py|baileys-server' -or $_.Name -match 'python|node') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Write-Host ('[INFO] Stopped PID ' + $_.ProcessId) }" 2>nul
+call :log_info "Checking for existing BWB processes..."
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$count=0; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'BusyWhatsappBridge' -and ($_.CommandLine -match 'run\.py|baileys-server' -or $_.Name -match 'python|node') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $count++; Write-Host ('[STOPPED] PID ' + $_.ProcessId + ' - ' + $_.Name) }; if($count -eq 0) { Write-Host '[INFO] No existing BWB processes found' } else { Write-Host ('[INFO] Stopped ' + $count + ' process(es)') }" 2>nul
 
 REM Clear ports 3001 (Baileys) and 8000 (FastAPI)
-echo [INFO] Clearing ports 3001 and 8000...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ports = @(3001,8000); foreach($port in $ports){ Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue; Write-Host ('[INFO] Stopped process ' + $_ + ' on port ' + $port) } }" 2>nul
+call :log_info "Checking ports 3001 (Baileys) and 8000 (FastAPI)..."
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ports = @(3001,8000); $found=$false; foreach($port in $ports){ $procs = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique; foreach($proc in $procs) { Stop-Process -Id $proc -Force -ErrorAction SilentlyContinue; $found=$true; Write-Host ('[STOPPED] Process ' + $proc + ' on port ' + $port) } }; if(-not $found) { Write-Host '[INFO] Ports are clear' }" 2>nul
 
 timeout /t 2 /nobreak >nul
 echo.
@@ -113,24 +162,94 @@ echo.
 REM ============================================================================
 REM Step 3: Start Application
 REM ============================================================================
-echo [STEP 3/3] Starting Busy Whatsapp Bridge...
-echo [INFO] Console will show logs. Tray icon will appear in system tray.
-echo [INFO] Access dashboard at: http://localhost:8000/dashboard
+call :log_step "STEP 3/3" "Starting Busy Whatsapp Bridge"
+
+call :log_info "Environment variables set:"
+echo   - BWB_DEV_CONSOLE_LOGS=1
+echo   - CONFIG_DIR=%CONFIG_DIR%
 echo.
-echo Press Ctrl+C to stop the application
-echo ==========================================
+call :log_info "Services will start:"
+echo   - Baileys Node.js server (port 3001)
+echo   - FastAPI gateway (port 8000)
+echo.
+call :log_info "Access dashboard at: http://localhost:8000/dashboard"
+call :log_info "Tray icon will appear in system tray"
+echo.
+call :log_info "Press Ctrl+C to stop the application"
+call :log_separator
 echo.
 
 REM Set environment variable for console logging
 SET "BWB_DEV_CONSOLE_LOGS=1"
 
-REM Start the application
+REM Display the exact command being executed
+call :log_cmd "\"%VENV_PYTHON%\" \"%SCRIPT_DIR%run.py\""
 cd /d "%SCRIPT_DIR%"
-"%VENV_PYTHON%" "%~dp0run.py"
+
+REM Start the application with real-time output
+echo.
+"%VENV_PYTHON%" "%SCRIPT_DIR%run.py"
+SET "APP_EXIT_CODE=%ERRORLEVEL%"
 
 REM If we get here, the app has exited
 echo.
-echo ==========================================
-echo [INFO] Application stopped.
-echo ==========================================
+call :log_separator
+IF %APP_EXIT_CODE% NEQ 0 (
+    call :log_error "Application exited with code: %APP_EXIT_CODE%"
+    call :log_info "Check the logs above for error details"
+) ELSE (
+    call :log_success "Application stopped normally"
+)
+call :log_separator
 pause
+
+REM ============================================================================
+REM Logging Helper Functions
+REM ============================================================================
+:log_header
+    echo.
+    echo ==========================================
+    echo %~1
+    echo ==========================================
+    goto :eof
+
+:log_separator
+    echo ==========================================
+    goto :eof
+
+:log_timestamp
+    for /f "tokens=2 delims==" %%a in ('wmic os get localdatetime /value') do set "DT=%%a"
+    set "NOW=%DT:~8,2%:%DT:~10,2%:%DT:~12,2%"
+    echo [%NOW%]
+    goto :eof
+
+:log_info
+    for /f "tokens=2 delims==" %%a in ('wmic os get localdatetime /value') do set "DT=%%a"
+    echo [%DT:~8,2%:%DT:~10,2%:%DT:~12,2%] [INFO] %~1
+    goto :eof
+
+:log_success
+    for /f "tokens=2 delims==" %%a in ('wmic os get localdatetime /value') do set "DT=%%a"
+    echo [%DT:~8,2%:%DT:~10,2%:%DT:~12,2%] [OK] %~1
+    goto :eof
+
+:log_warning
+    for /f "tokens=2 delims==" %%a in ('wmic os get localdatetime /value') do set "DT=%%a"
+    echo [%DT:~8,2%:%DT:~10,2%:%DT:~12,2%] [WARN] %~1
+    goto :eof
+
+:log_error
+    for /f "tokens=2 delims==" %%a in ('wmic os get localdatetime /value') do set "DT=%%a"
+    echo [%DT:~8,2%:%DT:~10,2%:%DT:~12,2%] [ERROR] %~1
+    goto :eof
+
+:log_step
+    for /f "tokens=2 delims==" %%a in ('wmic os get localdatetime /value') do set "DT=%%a"
+    echo.
+    echo [%DT:~8,2%:%DT:~10,2%:%DT:~12,2%] [%~1] %~2
+    goto :eof
+
+:log_cmd
+    for /f "tokens=2 delims==" %%a in ('wmic os get localdatetime /value') do set "DT=%%a"
+    echo [%DT:~8,2%:%DT:~10,2%:%DT:~12,2%] [CMD] %~1
+    goto :eof
