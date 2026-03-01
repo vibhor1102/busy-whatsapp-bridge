@@ -61,7 +61,7 @@ TRAY_ICON: Optional[Any] = None
 INSTANCE_MUTEX_HANDLE = None
 LOG_QUEUE: queue.Queue = queue.Queue()
 CONSOLE_MODE = True
-LAST_SIGINT_TS: Optional[float] = None
+
 
 ANSI_COLORS = {
     'reset': '\033[0m',
@@ -355,20 +355,6 @@ def stop_all():
     log('SYSTEM', 'All servers stopped', 'green')
 
 
-def should_shutdown_on_interrupt() -> bool:
-    """
-    Require double Ctrl+C within 2 seconds to avoid accidental shutdowns
-    while copying terminal text in dev console mode.
-    """
-    global LAST_SIGINT_TS
-    now = time.time()
-    if LAST_SIGINT_TS and (now - LAST_SIGINT_TS) <= 2.0:
-        LAST_SIGINT_TS = None
-        return True
-    LAST_SIGINT_TS = now
-    log('SYSTEM', 'Press Ctrl+C again within 2 seconds to stop servers', 'yellow')
-    return False
-
 def wait_for_server(url: str, name: str, timeout: int = 30) -> bool:
     import httpx
     log('SYSTEM', f'Waiting for {name} to be ready...', 'yellow')
@@ -549,10 +535,9 @@ def run_console_mode():
     log('SYSTEM', 'Press Ctrl+C to stop all servers', 'yellow')
     
     def signal_handler(sig, frame):
-        if should_shutdown_on_interrupt():
-            print()
-            stop_all()
-            sys.exit(0)
+        print()
+        stop_all()
+        sys.exit(0)
     
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -605,8 +590,6 @@ def run_tray_mode():
         stop_all()
 
     def signal_handler(sig, frame):
-        if not should_shutdown_on_interrupt():
-            return
         log('SYSTEM', 'Interrupt received, shutting down...', 'yellow')
         stop_all()
         if TRAY_ICON:
@@ -650,9 +633,8 @@ def run_headless_mode():
     log('SYSTEM', f'Running in headless mode. Logs: {LOG_DIR}\\gateway_*.log', 'green')
 
     def signal_handler(sig, frame):
-        if should_shutdown_on_interrupt():
-            stop_all()
-            sys.exit(0)
+        stop_all()
+        sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)

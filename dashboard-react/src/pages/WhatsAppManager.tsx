@@ -25,8 +25,19 @@ export function WhatsAppManager() {
 
   const { data: status, isLoading } = useQuery({
     queryKey: ['baileys-status'],
-    queryFn: api.getBaileysStatus,
+    queryFn: () => api.getBaileysStatus(),
     refetchInterval: REFETCH_INTERVALS.BAILEYS_STATUS,
+  });
+
+  const { data: qrData, isLoading: isLoadingQr } = useQuery({
+    queryKey: ['baileys-qr', status?.state],
+    queryFn: () => api.getBaileysQr(),
+    enabled: status?.state === 'qr_ready',
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data?.data?.state === 'connected') return false;
+      return 3000; // Refetch every 3 seconds while showing QR
+    },
   });
 
   useEffect(() => {
@@ -36,9 +47,10 @@ export function WhatsAppManager() {
   }, [status, setBaileysStatus]);
 
   const restartMutation = useMutation({
-    mutationFn: api.restartBaileys,
+    mutationFn: () => api.restartBaileys(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['baileys-status'] });
+      queryClient.invalidateQueries({ queryKey: ['baileys-qr'] });
       toast.success('Baileys service restarted successfully');
     },
     onError: (error: Error) => {
@@ -47,9 +59,10 @@ export function WhatsAppManager() {
   });
 
   const disconnectMutation = useMutation({
-    mutationFn: api.disconnectWhatsApp,
+    mutationFn: () => api.disconnectWhatsApp(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['baileys-status'] });
+      queryClient.invalidateQueries({ queryKey: ['baileys-qr'] });
       toast.success('WhatsApp disconnected successfully');
     },
     onError: (error: Error) => {
@@ -58,9 +71,10 @@ export function WhatsAppManager() {
   });
 
   const clearSessionMutation = useMutation({
-    mutationFn: api.clearWhatsAppSession,
+    mutationFn: () => api.clearWhatsAppSession(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['baileys-status'] });
+      queryClient.invalidateQueries({ queryKey: ['baileys-qr'] });
       toast.success('Session cleared successfully');
     },
     onError: (error: Error) => {
@@ -71,6 +85,7 @@ export function WhatsAppManager() {
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     await queryClient.invalidateQueries({ queryKey: ['baileys-status'] });
+    await queryClient.invalidateQueries({ queryKey: ['baileys-qr'] });
     setIsRefreshing(false);
   }, [queryClient]);
 
@@ -200,7 +215,7 @@ export function WhatsAppManager() {
       </motion.div>
 
       {/* QR Code Section */}
-      {isQrReady && status?.qr_image && (
+      {isQrReady && (
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -222,11 +237,23 @@ export function WhatsAppManager() {
             </p>
 
             <div className="inline-block p-5 bg-white rounded-xl shadow-lg">
-              <img
-                src={`data:image/png;base64,${status?.qr_image}`}
-                alt="WhatsApp QR Code"
-                className="w-56 h-56"
-              />
+              {isLoadingQr ? (
+                <div className="w-56 h-56 flex items-center justify-center">
+                  <Loader2 className="w-8 h-8 animate-spin" style={{ color: 'var(--text-tertiary)' }} />
+                </div>
+              ) : qrData?.data?.qrImage ? (
+                <img
+                  src={qrData.data.qrImage}
+                  alt="WhatsApp QR Code"
+                  className="w-56 h-56"
+                />
+              ) : (
+                <div className="w-56 h-56 flex items-center justify-center text-center p-4">
+                  <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>
+                    QR code not available yet. Please wait...
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </motion.div>

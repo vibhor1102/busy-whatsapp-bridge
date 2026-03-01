@@ -91,6 +91,16 @@ IF NOT EXIST "%NODE_MODULES%" (
     SET "NEEDS_BUILD=1"
 )
 
+REM Check if source files are newer than dist (staleness detection)
+IF "!NEEDS_BUILD!"=="0" (
+    call :log_info "Checking if dashboard build is outdated..."
+    powershell -NoProfile -Command "$dist=(Get-Item '%DASHBOARD_DIST%\index.html' -ErrorAction SilentlyContinue).LastWriteTime; if(-not $dist){exit 1}; $newer=Get-ChildItem '%DASHBOARD_DIR%\src' -Recurse -Include *.tsx,*.ts,*.css,*.html | Where-Object {$_.LastWriteTime -gt $dist}; if($newer){Write-Host $newer[0].Name; exit 1} else {exit 0}" 2>nul
+    IF !ERRORLEVEL! NEQ 0 (
+        call :log_info "Source files are newer than build"
+        SET "NEEDS_BUILD=1"
+    )
+)
+
 IF "!NEEDS_BUILD!"=="1" (
     call :log_info "Dashboard needs to be built (first time or missing files)"
     call :log_info "This may take 1-2 minutes for first build..."
@@ -201,7 +211,10 @@ IF %APP_EXIT_CODE% NEQ 0 (
     call :log_success "Application stopped normally"
 )
 call :log_separator
-pause
+exit /b %APP_EXIT_CODE%
+
+REM Should never reach here, but just in case
+exit /b 0
 
 REM ============================================================================
 REM Logging Helper Functions
