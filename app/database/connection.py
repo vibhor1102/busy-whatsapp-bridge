@@ -17,6 +17,13 @@ class BusyDatabase:
         self._connection: Optional[pyodbc.Connection] = None
         self._last_test_error: Optional[str] = None
     
+    def refresh_settings(self):
+        """Refresh settings from config file."""
+        get_settings.cache_clear()
+        self.settings = get_settings()
+        self._connection = None  # Force reconnection on next use
+        logger.info("database_settings_refreshed")
+    
     def connect(self) -> pyodbc.Connection:
         """Establish database connection."""
         conn_str = self.settings.database_connection_string

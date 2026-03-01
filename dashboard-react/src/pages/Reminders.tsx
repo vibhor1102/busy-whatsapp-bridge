@@ -27,7 +27,7 @@ import { getStatusDotColor } from '../utils/statusColors';
 import { formatCurrency, formatDateTime, formatDuration } from '../utils/formatters';
 import { REFETCH_INTERVALS, LIMITS, RETRY_DELAYS, POLLING } from '../constants';
 import { toast } from 'sonner';
-import type { MessageTemplate, ReminderSession } from '../types';
+import type { MessageTemplate, ReminderSession, PartyReminderInfo } from '../types';
 
 // ─── Sub-Components ────────────────────────────────────
 
@@ -237,14 +237,34 @@ export function Reminders() {
     }),
   });
 
-  // Update store when data loads
   useEffect(() => {
     if (config) setConfig(config);
-    if (templates) setTemplates(templates);
+    if (templates) {
+      setTemplates(templates);
+      const activeTemplate = templates.find((t: MessageTemplate) => t.is_default);
+      if (activeTemplate && !store.defaultTemplateId) {
+        store.setDefaultTemplateId(activeTemplate.id);
+      }
+    }
     if (stats) setStats(stats);
     if (snapshotStatus) setSnapshotStatus(snapshotStatus);
-    if (partiesData) setParties(partiesData.items);
-  }, [config, templates, stats, snapshotStatus, partiesData, setConfig, setTemplates, setStats, setSnapshotStatus, setParties]);
+    if (partiesData) {
+      setParties(partiesData.items);
+      const persisted: Record<string, boolean> = {};
+      partiesData.items.forEach((p: PartyReminderInfo) => {
+        if (p.permanent_enabled) {
+          persisted[p.code] = true;
+        }
+      });
+      if (Object.keys(persisted).length > 0) {
+        store.setPersistedSelection(persisted);
+        const enabledCodes = Object.keys(persisted).filter(code => persisted[code]);
+        if (enabledCodes.length > 0) {
+          store.selectParties(enabledCodes);
+        }
+      }
+    }
+  }, [config, templates, stats, snapshotStatus, partiesData, setConfig, setTemplates, setStats, setSnapshotStatus, setParties, store]);
 
   // Session polling
   const sessionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -302,6 +322,8 @@ export function Reminders() {
     mutationFn: api.refreshReminderSnapshot,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['reminder-snapshot'] });
+      queryClient.invalidateQueries({ queryKey: ['reminder-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['reminder-parties'] });
       toast.success('Data refreshed successfully');
     },
     onError: (error: Error) => {
@@ -315,7 +337,6 @@ export function Reminders() {
     onSuccess: (data) => {
       if (data.session_id) {
         setActiveSessionId(data.session_id);
-        store.clearSelection();
       }
       toast.success('Reminders queued successfully');
     },

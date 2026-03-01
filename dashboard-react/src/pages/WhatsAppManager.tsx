@@ -30,13 +30,13 @@ export function WhatsAppManager() {
   });
 
   const { data: qrData, isLoading: isLoadingQr } = useQuery({
-    queryKey: ['baileys-qr', status?.state],
+    queryKey: ['baileys-qr', status?.state, status?.qrAvailable],
     queryFn: () => api.getBaileysQr(),
-    enabled: status?.state === 'qr_ready',
+    enabled: status?.state === 'qr_ready' || status?.qrAvailable === true,
     refetchInterval: (query) => {
       const data = query.state.data;
       if (data?.data?.state === 'connected') return false;
-      return 3000; // Refetch every 3 seconds while showing QR
+      return 3000;
     },
   });
 
@@ -108,7 +108,7 @@ export function WhatsAppManager() {
   }
 
   const isConnected = status?.state === 'connected';
-  const isQrReady = status?.state === 'qr_ready';
+  const isQrReady = status?.state === 'qr_ready' || status?.qrAvailable === true;
   const statusStyle = getStatusStyle(status?.state || 'unknown');
 
   return (

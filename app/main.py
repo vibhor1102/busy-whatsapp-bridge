@@ -259,6 +259,8 @@ async def root():
 @app.get("/api/v1/health", response_model=HealthResponse, tags=["Health"])
 async def health_check():
     """Health check endpoint."""
+    # Refresh database settings before testing connection
+    db.refresh_settings()
     db_connected = db.test_connection()
     
     # Check WhatsApp provider status
@@ -454,7 +456,7 @@ async def baileys_qr_page():
     """
     Redirect to integrated dashboard WhatsApp page.
     """
-    return RedirectResponse(url="/dashboard#/whatsapp")
+    return RedirectResponse(url="/dashboard/whatsapp")
 
 
 @app.get("/api/v1/baileys/qr", tags=["Baileys"])
@@ -1005,7 +1007,11 @@ async def update_config_file(request: ConfigUpdateRequest):
         # Save updated settings
         save_settings(current_settings)
         
-        return {"success": True, "message": "Settings saved to conf.json. Restart required for changes to take effect."}
+        # Clear settings cache and refresh database connection
+        get_settings.cache_clear()
+        db.refresh_settings()
+        
+        return {"success": True, "message": "Settings saved and applied successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write conf.json: {str(e)}")
 

@@ -301,6 +301,10 @@ class CreateBatchRequest(BaseModel):
     party_codes: List[str] = Field(..., description="List of party codes to include")
     template_id: str = Field(..., description="Template to use")
     schedule_for: Optional[datetime] = Field(None, description="When to send (None = immediate)")
+    party_templates: Optional[Dict[str, str]] = Field(
+        None,
+        description="Per-party template overrides: {party_code: template_id}"
+    )
 
     @field_validator('party_codes')
     @classmethod

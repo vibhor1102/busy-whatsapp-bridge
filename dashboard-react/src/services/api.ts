@@ -203,7 +203,29 @@ class ApiService {
 
   // WhatsApp/Baileys
   async getBaileysStatus(): Promise<BaileysStatus> {
-    return this.fetch('/baileys/status');
+    const response = await this.fetch<BaileysStatus | { success: boolean; data: BaileysStatus }>('/baileys/status');
+    if (response && typeof response === 'object' && 'success' in response && 'data' in response) {
+      const data = (response as { data: BaileysStatus }).data;
+      return {
+        state: data?.state ?? 'unknown',
+        qrAvailable: data?.qrAvailable ?? false,
+        qrTimestamp: data?.qrTimestamp,
+        user: data?.user,
+        connectedAt: data?.connectedAt,
+        disconnectedAt: data?.disconnectedAt,
+        lastChecked: data?.lastChecked,
+      } as BaileysStatus;
+    }
+    const status = response as BaileysStatus;
+    return {
+      state: status?.state ?? 'unknown',
+      qrAvailable: status?.qrAvailable ?? false,
+      qrTimestamp: status?.qrTimestamp,
+      user: status?.user,
+      connectedAt: status?.connectedAt,
+      disconnectedAt: status?.disconnectedAt,
+      lastChecked: status?.lastChecked,
+    } as BaileysStatus;
   }
 
   async getBaileysQr(): Promise<{ data: { qrImage?: string; state?: string; user?: BaileysUserInfo } }> {

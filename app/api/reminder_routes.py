@@ -172,23 +172,24 @@ async def get_party_ledger_pdf(party_code: str):
 
 @router.put("/parties/{party_code}")
 async def update_party_config(
-    party_code: str,
-    request: UpdatePartyRequest
+    party_code: str, request: UpdatePartyRequest
 ):
     """Update party configuration (permanent settings)"""
     try:
         party = await reminder_service.update_party_selection(
             party_code=party_code,
             permanent_enabled=request.permanent_enabled,
-            credit_days_override=request.credit_days_override
+            credit_days_override=request.credit_days_override,
+            custom_template_id=request.custom_template_id,
+            notes=request.notes,
         )
-        
+
         return {
             "status": "success",
             "party": party,
             "message": "Party configuration updated"
         }
-        
+
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -219,25 +220,30 @@ async def calculate_amount_due(
 # ============================================
 
 @router.post("/batch")
-async def send_reminders(request: CreateBatchRequest):
+async def send_reminders_batch(request: CreateBatchRequest):
     """Send reminders to selected parties immediately"""
     try:
-        batch_id = await reminder_service.send_reminders_to_parties(
+        result = await reminder_service.send_reminders_to_parties(
             party_codes=request.party_codes,
             template_id=request.template_id,
-            sent_by="manual"
+            sent_by="manual",
+            party_templates=getattr(request, 'party_templates', None),
         )
+
+        batch_id = result.get("batch_id") if isinstance(result, dict) else result
+        session_id = result.get("session_id") if isinstance(result, dict) else None
 
         return {
             "status": "success",
             "batch_id": batch_id,
-            "message": f"Reminders queued for {len(request.party_codes)} parties"
+            "session_id": session_id,
+            "message": f"Sending reminders to {len(request.party_codes)} parties"
         }
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error("send_reminders_error", error=str(e))
+        logger.error("send_reminders_batch_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -640,38 +646,6 @@ async def get_active_sessions():
         return {"sessions": sessions}
     except Exception as e:
         logger.error("get_active_sessions_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/batch")
-async def send_reminders_batch(request: CreateBatchRequest):
-    """Send reminders to selected parties"""
-    try:
-        batch_id = await reminder_service.send_reminders_to_parties(
-            party_codes=request.party_codes,
-            template_id=request.template_id,
-            sent_by="manual"
-        )
-        
-        # Get the session ID from the active sessions
-        active_sessions = await reminder_service.get_active_sessions()
-        session_id = None
-        for session in active_sessions:
-            if session.get("progress", {}).get("total") == len(request.party_codes):
-                session_id = session.get("session_id")
-                break
-        
-        return {
-            "status": "success",
-            "batch_id": batch_id,
-            "session_id": session_id,
-            "message": f"Sending reminders to {len(request.party_codes)} parties"
-        }
-        
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error("send_reminders_batch_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 

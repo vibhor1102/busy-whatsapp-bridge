@@ -3,7 +3,9 @@ Reminder Configuration Service
 
 Handles read/write operations for reminder_config.json
 Ensures thread-safe access and data integrity.
+Supports multi-company isolation via database-scoped configurations.
 """
+import hashlib
 import json
 import os
 from datetime import datetime
@@ -28,23 +30,62 @@ from app.models.reminder_schemas import (
 logger = structlog.get_logger()
 
 
+def compute_scope_key(db_path: Optional[str]) -> str:
+    """
+    Compute a stable scope key from database path.
+    Returns 'default' if no path provided.
+    """
+    if not db_path:
+        return "default"
+    normalized = os.path.normpath(os.path.abspath(db_path)).lower()
+    return hashlib.sha256(normalized.encode()).hexdigest()[:12]
+
+
 class ReminderConfigService:
-    """Service for managing reminder configuration persistence"""
-    
+    """Service for managing reminder configuration persistence with multi-company support"""
+
     def __init__(self):
         self.settings = get_settings()
-        self.config_path = Path(self.settings.REMINDER_CONFIG_PATH)
-        self._config: Optional[ReminderConfig] = None
-        self._ensure_config_file()
-    
-    def _ensure_config_file(self):
-        """Ensure config file exists with defaults"""
-        if not self.config_path.exists():
-            logger.info("creating_default_config_file", path=str(self.config_path))
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self._base_config_dir = Path(self.settings.REMINDER_CONFIG_PATH).parent
+        self._configs: Dict[str, ReminderConfig] = {}
+        self._current_scope: Optional[str] = None
+        self._ensure_base_dir()
+
+    def _ensure_base_dir(self):
+        """Ensure base config directory exists"""
+        self._base_config_dir.mkdir(parents=True, exist_ok=True)
+
+    def _get_config_path(self, scope_key: str) -> Path:
+        """Get config file path for a scope"""
+        if scope_key == "default":
+            return self._base_config_dir / CONFIG_FILE_NAME
+        scope_dir = self._base_config_dir / "scopes" / scope_key
+        scope_dir.mkdir(parents=True, exist_ok=True)
+        return scope_dir / CONFIG_FILE_NAME
+
+    def set_scope(self, db_path: Optional[str]) -> str:
+        """
+        Set current scope based on database path.
+        Returns the scope key.
+        """
+        scope_key = compute_scope_key(db_path)
+        if scope_key != self._current_scope:
+            self._current_scope = scope_key
+            logger.info("reminder_config_scope_changed", scope_key=scope_key)
+        return scope_key
+
+    def get_current_scope(self) -> str:
+        """Get current scope key"""
+        return self._current_scope or "default"
+
+    def _ensure_config_file(self, scope_key: str):
+        """Ensure config file exists with defaults for given scope"""
+        config_path = self._get_config_path(scope_key)
+        if not config_path.exists():
+            logger.info("creating_default_config_file", path=str(config_path), scope=scope_key)
             default_config = self._create_default_config()
-            self._save_config_to_file(default_config)
-    
+            self._save_config_to_file(default_config, config_path)
+
     def _create_default_config(self) -> ReminderConfig:
         """Create default configuration"""
         from app.constants.reminder_constants import (
@@ -131,49 +172,46 @@ class ReminderConfigService:
             active_template_id=DEFAULT_TEMPLATE_ID,
             parties={}
         )
-    
-    def _load_config_from_file(self) -> ReminderConfig:
+
+    def _load_config_from_file(self, scope_key: str) -> ReminderConfig:
         """Load configuration from JSON file with migration support"""
+        config_path = self._get_config_path(scope_key)
         try:
-            with open(self.config_path, 'r', encoding='utf-8') as f:
+            with open(config_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            
-            # Migrate old config format to new format
+
             data = self._migrate_config(data)
-            
+
             config = ReminderConfig(**data)
-            logger.debug("config_loaded_from_file", path=str(self.config_path))
+            logger.debug("config_loaded_from_file", path=str(config_path), scope=scope_key)
             return config
-            
+
         except Exception as e:
             logger.error(
                 "error_loading_config",
-                path=str(self.config_path),
+                path=str(config_path),
+                scope=scope_key,
                 error=str(e)
             )
-            # Return default config if file is corrupted
             return self._create_default_config()
-    
+
     def _migrate_config(self, data: dict) -> dict:
         """
         Migrate old config format to new format.
         Handles adding new fields that didn't exist in older versions.
         """
         migrated = False
-        
-        # Add currency_symbol if missing
+
         if "currency_symbol" not in data:
             data["currency_symbol"] = "₹"
             migrated = True
             logger.debug("config_migration_added_currency_symbol")
 
-        # Align reminder provider with configured WhatsApp provider if missing
         if "default_provider" not in data:
             data["default_provider"] = self.settings.WHATSAPP_PROVIDER
             migrated = True
             logger.debug("config_migration_added_default_provider", provider=data["default_provider"])
-        
-        # Add company settings if missing
+
         if "company" not in data:
             data["company"] = {
                 "name": "Your Company Name",
@@ -182,8 +220,7 @@ class ReminderConfigService:
             }
             migrated = True
             logger.debug("config_migration_added_company_settings")
-        
-        # Add ledger settings if missing
+
         if "ledger" not in data:
             data["ledger"] = {
                 "date_range_days": 90,
@@ -191,16 +228,14 @@ class ReminderConfigService:
             }
             migrated = True
             logger.debug("config_migration_added_ledger_settings")
-        
-        # Add history settings if missing
+
         if "history" not in data:
             data["history"] = {
                 "retention_days": 365
             }
             migrated = True
             logger.debug("config_migration_added_history_settings")
-        
-        # Add limits settings if missing
+
         if "limits" not in data:
             data["limits"] = {
                 "max_templates": 6,
@@ -209,26 +244,21 @@ class ReminderConfigService:
             }
             migrated = True
             logger.debug("config_migration_added_limits_settings")
-        
-        # Migrate templates to use {contact_phone} and {currency_symbol} variables
-        # instead of hardcoded values
+
         if "templates" in data:
             for template in data["templates"]:
                 content = template.get("content", "")
-                # Replace hardcoded phone numbers with variable
                 if "7206366664" in content and "{contact_phone}" not in content:
                     content = content.replace("7206366664", "{contact_phone}")
                     template["content"] = content
                     migrated = True
                     logger.debug("config_migration_updated_template_phone", template_id=template.get("id"))
-                # Replace hardcoded currency symbol with variable  
                 if "₹{amount_due}" in content and "{currency_symbol}{amount_due}" not in content:
                     content = content.replace("₹{amount_due}", "{currency_symbol}{amount_due}")
                     template["content"] = content
                     migrated = True
                     logger.debug("config_migration_updated_template_currency", template_id=template.get("id"))
-        
-        # Update template variables list to include new variables
+
         if "templates" in data:
             for template in data["templates"]:
                 variables = template.get("variables", [])
@@ -245,57 +275,60 @@ class ReminderConfigService:
                     variables.append("phone")
                     migrated = True
                 template["variables"] = variables
-        
+
         if migrated:
             logger.info("config_migrated_to_new_format")
-            # Save the migrated config back to file
-            data["last_updated"] = datetime.now().isoformat()
-            with open(self.config_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, default=str)
-        
+
         return data
-    
-    def _save_config_to_file(self, config: ReminderConfig):
+
+    def _save_config_to_file(self, config: ReminderConfig, config_path: Path):
         """Save configuration to JSON file"""
         try:
-            # Update last_updated timestamp
             config.last_updated = datetime.now()
-            
-            with open(self.config_path, 'w', encoding='utf-8') as f:
+
+            with open(config_path, 'w', encoding='utf-8') as f:
                 json.dump(config.model_dump(), f, indent=2, default=str)
-            
-            logger.debug("config_saved_to_file", path=str(self.config_path))
-            
+
+            logger.debug("config_saved_to_file", path=str(config_path))
+
         except Exception as e:
             logger.error(
                 "error_saving_config",
-                path=str(self.config_path),
+                path=str(config_path),
                 error=str(e)
             )
             raise
-    
-    def get_config(self) -> ReminderConfig:
+
+    def get_config(self, scope_key: Optional[str] = None) -> ReminderConfig:
         """Get current configuration (cached)"""
-        if self._config is None:
-            self._config = self._load_config_from_file()
-        return self._config
-    
-    def reload_config(self) -> ReminderConfig:
+        if scope_key is None:
+            scope_key = self.get_current_scope()
+        if scope_key not in self._configs:
+            self._ensure_config_file(scope_key)
+            self._configs[scope_key] = self._load_config_from_file(scope_key)
+        return self._configs[scope_key]
+
+    def reload_config(self, scope_key: Optional[str] = None) -> ReminderConfig:
         """Force reload configuration from file"""
-        self._config = self._load_config_from_file()
-        return self._config
-    
-    def save_config(self, config: ReminderConfig):
+        if scope_key is None:
+            scope_key = self.get_current_scope()
+        self._configs[scope_key] = self._load_config_from_file(scope_key)
+        return self._configs[scope_key]
+
+    def save_config(self, config: ReminderConfig, scope_key: Optional[str] = None):
         """Save configuration"""
-        self._save_config_to_file(config)
-        self._config = config
-    
-    def update_schedule(self, schedule: ScheduleConfig):
+        if scope_key is None:
+            scope_key = self.get_current_scope()
+        config_path = self._get_config_path(scope_key)
+        self._save_config_to_file(config, config_path)
+        self._configs[scope_key] = config
+
+    def update_schedule(self, schedule: ScheduleConfig, scope_key: Optional[str] = None):
         """Update schedule configuration"""
-        config = self.get_config()
+        config = self.get_config(scope_key)
         config.schedule = schedule
-        self.save_config(config)
-        logger.info("schedule_config_updated")
+        self.save_config(config, scope_key)
+        logger.info("schedule_config_updated", scope=scope_key or self.get_current_scope())
     
     def get_party_config(self, party_code: str) -> Optional[PartyConfig]:
         """Get configuration for a specific party"""

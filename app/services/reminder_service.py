@@ -241,7 +241,9 @@ class ReminderService:
         party_code: str,
         temp_enabled: Optional[bool] = None,
         permanent_enabled: Optional[bool] = None,
-        credit_days_override: Optional[int] = None
+        credit_days_override: Optional[int] = None,
+        custom_template_id: Optional[str] = None,
+        notes: Optional[str] = None,
     ) -> PartyReminderInfo:
         """
         Update party selection/configuration
@@ -251,29 +253,44 @@ class ReminderService:
             temp_enabled: Temporary selection (current batch only)
             permanent_enabled: Permanent selection (saved to config)
             credit_days_override: Override credit days for this party
-            
+            custom_template_id: Custom template override for this party
+            notes: Internal notes about this party
+
         Returns:
             Updated PartyReminderInfo
         """
         logger.info(
             "updating_party_selection",
             party_code=party_code,
-            permanent_enabled=permanent_enabled
+            permanent_enabled=permanent_enabled,
+            custom_template_id=custom_template_id,
         )
 
-        # Update permanent config if provided
-        if permanent_enabled is not None or credit_days_override is not None:
+        needs_config_update = (
+            permanent_enabled is not None
+            or credit_days_override is not None
+            or custom_template_id is not None
+            or notes is not None
+        )
+
+        if needs_config_update:
             party_config = self.config_service.get_party_config(party_code)
-            
+
             if party_config is None:
                 party_config = PartyConfig()
-            
+
             if permanent_enabled is not None:
                 party_config.enabled = permanent_enabled
-            
+
             if credit_days_override is not None:
                 party_config.credit_days_override = credit_days_override
-            
+
+            if custom_template_id is not None:
+                party_config.custom_template_id = custom_template_id
+
+            if notes is not None:
+                party_config.notes = notes
+
             self.config_service.update_party_config(party_code, party_config)
         
         if permanent_enabled is not None:
@@ -348,22 +365,24 @@ class ReminderService:
         party_codes: List[str],
         template_id: str,
         sent_by: str = "manual",
-        schedule_delay: Optional[int] = None
-    ) -> str:
+        schedule_delay: Optional[int] = None,
+        party_templates: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
         """
         Send reminders to selected parties with anti-spam measures
-        
+
         Args:
             party_codes: List of party codes to send to
-            template_id: Template ID to use
+            template_id: Template ID to use as default
             sent_by: Who triggered the send ("manual" or "scheduler")
             schedule_delay: Delay in seconds before sending (None = immediate)
-            
+            party_templates: Per-party template overrides {party_code: template_id}
+
         Returns:
-            Batch ID
+            Dict with batch_id and session_id
         """
         batch_id = str(uuid.uuid4())
-        
+
         logger.info(
             "sending_reminders",
             batch_id=batch_id,
@@ -371,21 +390,18 @@ class ReminderService:
             template_id=template_id,
             sent_by=sent_by
         )
-        
+
         try:
-            # Get template
             template = self.config_service.get_template(template_id)
             if template is None:
                 raise ValueError(f"Template '{template_id}' not found")
-            
-            # Create anti-spam session
+
             session = await anti_spam_service.create_session(
                 party_codes=party_codes,
                 template_id=template_id
             )
             session.metrics.start_time = datetime.now()
-            
-            # Create batch record
+
             batch = ReminderBatch(
                 batch_id=batch_id,
                 template_id=template_id,
@@ -393,8 +409,7 @@ class ReminderService:
                 parties=party_codes,
                 status=REMINDER_STATUS_SENDING
             )
-            
-            # Startup delay: Set online and wait
+
             startup_delay_mins = anti_spam_service.calculate_startup_delay()
             if startup_delay_mins > 0:
                 session.state = SessionState.STARTING
@@ -404,30 +419,27 @@ class ReminderService:
                     session_id=session.session_id,
                     delay_minutes=startup_delay_mins
                 )
-                
-                # Set user online
+
                 provider = BaileysProvider()
                 await provider.set_presence(online=True)
-                
-                # Wait for startup delay
+
                 startup_delay_seconds = startup_delay_mins * 60
                 await asyncio.sleep(startup_delay_seconds)
-                
+
                 logger.info(
                     "startup_delay_complete",
                     batch_id=batch_id,
                     session_id=session.session_id
                 )
-            
+
             session.state = SessionState.ONLINE
-            
-            # Process each party
+
             results = {}
             config = self.config_service.get_config()
-            
+            templates_used: Dict[str, str] = {}
+
             for i, party_code in enumerate(party_codes):
                 try:
-                    # Check for pause/stop
                     await session.wait_if_paused()
                     if session.check_stop():
                         logger.info(
@@ -437,23 +449,33 @@ class ReminderService:
                             processed=i
                         )
                         break
-                    
+
                     session.current_index = i
-                    
-                    # Calculate amount due
+
+                    effective_template_id = self._resolve_effective_template(
+                        party_code=party_code,
+                        batch_template_id=template_id,
+                        party_templates=party_templates,
+                    )
+                    templates_used[party_code] = effective_template_id
+
+                    effective_template = self.config_service.get_template(effective_template_id)
+                    if effective_template is None:
+                        raise ValueError(f"Template '{effective_template_id}' not found")
+
                     calculation = await self.calculator.calculate_for_party(party_code)
-                    
+
+                    session.current_index = i
+
                     if calculation.amount_due <= 0:
                         results[party_code] = {
                             "status": "skipped",
                             "reason": "amount_due_not_positive"
                         }
                         continue
-                    
-                    # Generate ledger PDF
+
                     pdf_bytes = await self.generate_ledger_pdf(party_code)
-                    
-                    # Inflate PDF if enabled
+
                     if pdf_inflation_service._enabled:
                         pdf_path = str(self._ledger_dir / f"ledger_{party_code}_{batch_id}.pdf")
                         inflated_path = str(self._ledger_dir / f"ledger_{party_code}_{batch_id}_inflated.pdf")
@@ -469,22 +491,18 @@ class ReminderService:
                         pdf_path = str(self._ledger_dir / f"ledger_{party_code}_{batch_id}.pdf")
                         with open(pdf_path, 'wb') as f:
                             f.write(pdf_bytes)
-                    
-                    # Get party info
+
                     party_info = ledger_data_service.get_customer_info(party_code)
-                    
-                    # Render message
+
                     variables = self.template_svc.get_template_variables(
                         party_code=party_code,
                         amount_due=float(calculation.amount_due)
                     )
-                    message = self.template_svc.render_template(template, variables)
-                    
-                    # Inflate message if enabled
+                    message = self.template_svc.render_template(effective_template, variables)
+
                     if message_inflation_service._enabled:
                         message = message_inflation_service.inject_invisible_chars(message)
-                    
-                    # Queue message
+
                     if party_info.phone:
                         provider_name = self._resolve_delivery_provider(config.default_provider)
                         media_ref = pdf_path if provider_name == "baileys" else None
@@ -503,14 +521,14 @@ class ReminderService:
                             provider=provider_name,
                             source="payment_reminder"
                         )
-                        
+
                         results[party_code] = {
                             "status": "queued",
                             "phone": party_info.phone,
                             "amount_due": str(calculation.amount_due),
                             "media_attached": bool(media_ref),
                         }
-                        
+
                         logger.info(
                             "reminder_queued",
                             party_code=party_code,
@@ -521,32 +539,31 @@ class ReminderService:
                             "status": "failed",
                             "reason": "no_phone_number"
                         }
-                    
-                    # Add delay between messages
+
                     if i < len(party_codes) - 1:
                         await asyncio.sleep(config.schedule.delay_between_messages)
-                        
-                except Exception as e:
+
+                except Exception as ex:
                     logger.error(
                         "reminder_send_failed",
                         party_code=party_code,
                         batch_id=batch_id,
-                        error=str(e)
+                        error=str(ex)
                     )
                     results[party_code] = {
                         "status": "failed",
-                        "error": str(e)
+                        "error": str(ex)
                     }
-            
-            # Update batch status
+
+            self._persist_template_overrides(templates_used)
+
             batch.status = REMINDER_STATUS_COMPLETED
             batch.results = results
             batch.sent_at = datetime.now()
-            
-            # Update session metrics
+
             session.metrics.end_time = datetime.now()
             session.state = SessionState.COMPLETED
-            
+
             logger.info(
                 "reminders_batch_completed",
                 batch_id=batch_id,
@@ -556,13 +573,15 @@ class ReminderService:
                 session_id=session.session_id,
                 duration_seconds=session.metrics.duration_seconds
             )
-            
-            # Send session report to admin
+
             if anti_spam_service.get_config().send_session_reports:
                 await self._send_session_report(session)
-            
-            return batch_id
-            
+
+            return {
+                "batch_id": batch_id,
+                "session_id": session.session_id,
+            }
+
         except Exception as e:
             logger.error(
                 "send_reminders_failed",
@@ -604,7 +623,42 @@ class ReminderService:
             True if stopped successfully
         """
         return await anti_spam_service.stop_session(session_id)
-    
+
+    def _resolve_effective_template(
+        self,
+        party_code: str,
+        batch_template_id: str,
+        party_templates: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """
+        Resolve effective template for a party with precedence:
+        1. Request-level override (party_templates)
+        2. Persisted party config custom_template_id
+        3. Batch default template
+        """
+        if party_templates and party_code in party_templates:
+            return party_templates[party_code]
+
+        party_config = self.config_service.get_party_config(party_code)
+        if party_config and party_config.custom_template_id:
+            return party_config.custom_template_id
+
+        return batch_template_id
+
+    def _persist_template_overrides(self, templates_used: Dict[str, str]) -> None:
+        """
+        Persist template overrides to party configs for parties where
+        a non-default template was used in this batch.
+        """
+        for party_code, template_id in templates_used.items():
+            party_config = self.config_service.get_party_config(party_code)
+            if party_config is None:
+                party_config = PartyConfig()
+
+            if party_config.custom_template_id != template_id:
+                party_config.custom_template_id = template_id
+                self.config_service.update_party_config(party_code, party_config)
+
     async def get_session_status(self, session_id: str) -> Optional[dict]:
         """Get status of a reminder session.
         

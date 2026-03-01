@@ -14,6 +14,10 @@ import time
 import signal
 from pathlib import Path
 
+# Import AppData path helper
+sys.path.insert(0, str(Path(__file__).parent))
+from app.config import get_roaming_appdata_path
+
 # Change to script directory
 os.chdir(Path(__file__).parent)
 
@@ -34,7 +38,7 @@ def start_baileys():
     print()
     
     env = os.environ.copy()
-    env['BAILEYS_AUTH_DIR'] = str(Path.home() / 'AppData/Roaming/BusyWhatsappBridge/auth/baileys_session')
+    env['BAILEYS_AUTH_DIR'] = str(get_roaming_appdata_path() / "auth" / "baileys_session")
     env['BAILEYS_PORT'] = '3001'
     
     proc = subprocess.Popen(

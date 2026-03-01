@@ -22,6 +22,7 @@ interface RemindersState {
   activeSession: ReminderSession | null;
   isLoading: boolean;
   isSending: boolean;
+  persistedSelection: Record<string, boolean>;
 }
 
 interface RemindersActions {
@@ -40,10 +41,11 @@ interface RemindersActions {
   clearSelection: () => void;
   setLoading: (loading: boolean) => void;
   setSending: (sending: boolean) => void;
+  setPersistedSelection: (selection: Record<string, boolean>) => void;
+  updatePersistedSelection: (partyCode: string, enabled: boolean) => void;
 }
 
 export const useRemindersStore = create<RemindersState & RemindersActions>((set, get) => ({
-  // State
   config: null,
   stats: null,
   snapshotStatus: null,
@@ -62,15 +64,15 @@ export const useRemindersStore = create<RemindersState & RemindersActions>((set,
   activeSession: null,
   isLoading: false,
   isSending: false,
+  persistedSelection: {},
 
-  // Actions
   setConfig: (config) => set({ config }),
   setStats: (stats) => set({ stats }),
   setSnapshotStatus: (snapshotStatus) => set({ snapshotStatus }),
   setTemplates: (templates) => set({ templates }),
   setParties: (parties) => set({ parties }),
   setDefaultTemplateId: (defaultTemplateId) => set({ defaultTemplateId }),
-  
+
   setPartyTemplate: (partyCode, templateId) => {
     const { partyTemplates } = get();
     set({
@@ -80,35 +82,62 @@ export const useRemindersStore = create<RemindersState & RemindersActions>((set,
       },
     });
   },
-  
+
   setAntiSpamConfig: (antiSpamConfig) => set({ antiSpamConfig }),
   setActiveSession: (activeSession) => set({ activeSession }),
-  
+
+  setPersistedSelection: (persistedSelection) => set({ persistedSelection }),
+
+  updatePersistedSelection: (partyCode, enabled) => {
+    const { persistedSelection } = get();
+    set({
+      persistedSelection: {
+        ...persistedSelection,
+        [partyCode]: enabled,
+      },
+    });
+  },
+
   togglePartySelection: (partyCode) => {
-    const { selectedPartyCodes } = get();
+    const { selectedPartyCodes, persistedSelection } = get();
     const newSet = new Set(selectedPartyCodes);
-    if (newSet.has(partyCode)) {
+    const wasSelected = newSet.has(partyCode);
+    if (wasSelected) {
       newSet.delete(partyCode);
     } else {
       newSet.add(partyCode);
     }
-    set({ selectedPartyCodes: newSet });
+    set({
+      selectedPartyCodes: newSet,
+      persistedSelection: {
+        ...persistedSelection,
+        [partyCode]: !wasSelected,
+      },
+    });
   },
-  
+
   selectParties: (partyCodes) => {
-    const { selectedPartyCodes } = get();
+    const { selectedPartyCodes, persistedSelection } = get();
     const newSet = new Set(selectedPartyCodes);
-    partyCodes.forEach(code => newSet.add(code));
-    set({ selectedPartyCodes: newSet });
+    const newPersisted = { ...persistedSelection };
+    partyCodes.forEach(code => {
+      newSet.add(code);
+      newPersisted[code] = true;
+    });
+    set({ selectedPartyCodes: newSet, persistedSelection: newPersisted });
   },
-  
+
   deselectParties: (partyCodes) => {
-    const { selectedPartyCodes } = get();
+    const { selectedPartyCodes, persistedSelection } = get();
     const newSet = new Set(selectedPartyCodes);
-    partyCodes.forEach(code => newSet.delete(code));
-    set({ selectedPartyCodes: newSet });
+    const newPersisted = { ...persistedSelection };
+    partyCodes.forEach(code => {
+      newSet.delete(code);
+      newPersisted[code] = false;
+    });
+    set({ selectedPartyCodes: newSet, persistedSelection: newPersisted });
   },
-  
+
   clearSelection: () => set({ selectedPartyCodes: new Set(), partyTemplates: {} }),
   setLoading: (isLoading) => set({ isLoading }),
   setSending: (isSending) => set({ isSending }),

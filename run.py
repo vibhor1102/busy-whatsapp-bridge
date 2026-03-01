@@ -435,11 +435,11 @@ def update_tray():
 def create_tray_menu():
     if not HAS_TRAY:
         return None
-    
+
     return pystray.Menu(
         pystray.MenuItem("Open Dashboard", lambda: open_url('http://localhost:8000/dashboard'), default=True),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Open WhatsApp Page", lambda: open_url('http://localhost:8000/dashboard#/whatsapp')),
+        pystray.MenuItem("Open WhatsApp Page", lambda: open_url('http://localhost:8000/dashboard/whatsapp')),
         pystray.MenuItem("Open API Docs", lambda: open_url('http://localhost:8000/docs')),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(
@@ -466,10 +466,10 @@ def show_status():
     for name, status in SERVER_STATUS.items():
         state = colorize("Running", 'green') if status['running'] else colorize("Stopped", 'red')
         pid = f" (PID: {status['pid']})" if status['pid'] else ""
-        print(f"  {name.title()}: {state}{pid}")
-    print("\n  Dashboard: http://localhost:8000/dashboard")
-    print("  WhatsApp:  http://localhost:8000/dashboard#/whatsapp")
-    print("  API Docs:  http://localhost:8000/docs")
+        print(f" {name.title()}: {state}{pid}")
+    print("\n Dashboard: http://localhost:8000/dashboard")
+    print(" WhatsApp: http://localhost:8000/dashboard/whatsapp")
+    print(" API Docs: http://localhost:8000/docs")
     print("="*60 + "\n")
 
 def stop_tray():

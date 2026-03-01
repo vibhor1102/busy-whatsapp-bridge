@@ -56,10 +56,15 @@ export interface BaileysUserInfo {
 }
 
 export interface BaileysStatus {
-  state: 'connected' | 'qr_ready' | 'disconnected' | 'connecting' | 'reconnecting' | 'logged_out' | 'unreachable';
+  state: 'connected' | 'qr_ready' | 'disconnected' | 'connecting' | 'reconnecting' | 'logged_out' | 'unreachable' | 'unknown';
+  qrAvailable?: boolean;
+  qrTimestamp?: string;
   user?: BaileysUserInfo;
   qr_image?: string;
   error?: string;
+  connectedAt?: string;
+  disconnectedAt?: string;
+  lastChecked?: string;
 }
 
 // System Types
