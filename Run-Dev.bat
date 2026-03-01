@@ -65,6 +65,16 @@ IF %ERRORLEVEL% NEQ 0 (
 for /f "delims=" %%v in ('node --version 2^>nul') do set "NODE_VERSION=%%v"
 call :log_success "Node.js found: %NODE_VERSION%"
 
+REM Resolve npm command (supports missing npm.cmd)
+call :resolve_npm
+IF !ERRORLEVEL! NEQ 0 (
+    call :log_error "npm not found in PATH or Node.js installation"
+    call :log_info "Install npm or repair Node.js install from https://nodejs.org/"
+    pause
+    exit /b 1
+)
+call :log_success "npm found: !NPM_VERSION!"
+
 REM Check Python version
 for /f "delims=" %%v in ('"%VENV_PYTHON%" --version 2^>nul') do set "PYTHON_VERSION=%%v"
 call :log_success "Python found: %PYTHON_VERSION%"
@@ -106,21 +116,12 @@ IF "!NEEDS_BUILD!"=="1" (
     call :log_info "This may take 1-2 minutes for first build..."
     echo.
     
-    REM Check if npm is available
-    where npm >nul 2>nul
-    IF %ERRORLEVEL% NEQ 0 (
-        call :log_error "npm not found in PATH"
-        call :log_info "Please install Node.js 18+ from https://nodejs.org/"
-        pause
-        exit /b 1
-    )
-    
     REM Install dependencies if node_modules doesn't exist
     IF NOT EXIST "%NODE_MODULES%" (
         call :log_info "Installing npm dependencies in: %DASHBOARD_DIR%"
         cd /d "%DASHBOARD_DIR%"
-        call :log_cmd "npm install"
-        call npm install
+        call :log_cmd "!NPM_CMD! install"
+        call !NPM_CMD! install
         IF %ERRORLEVEL% NEQ 0 (
             call :log_error "Failed to install npm dependencies! (Exit code: %ERRORLEVEL%)"
             call :log_info "Check the error messages above for details."
@@ -133,10 +134,10 @@ IF "!NEEDS_BUILD!"=="1" (
     
     REM Build the dashboard - SHOW ALL OUTPUT
     call :log_info "Building dashboard for production..."
-    call :log_info "Command: npm run build"
+    call :log_info "Command: !NPM_CMD! run build"
     echo.
     cd /d "%DASHBOARD_DIR%"
-    call npm run build
+    call !NPM_CMD! run build
     SET "BUILD_RESULT=!ERRORLEVEL!"
     
     IF !BUILD_RESULT! NEQ 0 (
@@ -266,3 +267,28 @@ REM ============================================================================
     for /f "tokens=2 delims==" %%a in ('wmic os get localdatetime /value') do set "DT=%%a"
     echo [%DT:~8,2%:%DT:~10,2%:%DT:~12,2%] [CMD] %~1
     goto :eof
+
+:resolve_npm
+    set "NPM_CMD=npm"
+    set "NPM_VERSION="
+    for /f "delims=" %%v in ('npm --version 2^>nul') do set "NPM_VERSION=%%v"
+    if defined NPM_VERSION exit /b 0
+
+    set "NODE_PATH="
+    for /f "delims=" %%p in ('where node 2^>nul') do (
+        if not defined NODE_PATH set "NODE_PATH=%%p"
+    )
+    if not defined NODE_PATH exit /b 1
+
+    set "NODE_DIR="
+    for %%d in ("!NODE_PATH!") do set "NODE_DIR=%%~dpd"
+    if not defined NODE_DIR exit /b 1
+
+    set "NPM_CLI=!NODE_DIR!node_modules\npm\bin\npm-cli.js"
+    if exist "!NPM_CLI!" (
+        set "NPM_CMD=node ""!NPM_CLI!"""
+        for /f "delims=" %%v in ('node "!NPM_CLI!" --version 2^>nul') do set "NPM_VERSION=%%v"
+        if defined NPM_VERSION exit /b 0
+    )
+
+    exit /b 1

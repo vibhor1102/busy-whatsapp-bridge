@@ -1,0 +1,4 @@
+src/pages/Reminders.tsx(415,31): error TS2304: Cannot find name 'useVirtualizer'.
+src/pages/Reminders.tsx(424,32): error TS2304: Cannot find name 'useVirtualizer'.
+src/pages/Reminders.tsx(665,65): error TS7006: Parameter 'virtualItem' implicitly has an 'any' type.
+src/pages/Reminders.tsx(789,64): error TS7006: Parameter 'virtualItem' implicitly has an 'any' type.

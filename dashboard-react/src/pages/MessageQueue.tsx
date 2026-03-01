@@ -29,7 +29,7 @@ export function MessageQueue() {
 
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['queue-stats'],
-    queryFn: api.getQueueStats,
+    queryFn: () => api.getQueueStats(),
     refetchInterval: REFETCH_INTERVALS.QUEUE_STATS,
   });
 

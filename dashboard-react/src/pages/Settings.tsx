@@ -11,6 +11,7 @@ import {
 import { api } from '../services/api';
 import { LoadingState } from '../components/ui/LoadingState';
 import { toast } from 'sonner';
+import type { Settings as SettingsConfig } from '../types';
 
 const DEFAULT_BAILEYS_URL = import.meta.env.VITE_BAILEYS_SERVER_URL || 'http://localhost:3001';
 const DEFAULT_PROVIDER = 'baileys';
@@ -48,7 +49,7 @@ export function Settings() {
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
-    queryFn: api.getSettingsConfig,
+    queryFn: () => api.getSettingsConfig(),
   });
 
   const hasInitializedRef = useRef(false);
@@ -74,7 +75,7 @@ export function Settings() {
   }, [settings]);
 
   const updateMutation = useMutation({
-    mutationFn: api.updateSettingsConfig,
+    mutationFn: (settings: Partial<SettingsConfig>) => api.updateSettingsConfig(settings),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
       toast.success('Settings saved successfully');

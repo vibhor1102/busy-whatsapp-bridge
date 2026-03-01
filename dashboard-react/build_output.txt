@@ -1,0 +1,12 @@
+
+> dashboard-react@0.0.0 build
+> tsc -b && vite build
+
+src/pages/Reminders.tsx(639,27): error TS2552: Cannot find name 'selectedParentRef'. Did you mean 'selectedParties'?
+src/pages/Reminders.tsx(642,34): error TS2304: Cannot find name 'selectedVirtualizer'.
+src/pages/Reminders.tsx(647,22): error TS2304: Cannot find name 'selectedVirtualizer'.
+src/pages/Reminders.tsx(647,65): error TS7006: Parameter 'virtualItem' implicitly has an 'any' type.
+src/pages/Reminders.tsx(762,23): error TS2552: Cannot find name 'availableParentRef'. Did you mean 'availableParties'?
+src/pages/Reminders.tsx(766,32): error TS2304: Cannot find name 'availableVirtualizer'.
+src/pages/Reminders.tsx(771,20): error TS2304: Cannot find name 'availableVirtualizer'.
+src/pages/Reminders.tsx(771,64): error TS7006: Parameter 'virtualItem' implicitly has an 'any' type.

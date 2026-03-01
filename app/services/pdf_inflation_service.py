@@ -121,193 +121,25 @@ class PDFInflationService:
         Returns:
             Path to inflated PDF
         """
-        if not self._enabled:
-            # Just copy the file
-            import shutil
-            shutil.copy(input_path, output_path)
-            return output_path
-        
+        import shutil
         input_path = Path(input_path)
         output_path = Path(output_path)
         
         if not input_path.exists():
             raise FileNotFoundError(f"Input PDF not found: {input_path}")
+            
+        # Due to PDF corruption issues on strict readers (like WhatsApp native viewer)
+        # when appending raw bytes after the %%EOF marker, structural inflation is disabled.
+        # Randomization is now handled natively via fpdf2 properties in ledger_pdf_service.
+        # We just copy the file now.
+        shutil.copy(input_path, output_path)
         
-        # Get original size
-        original_size = input_path.stat().st_size
-        target_size = self.calculate_target_size(original_size, target_multiplier)
-        
-        # Read original PDF
-        with open(input_path, 'rb') as f:
-            pdf_content = f.read()
-        
-        # Since we can't easily modify PDF structure without proper library,
-        # we'll use a simpler approach: append invisible content as PDF objects
-        inflated_content = self._append_invisible_content(
-            pdf_content,
-            target_size,
-            party_code
-        )
-        
-        # Write inflated PDF
-        with open(output_path, 'wb') as f:
-            f.write(inflated_content)
-        
-        # Verify
-        final_size = output_path.stat().st_size
-        actual_multiplier = final_size / original_size
-        
-        logger.info(
-            "pdf_inflated",
+        logger.debug(
+            "pdf_inflation_skipped_structurally",
             input_path=str(input_path),
-            output_path=str(output_path),
-            original_size=original_size,
-            final_size=final_size,
-            multiplier=round(actual_multiplier, 2)
+            output_path=str(output_path)
         )
-        
         return str(output_path)
-    
-    def _append_invisible_content(
-        self,
-        pdf_content: bytes,
-        target_size: int,
-        party_code: str
-    ) -> bytes:
-        """
-        Append invisible content to PDF.
-        
-        This method adds PDF objects that don't affect visual rendering
-        but increase file size.
-        
-        Args:
-            pdf_content: Original PDF bytes
-            target_size: Target size in bytes
-            party_code: Party code
-            
-        Returns:
-            Inflated PDF bytes
-        """
-        current_size = len(pdf_content)
-        
-        if current_size >= target_size:
-            return pdf_content
-        
-        # How many bytes to add
-        bytes_to_add = target_size - current_size
-        
-        # Create invisible content blocks
-        invisible_blocks = []
-        
-        # 1. Add metadata as XMP (invisible)
-        xmp_metadata = self._generate_xmp_metadata(party_code)
-        invisible_blocks.append(xmp_metadata.encode('utf-8'))
-        
-        # 2. Add invisible text content (white-on-white simulation)
-        # We add this as a PDF comment/object that's not rendered
-        while sum(len(block) for block in invisible_blocks) < bytes_to_add:
-            block_size = min(1024, bytes_to_add - sum(len(block) for block in invisible_blocks))
-            invisible_text = self._generate_invisible_block(block_size)
-            invisible_blocks.append(invisible_text)
-        
-        # Combine all blocks
-        inflated = pdf_content
-        for block in invisible_blocks:
-            inflated += block
-            if len(inflated) >= target_size:
-                break
-        
-        return inflated
-    
-    def _generate_xmp_metadata(self, party_code: str) -> str:
-        """
-        Generate XMP metadata packet.
-        
-        XMP is XML-based metadata that's invisible in PDF readers.
-        
-        Args:
-            party_code: Party code
-            
-        Returns:
-            XMP metadata string
-        """
-        metadata = self.generate_random_metadata(party_code)
-        timestamp = datetime.now().isoformat()
-        uuid = str(uuid4())
-        
-        # Add random content to make it unique
-        random_content = ''.join(random.choices(
-            'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-            k=random.randint(50, 200)
-        ))
-        
-        xmp = f"""
-%PDF comment for XMP metadata
-% {random_content}
-1 0 obj
-<<
-/Type /Metadata
-/Subtype /XML
-/Length {500 + random.randint(100, 500)}
->>
-stream
-<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.0-c060 61.134777, 2010/02/12-17:32:00">
- <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-  <rdf:Description rdf:about=""
-    xmlns:dc="http://purl.org/dc/elements/1.1/"
-    xmlns:xmp="http://ns.adobe.com/xap/1.0/"
-    xmlns:pdf="http://ns.adobe.com/pdf/1.3/"
-    xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/"
-    dc:title="{metadata['title']}"
-    dc:creator="{metadata['author']}"
-    dc:subject="{metadata['subject']}"
-    dc:date="{timestamp}"
-    xmp:CreateDate="{timestamp}"
-    xmp:ModifyDate="{timestamp}"
-    xmp:MetadataDate="{timestamp}"
-    xmp:CreatorTool="{metadata['creator']}"
-    pdf:Producer="{metadata['producer']}"
-    pdf:Keywords="{metadata['keywords']}"
-    pdfaid:part="1"
-    pdfaid:conformance="B">
-   </dc:description>
-  </rdf:Description>
- </rdf:RDF>
-</x:xmpmeta>
-<?xpacket end="w"?>
-endstream
-endobj
-"""
-        return xmp
-    
-    def _generate_invisible_block(self, size: int) -> bytes:
-        """
-        Generate a block of invisible content.
-        
-        This adds PDF objects that are not rendered but increase file size.
-        
-        Args:
-            size: Approximate size in bytes
-            
-        Returns:
-            Bytes of invisible content
-        """
-        # Generate random text that will be ignored
-        random_text = ''.join(random.choices(
-            'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ',
-            k=size
-        ))
-        
-        # Wrap in PDF comment/object structure
-        block = f"""
-% Invisible content block - not rendered
-% {random_text[:200]}
-% {random_text[200:400] if len(random_text) > 200 else ''}
-% {random_text[400:600] if len(random_text) > 400 else ''}
-""".encode('utf-8')
-        
-        return block
     
     def get_inflation_stats(
         self,

@@ -11,7 +11,7 @@ export const REFETCH_INTERVALS = {
 export const LIMITS = {
   MAX_LOGS: 1000,
   DEFAULT_PAGE_SIZE: 50,
-  MAX_PAGE_SIZE: 100,
+  MAX_PAGE_SIZE: 5000,
 } as const;
 
 // Retry and delay configurations in milliseconds

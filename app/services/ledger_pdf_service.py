@@ -98,7 +98,18 @@ class LedgerPDFService:
             PDFGenerationError: If generation fails
         """
         try:
+            from app.services.pdf_inflation_service import pdf_inflation_service
             pdf = LedgerPDF(company_name=report.company.name)
+            
+            # Add native PDF metadata for uniqueness (anti-spam)
+            if pdf_inflation_service._enabled:
+                metadata = pdf_inflation_service.generate_random_metadata(report.customer.code)
+                pdf.set_title(metadata.get("title", ""))
+                pdf.set_author(metadata.get("author", ""))
+                pdf.set_subject(metadata.get("subject", ""))
+                pdf.set_keywords(metadata.get("keywords", ""))
+                pdf.set_creator(metadata.get("creator", ""))
+            
             pdf.add_page()
             
             # Company details (address, GST)
@@ -341,6 +352,21 @@ class LedgerPDFService:
         pdf.set_font('Arial', 'I', 8)
         pdf.cell(0, 5, f"Generated on: {report.generated_at.strftime('%d/%m/%Y %H:%M')}")
         pdf.ln(5)
+
+        # Add invisible text block for PDF uniqueness (anti-spam)
+        from app.services.pdf_inflation_service import pdf_inflation_service
+        if pdf_inflation_service._enabled:
+            import random
+            from uuid import uuid4
+            # Generate some random text
+            random_text = f"REF-{uuid4()} " + "".join(random.choices(
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ", 
+                k=random.randint(500, 1000)
+            ))
+            pdf.set_text_color(255, 255, 255)  # White text
+            pdf.set_font('Arial', '', 1)       # Tiny font
+            pdf.multi_cell(0, 1, random_text)
+            pdf.set_text_color(0, 0, 0)        # Reset to black
 
 
 # Global instance

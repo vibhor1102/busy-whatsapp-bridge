@@ -41,12 +41,12 @@ export function SystemControl() {
 
   const { data: resources, isLoading } = useQuery({
     queryKey: ['system-resources'],
-    queryFn: api.getSystemResources,
+    queryFn: () => api.getSystemResources(),
     refetchInterval: REFETCH_INTERVALS.QUEUE_STATS,
   });
 
   const startQueueMutation = useMutation({
-    mutationFn: api.startQueueWorker,
+    mutationFn: () => api.startQueueWorker(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['queue-messages'] });
       toast.success('Queue worker started successfully');
@@ -57,7 +57,7 @@ export function SystemControl() {
   });
 
   const stopQueueMutation = useMutation({
-    mutationFn: api.stopQueueWorker,
+    mutationFn: () => api.stopQueueWorker(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['queue-messages'] });
       toast.success('Queue worker stopped successfully');
@@ -68,7 +68,7 @@ export function SystemControl() {
   });
 
   const restartBaileysMutation = useMutation({
-    mutationFn: api.restartBaileys,
+    mutationFn: () => api.restartBaileys(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['baileys-status'] });
       toast.success('Baileys service restarted successfully');

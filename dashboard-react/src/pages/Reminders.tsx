@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   RefreshCw,
@@ -27,7 +28,7 @@ import { getStatusDotColor } from '../utils/statusColors';
 import { formatCurrency, formatDateTime, formatDuration } from '../utils/formatters';
 import { REFETCH_INTERVALS, LIMITS, RETRY_DELAYS, POLLING } from '../constants';
 import { toast } from 'sonner';
-import type { MessageTemplate, ReminderSession, PartyReminderInfo } from '../types';
+import type { MessageTemplate, ReminderSession, PartyReminderInfo, AntiSpamConfig } from '../types';
 
 // ─── Sub-Components ────────────────────────────────────
 
@@ -202,30 +203,44 @@ export function Reminders() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionData, setSessionData] = useState<ReminderSession | null>(null);
 
-  // Store
-  const store = useRemindersStore();
-  const { setConfig, setTemplates, setStats, setSnapshotStatus, setParties } = store;
+  // Store - use individual selectors to prevent infinite re-renders
+  const setConfig = useRemindersStore((state) => state.setConfig);
+  const setTemplates = useRemindersStore((state) => state.setTemplates);
+  const setStats = useRemindersStore((state) => state.setStats);
+  const setSnapshotStatus = useRemindersStore((state) => state.setSnapshotStatus);
+  const setParties = useRemindersStore((state) => state.setParties);
+  const setDefaultTemplateId = useRemindersStore((state) => state.setDefaultTemplateId);
+  const setPersistedSelection = useRemindersStore((state) => state.setPersistedSelection);
+  const selectParties = useRemindersStore((state) => state.selectParties);
+  const defaultTemplateId = useRemindersStore((state) => state.defaultTemplateId);
+  const selectedPartyCodes = useRemindersStore((state) => state.selectedPartyCodes);
+  const togglePartySelection = useRemindersStore((state) => state.togglePartySelection);
+  const clearSelection = useRemindersStore((state) => state.clearSelection);
+  const setAntiSpamConfig = useRemindersStore((state) => state.setAntiSpamConfig);
+  const antiSpamConfig = useRemindersStore((state) => state.antiSpamConfig);
+  const parties = useRemindersStore((state) => state.parties);
+  const partyTemplates = useRemindersStore((state) => state.partyTemplates);
 
   // Queries
   const { data: config, isLoading: configLoading } = useQuery({
     queryKey: ['reminder-config'],
-    queryFn: api.getReminderConfig,
+    queryFn: () => api.getReminderConfig(),
   });
 
   const { data: templates, isLoading: templatesLoading } = useQuery({
     queryKey: ['reminder-templates'],
-    queryFn: api.getTemplates,
+    queryFn: () => api.getTemplates(),
   });
 
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['reminder-stats'],
-    queryFn: api.getReminderStats,
+    queryFn: () => api.getReminderStats(),
     refetchInterval: REFETCH_INTERVALS.REMINDER_STATS,
   });
 
   const { data: snapshotStatus, isLoading: snapshotLoading } = useQuery({
     queryKey: ['reminder-snapshot'],
-    queryFn: api.getReminderSnapshotStatus,
+    queryFn: () => api.getReminderSnapshotStatus(),
   });
 
   const { data: partiesData, isLoading: partiesLoading } = useQuery({
@@ -242,8 +257,8 @@ export function Reminders() {
     if (templates) {
       setTemplates(templates);
       const activeTemplate = templates.find((t: MessageTemplate) => t.is_default);
-      if (activeTemplate && !store.defaultTemplateId) {
-        store.setDefaultTemplateId(activeTemplate.id);
+      if (activeTemplate && !defaultTemplateId) {
+        setDefaultTemplateId(activeTemplate.id);
       }
     }
     if (stats) setStats(stats);
@@ -257,14 +272,14 @@ export function Reminders() {
         }
       });
       if (Object.keys(persisted).length > 0) {
-        store.setPersistedSelection(persisted);
+        setPersistedSelection(persisted);
         const enabledCodes = Object.keys(persisted).filter(code => persisted[code]);
         if (enabledCodes.length > 0) {
-          store.selectParties(enabledCodes);
+          selectParties(enabledCodes);
         }
       }
     }
-  }, [config, templates, stats, snapshotStatus, partiesData, setConfig, setTemplates, setStats, setSnapshotStatus, setParties, store]);
+  }, [config, templates, stats, snapshotStatus, partiesData, setConfig, setTemplates, setStats, setSnapshotStatus, setParties, setDefaultTemplateId, defaultTemplateId, setPersistedSelection, selectParties]);
 
   // Session polling
   const sessionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -319,7 +334,7 @@ export function Reminders() {
 
   // Mutations
   const refreshSnapshotMutation = useMutation({
-    mutationFn: api.refreshReminderSnapshot,
+    mutationFn: () => api.refreshReminderSnapshot(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['reminder-snapshot'] });
       queryClient.invalidateQueries({ queryKey: ['reminder-stats'] });
@@ -346,7 +361,7 @@ export function Reminders() {
   });
 
   const updateAntiSpamMutation = useMutation({
-    mutationFn: api.updateAntiSpamConfig,
+    mutationFn: (config: AntiSpamConfig) => api.updateAntiSpamConfig(config),
     onSuccess: () => {
       toast.success('Anti-spam settings updated');
     },
@@ -356,45 +371,68 @@ export function Reminders() {
   });
 
   const handleToggleSelection = useCallback((code: string) => {
-    store.togglePartySelection(code);
-  }, [store]);
+    togglePartySelection(code);
+  }, [togglePartySelection]);
+
+  const selectedParties = useMemo(() =>
+    parties.filter((p) => selectedPartyCodes.has(p.code)),
+    [parties, selectedPartyCodes]
+  );
+
+  const availableParties = useMemo(() =>
+    parties.filter((p) => !selectedPartyCodes.has(p.code)),
+    [parties, selectedPartyCodes]
+  );
 
   const handleSelectAll = useCallback(() => {
     const allAvailableCodes = availableParties.map(p => p.code);
     allAvailableCodes.forEach(code => {
-      if (!store.selectedPartyCodes.has(code)) {
-        store.togglePartySelection(code);
+      if (!selectedPartyCodes.has(code)) {
+        togglePartySelection(code);
       }
     });
-  }, [store]);
+  }, [availableParties, selectedPartyCodes, togglePartySelection]);
 
   const handleSendReminders = useCallback(() => {
-    const selectedCodes = Array.from(store.selectedPartyCodes);
-    if (selectedCodes.length === 0 || !store.defaultTemplateId) return;
+    const selectedCodes = Array.from(selectedPartyCodes);
+    if (selectedCodes.length === 0 || !defaultTemplateId) return;
 
     sendRemindersMutation.mutate({
       partyCodes: selectedCodes,
-      templateId: store.defaultTemplateId,
-      partyTemplates: store.partyTemplates,
+      templateId: defaultTemplateId,
+      partyTemplates: partyTemplates,
     });
-  }, [store, sendRemindersMutation]);
-
-  const selectedParties = useMemo(() =>
-    store.parties.filter((p) => store.selectedPartyCodes.has(p.code)),
-    [store.parties, store.selectedPartyCodes]
-  );
-
-  const availableParties = useMemo(() =>
-    store.parties.filter((p) => !store.selectedPartyCodes.has(p.code)),
-    [store.parties, store.selectedPartyCodes]
-  );
+  }, [selectedPartyCodes, defaultTemplateId, partyTemplates, sendRemindersMutation]);
 
   const selectedTotalAmount = useMemo(() =>
-    selectedParties.reduce((sum, p) => sum + (p.amount_due || 0), 0),
+    selectedParties.reduce((sum, p) => sum + (Number(p.amount_due) || 0), 0),
     [selectedParties]
   );
 
+  const availableTotalAmount = useMemo(() =>
+    availableParties.reduce((sum, p) => sum + (Number(p.amount_due) || 0), 0),
+    [availableParties]
+  );
+
   const isLoading = configLoading || templatesLoading || statsLoading || snapshotLoading || partiesLoading;
+
+  // Virtualizer for Selected Parties
+  const selectedParentRef = useRef<HTMLDivElement>(null);
+  const selectedVirtualizer = useVirtualizer({
+    count: selectedParties.length,
+    getScrollElement: () => selectedParentRef.current,
+    estimateSize: () => 60, // approximate height of each item
+    overscan: 5,
+  });
+
+  // Virtualizer for Available Parties
+  const availableParentRef = useRef<HTMLDivElement>(null);
+  const availableVirtualizer = useVirtualizer({
+    count: availableParties.length,
+    getScrollElement: () => availableParentRef.current,
+    estimateSize: () => 60, // approximate height of each item
+    overscan: 5,
+  });
 
   if (isLoading) {
     return <LoadingState size="lg" fullPage />;
@@ -415,18 +453,29 @@ export function Reminders() {
             )}
           </p>
         </div>
-        <button
-          onClick={() => refreshSnapshotMutation.mutate()}
-          disabled={refreshSnapshotMutation.isPending}
-          className="btn-secondary"
-        >
-          <RefreshCw className={`w-4 h-4 ${refreshSnapshotMutation.isPending && 'animate-spin'}`} />
-          Refresh Data
-        </button>
+        <div className="text-right flex items-center gap-6">
+          <div>
+            <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Selected Total</p>
+            <p className="text-lg font-bold" style={{ color: 'var(--success)' }}>{formatCurrency(selectedTotalAmount)}</p>
+          </div>
+          <div>
+            <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Remaining Total</p>
+            <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{formatCurrency(availableTotalAmount)}</p>
+          </div>
+
+          <button
+            onClick={() => refreshSnapshotMutation.mutate()}
+            disabled={refreshSnapshotMutation.isPending}
+            className="btn-secondary"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshSnapshotMutation.isPending && 'animate-spin'}`} />
+            Refresh Data
+          </button>
+        </div>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      < div className="grid grid-cols-2 md:grid-cols-4 gap-3" >
         <StatCard title="Eligible" value={stats?.eligible_parties || 0} />
         <StatCard title="Enabled" value={stats?.enabled_parties || 0} />
         <StatCard
@@ -438,22 +487,24 @@ export function Reminders() {
           value={sessionData ? `${sessionData.progress.percentage}%` : 'Ready'}
           accent={!!sessionData}
         />
-      </div>
+      </div >
 
       {/* Active Session */}
       <AnimatePresence>
-        {sessionData && (
-          <SessionPanel
-            session={sessionData}
-            onPause={() => activeSessionId && api.pauseSession(activeSessionId)}
-            onResume={() => activeSessionId && api.resumeSession(activeSessionId)}
-            onStop={() => activeSessionId && api.stopSession(activeSessionId)}
-          />
-        )}
-      </AnimatePresence>
+        {
+          sessionData && (
+            <SessionPanel
+              session={sessionData}
+              onPause={() => activeSessionId && api.pauseSession(activeSessionId)}
+              onResume={() => activeSessionId && api.resumeSession(activeSessionId)}
+              onStop={() => activeSessionId && api.stopSession(activeSessionId)}
+            />
+          )
+        }
+      </AnimatePresence >
 
       {/* Template Selection */}
-      <div className="card p-5">
+      < div className="card p-5" >
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <FileText className="w-4 h-4" style={{ color: 'var(--brand-accent)' }} />
@@ -471,8 +522,8 @@ export function Reminders() {
         </div>
 
         <select
-          value={store.defaultTemplateId}
-          onChange={(e) => store.setDefaultTemplateId(e.target.value)}
+          value={defaultTemplateId}
+          onChange={(e) => setDefaultTemplateId(e.target.value)}
           className="input max-w-md"
           aria-label="Select message template"
         >
@@ -482,24 +533,26 @@ export function Reminders() {
           ))}
         </select>
 
-        {store.defaultTemplateId && (
-          <div
-            className="mt-3 p-3 rounded-lg"
-            style={{ background: 'var(--bg-input)' }}
-          >
-            <p className="text-xs mb-1" style={{ color: 'var(--text-tertiary)' }}>Preview:</p>
-            <pre
-              className="text-xs whitespace-pre-wrap font-mono"
-              style={{ color: 'var(--text-secondary)' }}
+        {
+          defaultTemplateId && (
+            <div
+              className="mt-3 p-3 rounded-lg"
+              style={{ background: 'var(--bg-input)' }}
             >
-              {templates?.find((t: MessageTemplate) => t.id === store.defaultTemplateId)?.content}
-            </pre>
-          </div>
-        )}
-      </div>
+              <p className="text-xs mb-1" style={{ color: 'var(--text-tertiary)' }}>Preview:</p>
+              <pre
+                className="text-xs whitespace-pre-wrap font-mono"
+                style={{ color: 'var(--text-secondary)' }}
+              >
+                {templates?.find((t: MessageTemplate) => t.id === defaultTemplateId)?.content}
+              </pre>
+            </div>
+          )
+        }
+      </div >
 
       {/* Anti-Spam Panel */}
-      <div className="card overflow-hidden">
+      < div className="card overflow-hidden" >
         <button
           onClick={() => setShowAntiSpam(!showAntiSpam)}
           className="w-full flex items-center justify-between p-4 transition-colors"
@@ -512,7 +565,7 @@ export function Reminders() {
             <div className="text-left">
               <h3 className="text-sm font-semibold">Anti-Spam Protection</h3>
               <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                {store.antiSpamConfig.enabled ? 'Enabled' : 'Disabled'}
+                {antiSpamConfig.enabled ? 'Enabled' : 'Disabled'}
               </p>
             </div>
           </div>
@@ -533,50 +586,50 @@ export function Reminders() {
             >
               <div className="p-4 space-y-2">
                 <Toggle
-                  checked={store.antiSpamConfig.enabled}
+                  checked={antiSpamConfig.enabled}
                   onChange={(val) => {
-                    const newConfig = { ...store.antiSpamConfig, enabled: val };
-                    store.setAntiSpamConfig(newConfig);
+                    const newConfig = { ...antiSpamConfig, enabled: val };
+                    setAntiSpamConfig(newConfig);
                     updateAntiSpamMutation.mutate(newConfig);
                   }}
                   label="Enable Anti-Spam"
                   description="Protect against WhatsApp bulk detection"
                 />
 
-                {store.antiSpamConfig.enabled && (
+                {antiSpamConfig.enabled && (
                   <>
                     <Toggle
-                      checked={store.antiSpamConfig.message_inflation}
+                      checked={antiSpamConfig.message_inflation}
                       onChange={(val) => {
-                        const newConfig = { ...store.antiSpamConfig, message_inflation: val };
-                        store.setAntiSpamConfig(newConfig);
+                        const newConfig = { ...antiSpamConfig, message_inflation: val };
+                        setAntiSpamConfig(newConfig);
                         updateAntiSpamMutation.mutate(newConfig);
                       }}
                       label="Message Size Inflation"
                     />
                     <Toggle
-                      checked={store.antiSpamConfig.pdf_inflation}
+                      checked={antiSpamConfig.pdf_inflation}
                       onChange={(val) => {
-                        const newConfig = { ...store.antiSpamConfig, pdf_inflation: val };
-                        store.setAntiSpamConfig(newConfig);
+                        const newConfig = { ...antiSpamConfig, pdf_inflation: val };
+                        setAntiSpamConfig(newConfig);
                         updateAntiSpamMutation.mutate(newConfig);
                       }}
                       label="PDF Size Inflation"
                     />
                     <Toggle
-                      checked={store.antiSpamConfig.typing_simulation}
+                      checked={antiSpamConfig.typing_simulation}
                       onChange={(val) => {
-                        const newConfig = { ...store.antiSpamConfig, typing_simulation: val };
-                        store.setAntiSpamConfig(newConfig);
+                        const newConfig = { ...antiSpamConfig, typing_simulation: val };
+                        setAntiSpamConfig(newConfig);
                         updateAntiSpamMutation.mutate(newConfig);
                       }}
                       label="Human Typing Simulation"
                     />
                     <Toggle
-                      checked={store.antiSpamConfig.startup_delay_enabled}
+                      checked={antiSpamConfig.startup_delay_enabled}
                       onChange={(val) => {
-                        const newConfig = { ...store.antiSpamConfig, startup_delay_enabled: val };
-                        store.setAntiSpamConfig(newConfig);
+                        const newConfig = { ...antiSpamConfig, startup_delay_enabled: val };
+                        setAntiSpamConfig(newConfig);
                         updateAntiSpamMutation.mutate(newConfig);
                       }}
                       label="Session Startup Delay"
@@ -587,12 +640,12 @@ export function Reminders() {
             </motion.div>
           )}
         </AnimatePresence>
-      </div>
+      </div >
 
       {/* Party Selection */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      < div className="grid grid-cols-1 lg:grid-cols-2 gap-5" >
         {/* Selected Parties */}
-        <div className="card overflow-hidden">
+        < div className="card overflow-hidden" >
           <div
             className="p-4 border-b flex items-center justify-between"
             style={{ borderColor: 'var(--border-default)' }}
@@ -609,9 +662,6 @@ export function Reminders() {
                 {selectedParties.length}
               </span>
             </div>
-            <span className="text-sm font-semibold" style={{ color: 'var(--brand-accent)' }}>
-              {formatCurrency(selectedTotalAmount)}
-            </span>
           </div>
 
           <div className="p-4">
@@ -622,51 +672,57 @@ export function Reminders() {
               </div>
             ) : (
               <>
-                <div className="space-y-1.5 max-h-80 overflow-y-auto">
-                  {selectedParties.map((party) => (
-                    <div
-                      key={party.code}
-                      className="flex items-center justify-between p-2.5 rounded-lg group"
-                      style={{ background: 'var(--bg-input)' }}
-                    >
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                          {party.name}
-                        </p>
-                        <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                          {party.code} · {formatCurrency(party.amount_due)}
-                        </p>
-                      </div>
+                <div ref={selectedParentRef} className="max-h-80 overflow-y-auto w-full">
+                  <div
+                    style={{
+                      height: `${selectedVirtualizer.getTotalSize()}px`,
+                      width: '100%',
+                      position: 'relative',
+                    }}
+                  >
+                    {selectedVirtualizer.getVirtualItems().map((virtualItem: any) => {
+                      const party = selectedParties[virtualItem.index];
+                      return (
+                        <div
+                          key={party.code}
+                          className="flex items-center justify-between p-2.5 rounded-lg group absolute top-0 left-0 w-full"
+                          style={{
+                            height: `${virtualItem.size - 6}px`, // -6px for gap accounting
+                            transform: `translateY(${virtualItem.start}px)`,
+                            background: 'var(--bg-input)'
+                          }}
+                        >
+                          <div className="flex items-center gap-3 min-w-0 pr-4">
+                            <button
+                              onClick={() => handleToggleSelection(party.code)}
+                              className="p-1.5 rounded-md transition-colors opacity-60 hover:opacity-100 flex-shrink-0"
+                              style={{ color: 'var(--danger)' }}
+                              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--danger-soft)')}
+                              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                              aria-label={`Remove ${party.name}`}
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                            <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                              {party.name}
+                            </p>
+                          </div>
 
-                      <button
-                        onClick={() => handleToggleSelection(party.code)}
-                        className="p-1.5 rounded-md transition-colors opacity-60 hover:opacity-100"
-                        style={{ color: 'var(--danger)' }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--danger-soft)')}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
+                          <p className="text-sm font-medium flex-shrink-0 text-right" style={{ color: 'var(--text-primary)' }}>
+                            {formatCurrency(party.amount_due)}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-
-                <button
-                  onClick={() => store.clearSelection()}
-                  className="mt-3 w-full py-2 text-xs font-medium rounded-lg transition-colors"
-                  style={{ color: 'var(--danger)' }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--danger-soft)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                >
-                  Clear All
-                </button>
               </>
             )}
           </div>
-        </div>
+        </div >
 
         {/* Available Parties */}
-        <div className="card overflow-hidden">
+        < div className="card overflow-hidden" >
           <div
             className="p-4 border-b space-y-3"
             style={{ borderColor: 'var(--border-default)' }}
@@ -687,16 +743,6 @@ export function Reminders() {
                   {availableParties.length}
                 </span>
               </div>
-              {availableParties.length > 0 && (
-                <button
-                  onClick={handleSelectAll}
-                  className="flex items-center gap-1 text-xs font-medium"
-                  style={{ color: 'var(--brand-accent)' }}
-                >
-                  <CheckSquare className="w-3.5 h-3.5" />
-                  Select All
-                </button>
-              )}
             </div>
 
             <div className="flex gap-2">
@@ -730,33 +776,58 @@ export function Reminders() {
           </div>
 
           <div className="p-4">
-            <div className="space-y-1.5 max-h-80 overflow-y-auto">
-              {availableParties.map((party) => (
-                <button
-                  key={party.code}
-                  onClick={() => handleToggleSelection(party.code)}
-                  className="w-full flex items-center justify-between p-2.5 rounded-lg transition-colors text-left"
-                  style={{ background: 'var(--bg-input)' }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-input-hover)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--bg-input)')}
-                  aria-label={`Select ${party.name} (${party.code}) with amount due ${formatCurrency(party.amount_due)}`}
+            <div ref={availableParentRef} className="max-h-80 overflow-y-auto w-full">
+              {availableParties.length > 0 && (
+                <div
+                  style={{
+                    height: `${availableVirtualizer.getTotalSize()}px`,
+                    width: '100%',
+                    position: 'relative',
+                  }}
                 >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                      {party.name}
-                    </p>
-                    <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                      {party.code} · {formatCurrency(party.amount_due)}
-                    </p>
-                  </div>
+                  {availableVirtualizer.getVirtualItems().map((virtualItem: any) => {
+                    const party = availableParties[virtualItem.index];
+                    return (
+                      <button
+                        key={party.code}
+                        onClick={() => handleToggleSelection(party.code)}
+                        className="w-full flex items-center justify-between p-2.5 rounded-lg transition-colors text-left absolute top-0 left-0"
+                        style={{
+                          height: `${virtualItem.size - 6}px`, // gap accounting
+                          transform: `translateY(${virtualItem.start}px)`,
+                          background: 'var(--bg-input)'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'var(--bg-input-hover)';
+                          const checkbox = e.currentTarget.querySelector('.party-checkbox') as HTMLDivElement;
+                          if (checkbox) checkbox.style.borderColor = 'var(--text-primary)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'var(--bg-input)';
+                          const checkbox = e.currentTarget.querySelector('.party-checkbox') as HTMLDivElement;
+                          if (checkbox) checkbox.style.borderColor = 'var(--border-strong)';
+                        }}
+                        aria-label={`Select ${party.name} with amount due ${formatCurrency(party.amount_due)}`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0 pr-4">
+                          <div
+                            className="party-checkbox w-4 h-4 border-2 rounded flex items-center justify-center flex-shrink-0 transition-colors"
+                            style={{ borderColor: 'var(--border-strong)' }}
+                            aria-hidden="true"
+                          />
+                          <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                            {party.name}
+                          </p>
+                        </div>
 
-                  <div
-                    className="w-4 h-4 border-2 rounded flex items-center justify-center flex-shrink-0"
-                    style={{ borderColor: 'var(--border-strong)' }}
-                    aria-hidden="true"
-                  />
-                </button>
-              ))}
+                        <p className="text-sm font-medium flex-shrink-0 text-right" style={{ color: 'var(--text-primary)' }}>
+                          {formatCurrency(party.amount_due)}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {availableParties.length === 0 && (
                 <div className="text-center py-10" style={{ color: 'var(--text-tertiary)' }}>
@@ -765,17 +836,18 @@ export function Reminders() {
               )}
             </div>
           </div>
-        </div>
-      </div>
+        </div >
+      </div >
 
       {/* Sticky Action Bar */}
-      <div
+      < div
         className="sticky bottom-4 rounded-xl p-4 backdrop-blur-xl"
         style={{
           background: 'var(--bg-sidebar)',
           border: '1px solid var(--border-default)',
           boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.08)',
-        }}
+        }
+        }
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-5">
@@ -798,8 +870,8 @@ export function Reminders() {
             <button
               onClick={() => {
                 const csv = [
-                  ['Code', 'Name', 'Phone', 'Amount Due'].join(','),
-                  ...selectedParties.map(p => [p.code, p.name, p.phone || '', p.amount_due].join(',')),
+                  ['Name', 'Phone', 'Amount Due'].join(','),
+                  ...selectedParties.map(p => [p.name, p.phone || '', p.amount_due].join(',')),
                 ].join('\n');
                 const blob = new Blob([csv], { type: 'text/csv' });
                 const url = URL.createObjectURL(blob);
@@ -817,7 +889,7 @@ export function Reminders() {
 
             <button
               onClick={handleSendReminders}
-              disabled={selectedParties.length === 0 || !store.defaultTemplateId || sendRemindersMutation.isPending || activeSessionId !== null}
+              disabled={selectedParties.length === 0 || !defaultTemplateId || sendRemindersMutation.isPending || activeSessionId !== null}
               className="btn-primary"
             >
               {sendRemindersMutation.isPending ? (
@@ -834,7 +906,7 @@ export function Reminders() {
             </button>
           </div>
         </div>
-      </div>
-    </div>
+      </div >
+    </div >
   );
 }

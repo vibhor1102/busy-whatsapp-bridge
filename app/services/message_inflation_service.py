@@ -40,18 +40,19 @@ class MessageInflationService:
         self._enabled = enabled
         logger.info("message_inflation_toggled", enabled=enabled)
     
-    def calculate_inflation_ratio(self, target_multiplier: float = 3.0) -> float:
+    def calculate_inflation_ratio(self, target_multiplier: float = 5.0) -> float:
         """
         Calculate inflation multiplier.
         
         Args:
-            target_multiplier: Target size multiplier (3-5x)
+            target_multiplier: Max target size multiplier (default 5.0)
             
         Returns:
-            Inflation multiplier to apply
+            Inflation multiplier to apply (1.0x - 5.0x)
         """
-        # Randomize between 2.5x and 5x
-        multiplier = random.uniform(2.5, min(5.0, target_multiplier + 1))
+        # Randomize between 1.0x (no inflation) and min(5.0x, target_multiplier)
+        # This adds 0-4x extra characters to the original message length
+        multiplier = random.uniform(1.0, min(5.0, max(1.0, target_multiplier)))
         return multiplier
     
     def inject_invisible_chars(
@@ -63,17 +64,17 @@ class MessageInflationService:
         Inject invisible characters into text to inflate size.
         
         Strategy:
-        1. Add invisible chars between words (most effective)
-        2. Add invisible chars at end of message
-        3. Occasionally replace spaces with non-breaking spaces
-        4. Add variation selectors after certain characters
+        1. Calculate the required number of invisible bytes needed to reach the target length
+        2. Create a single continuous block of invisible characters
+        3. Append the block strictly to the end of the text to avoid distorting actual content
+           and preventing WhatsApp's \"Read More\" from hiding useful text.
         
         Args:
             text: Original message text
             target_multiplier: Target size multiplier
             
         Returns:
-            Inflated text with invisible characters
+            Inflated text with invisible characters appended at the end
         """
         if not self._enabled or not text:
             return text
@@ -81,39 +82,15 @@ class MessageInflationService:
         original_length = len(text)
         multiplier = self.calculate_inflation_ratio(target_multiplier)
         
-        # Split into words and spaces
-        words = text.split(' ')
-        result_parts = []
+        # Calculate how many invisible characters to add
+        target_length = int(original_length * multiplier)
+        chars_to_add = max(0, target_length - original_length)
         
-        for i, word in enumerate(words):
-            result_parts.append(word)
-            
-            # Add invisible chars between words (not after last word)
-            if i < len(words) - 1:
-                # Random number of invisible chars: 2-10 per space
-                num_invisible = random.randint(2, 10)
-                invisible = ''.join(random.choice(self.INVISIBLE_CHARS) 
-                                  for _ in range(num_invisible))
-                
-                # Occasionally use non-breaking space instead of regular space
-                if random.random() < 0.1:  # 10% chance
-                    result_parts.append('\u00A0' + invisible)
-                else:
-                    result_parts.append(' ' + invisible)
-        
-        # Join parts
-        result = ''.join(result_parts)
-        
-        # Add invisible block at end (substantial inflation)
-        # This ensures we hit target multiplier even for short messages
-        end_invisible_count = int(original_length * (multiplier - 1) * 0.3)
-        if end_invisible_count > 0:
-            end_invisible = ''.join(random.choice(self.INVISIBLE_CHARS) 
-                                   for _ in range(end_invisible_count))
-            result += end_invisible
-        
-        # Add variation selectors to some characters (if applicable)
-        result = self._add_variation_selectors(result)
+        if chars_to_add > 0:
+            invisible_block = self.create_invisible_block(chars_to_add)
+            result = text + invisible_block
+        else:
+            result = text
         
         # Verify inflation
         inflated_length = len(result)
@@ -123,7 +100,8 @@ class MessageInflationService:
             "message_inflated",
             original_length=original_length,
             inflated_length=inflated_length,
-            multiplier=round(actual_multiplier, 2)
+            target_multiplier=round(multiplier, 2),
+            actual_multiplier=round(actual_multiplier, 2)
         )
         
         return result
@@ -133,6 +111,7 @@ class MessageInflationService:
         Add variation selectors to certain characters.
         
         This is subtle and won't affect rendering but adds bytes.
+        Deprecated: Not used in current inflation strategy to prevent text distortion.
         
         Args:
             text: Text to modify
@@ -140,19 +119,7 @@ class MessageInflationService:
         Returns:
             Modified text with variation selectors
         """
-        chars = list(text)
-        result = []
-        
-        for char in chars:
-            result.append(char)
-            
-            # Add variation selector after certain characters
-            # Only add to letters and digits to avoid breaking emojis
-            if char.isalnum() and random.random() < 0.05:  # 5% chance
-                vs = random.choice(self.VARIATION_SELECTORS)
-                result.append(vs)
-        
-        return ''.join(result)
+        return text
     
     def inject_random_whitespace(self, text: str) -> str:
         """

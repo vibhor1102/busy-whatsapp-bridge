@@ -80,7 +80,7 @@ export function Overview() {
 
   const { data: stats, isLoading } = useQuery({
     queryKey: ['dashboard-stats'],
-    queryFn: api.getDashboardStats,
+    queryFn: () => api.getDashboardStats(),
     refetchInterval: REFETCH_INTERVALS.DASHBOARD_STATS,
   });
 
