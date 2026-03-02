@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import axios from 'axios';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -19,7 +19,6 @@ import {
   Search,
   X,
   Loader2,
-  CheckSquare,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { useRemindersStore } from '../stores/remindersStore';
@@ -215,7 +214,6 @@ export function Reminders() {
   const defaultTemplateId = useRemindersStore((state) => state.defaultTemplateId);
   const selectedPartyCodes = useRemindersStore((state) => state.selectedPartyCodes);
   const togglePartySelection = useRemindersStore((state) => state.togglePartySelection);
-  const clearSelection = useRemindersStore((state) => state.clearSelection);
   const setAntiSpamConfig = useRemindersStore((state) => state.setAntiSpamConfig);
   const antiSpamConfig = useRemindersStore((state) => state.antiSpamConfig);
   const parties = useRemindersStore((state) => state.parties);
@@ -243,13 +241,14 @@ export function Reminders() {
     queryFn: () => api.getReminderSnapshotStatus(),
   });
 
-  const { data: partiesData, isLoading: partiesLoading } = useQuery({
+  const { data: partiesData, isLoading: partiesLoading, isFetching: partiesFetching } = useQuery({
     queryKey: ['reminder-parties', filterBy, searchQuery],
     queryFn: () => api.getEligibleParties({
       filter_by: filterBy,
       search: searchQuery,
       limit: LIMITS.MAX_PAGE_SIZE,
     }),
+    placeholderData: keepPreviousData,
   });
 
   useEffect(() => {
@@ -383,15 +382,6 @@ export function Reminders() {
     parties.filter((p) => !selectedPartyCodes.has(p.code)),
     [parties, selectedPartyCodes]
   );
-
-  const handleSelectAll = useCallback(() => {
-    const allAvailableCodes = availableParties.map(p => p.code);
-    allAvailableCodes.forEach(code => {
-      if (!selectedPartyCodes.has(code)) {
-        togglePartySelection(code);
-      }
-    });
-  }, [availableParties, selectedPartyCodes, togglePartySelection]);
 
   const handleSendReminders = useCallback(() => {
     const selectedCodes = Array.from(selectedPartyCodes);
@@ -757,9 +747,21 @@ export function Reminders() {
                   placeholder="Search parties..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="input pl-9"
+                  className="input pl-9 pr-9"
                   aria-label="Search for parties by name or code"
                 />
+                <AnimatePresence>
+                  {partiesFetching && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2"
+                    >
+                      <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--brand-accent)' }} />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
 
               <select

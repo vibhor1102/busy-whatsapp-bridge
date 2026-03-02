@@ -83,6 +83,13 @@ async def lifespan(app: FastAPI):
         whatsapp_provider=settings.WHATSAPP_PROVIDER
     )
     
+    # Initialize Reminder Config Scope based on BDS path
+    try:
+        scope_key = reminder_config_service.set_scope(settings.BDS_FILE_PATH)
+        logger.info("reminder_config_scope_initialized", path=settings.BDS_FILE_PATH, scope_key=scope_key)
+    except Exception as e:
+        logger.warning("reminder_config_scope_init_failed", error=str(e))
+    
     # Test database connection on startup
     db_status = db.test_connection()
     if not db_status:

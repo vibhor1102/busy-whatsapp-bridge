@@ -23,6 +23,14 @@ class BusyDatabase:
         self.settings = get_settings()
         self._connection = None  # Force reconnection on next use
         logger.info("database_settings_refreshed")
+        
+        # Update reminder config scope
+        try:
+            from app.services.reminder_config_service import reminder_config_service
+            scope_key = reminder_config_service.set_scope(self.settings.BDS_FILE_PATH)
+            logger.info("reminder_config_scope_updated", path=self.settings.BDS_FILE_PATH, scope_key=scope_key)
+        except Exception as e:
+            logger.warning("reminder_config_scope_update_failed", error=str(e))
     
     def connect(self) -> pyodbc.Connection:
         """Establish database connection."""
