@@ -494,7 +494,8 @@ class ReminderService:
                         pdf_inflation_service.inflate_pdf(
                             pdf_path,
                             inflated_path,
-                            party_code=party_code
+                            party_code=party_code,
+                            target_multiplier=5.0
                         )
                         pdf_path = inflated_path
                     else:
@@ -511,7 +512,7 @@ class ReminderService:
                     message = self.template_svc.render_template(effective_template, variables)
 
                     if message_inflation_service._enabled:
-                        message = message_inflation_service.inject_invisible_chars(message)
+                        message = message_inflation_service.inject_invisible_chars(message, target_multiplier=5.0)
 
                     if party_info.phone:
                         provider_name = self._resolve_delivery_provider(config.default_provider)

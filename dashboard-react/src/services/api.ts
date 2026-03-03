@@ -418,7 +418,13 @@ class ApiService {
   }
 
   async refreshReminderSnapshot(): Promise<ReminderSnapshotStatus> {
-    return this.fetch('/reminders/snapshot/refresh', { method: 'POST' });
+    // Snapshot refresh involves heavy ODBC queries that can take several minutes
+    const response: AxiosResponse<ReminderSnapshotStatus> = await this.client.request({
+      url: '/reminders/snapshot/refresh',
+      method: 'POST',
+      timeout: 300000, // 5 minutes — this is a heavy DB operation
+    });
+    return response.data;
   }
 
   // Payment Reminders - Batch/Session

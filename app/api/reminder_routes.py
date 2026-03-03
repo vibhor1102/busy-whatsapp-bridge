@@ -134,7 +134,10 @@ async def get_snapshot_status(company_id: str = Depends(get_company_id)):
 async def refresh_snapshot(company_id: str = Depends(get_company_id)):
     """Recompute exact amount-due snapshot for all debtor parties."""
     try:
-        status = reminder_service.refresh_snapshot(company_id=company_id)
+        # Run blocking ODBC queries in a thread pool to avoid starving the event loop
+        status = await asyncio.to_thread(
+            reminder_service.refresh_snapshot, company_id=company_id
+        )
         return ReminderSnapshotStatus(**status)
     except Exception as e:
         logger.error("refresh_snapshot_error", error=str(e), exc_info=True)

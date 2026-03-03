@@ -6,11 +6,14 @@ Handles message queuing, processing, and retry logic.
 import asyncio
 import httpx
 import os
+import uuid
+import random
 from datetime import datetime
 from typing import Optional
 from app.database.message_queue import message_db
 from app.models.schemas import WhatsAppMessage, WhatsAppResponse
 from app.services.whatsapp import get_whatsapp_provider
+import random
 import structlog
 
 logger = structlog.get_logger()
@@ -95,10 +98,25 @@ class MessageQueueService:
                 )
                 media_url = None
 
+            # PDF Randomization for invoices
+            is_invoice = message.get('source') in ['busy', 'invoice']
+            original_media_url = pdf_url
+            
+            if is_invoice and pdf_url:
+                pdf_url = await self._handle_pdf_randomization(pdf_url)
+                
+            # Apply behavioral simulation
+            is_reminder = message.get('source') == 'payment_reminder'
+            if is_invoice or is_reminder:
+                await self._simulate_behavior(provider, phone, text)
+            
+            if is_invoice:
+                text = self._inflate_message(text)
+
             wa_message = WhatsAppMessage(
                 to=phone,
                 body=text,
-                media_url=media_url
+                media_url=pdf_url
             )
             
             # Send the message
@@ -107,8 +125,6 @@ class MessageQueueService:
             if result.success:
                 delivery_status = result.delivery_status
                 if not delivery_status:
-                    # REMOVED: Meta "accepted" status - only Baileys available now
-                    # TODO: Re-add via Baileys integration when needed
                     delivery_status = "delivered"
                 # Mark as sent
                 message_db.mark_message_sent(
@@ -125,7 +141,13 @@ class MessageQueueService:
                     delivery_status=delivery_status,
                     phone=result.normalized_to or phone,
                 )
-                self._cleanup_local_media(pdf_url)
+                
+                # Cleanup: If we created a temporary file for invoice, clean it up always.
+                # If it was a legacy local file, clean it up only on success.
+                if is_invoice and pdf_url != original_media_url:
+                    self._cleanup_local_media(pdf_url)
+                else:
+                    self._cleanup_local_media(original_media_url)
                 return True
             else:
                 # Mark as failed - will be retried
@@ -138,18 +160,11 @@ class MessageQueueService:
                     queue_id=queue_id,
                     error=result.error
                 )
+                # Cleanup temporary file even on failure (retry will create fresh one)
+                if is_invoice and pdf_url != original_media_url:
+                    self._cleanup_local_media(pdf_url)
                 return False
                 
-        except httpx.HTTPError as e:
-            error_msg = f"HTTP Error: {str(e)}"
-            message_db.mark_message_failed(queue_id=queue_id, error_message=error_msg)
-            logger.error(
-                "queue_message_http_error",
-                queue_id=queue_id,
-                error=str(e)
-            )
-            return False
-            
         except Exception as e:
             error_msg = f"Processing Error: {str(e)}"
             message_db.mark_message_failed(queue_id=queue_id, error_message=error_msg)
@@ -160,6 +175,66 @@ class MessageQueueService:
                 exc_info=True
             )
             return False
+
+    async def _simulate_behavior(self, provider: any, phone: str, message: str):
+        """Simulate human-like behavior (reading and typing) before sending."""
+        from app.services.anti_spam_service import anti_spam_service
+        
+        # 1. Reading time (2s base)
+        reading_time = anti_spam_service.calculate_reading_time()
+        logger.debug("simulating_reading", phone=phone, duration=round(reading_time, 2))
+        await asyncio.sleep(reading_time)
+        
+        # 2. Typing indicator
+        typing_duration = anti_spam_service.calculate_typing_duration(len(message))
+        if hasattr(provider, 'send_typing_indicator'):
+            logger.debug("simulating_typing", phone=phone, duration=round(typing_duration, 2))
+            await provider.send_typing_indicator(phone, duration_ms=int(typing_duration * 1000))
+        else:
+            # Fallback to just sleeping if provider doesn't support indicator (unlikely for Baileys)
+            await asyncio.sleep(typing_duration)
+
+    async def _handle_pdf_randomization(self, pdf_url: str) -> str:
+        """Download URL PDF, randomize it, and return local path."""
+        from app.config import get_roaming_appdata_path
+        from app.services.pdf_inflation_service import pdf_inflation_service
+        
+        temp_dir = get_roaming_appdata_path() / "data" / "temp_media"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        target_path = temp_dir / f"invoice_{uuid.uuid4().hex}.pdf"
+        
+        try:
+            if pdf_url.startswith('http'):
+                # Download
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(pdf_url, timeout=30.0)
+                    response.raise_for_status()
+                    with open(target_path, 'wb') as f:
+                        f.write(response.content)
+                
+                # Randomize in place
+                pdf_inflation_service.inflate_pdf(str(target_path), str(target_path), target_multiplier=2.0)
+                return str(target_path)
+            
+            elif self._is_local_file_path(pdf_url):
+                # Randomize local file (copy to temp)
+                pdf_inflation_service.inflate_pdf(pdf_url, str(target_path), target_multiplier=2.0)
+                return str(target_path)
+                
+        except Exception as e:
+            logger.error("pdf_randomization_failed", url=pdf_url, error=str(e))
+            if target_path.exists():
+                try: os.remove(target_path)
+                except: pass
+            return pdf_url
+            
+        return pdf_url
+
+    def _inflate_message(self, text: str) -> str:
+        """Apply message inflation/randomization (max 2x)."""
+        from app.services.message_inflation_service import message_inflation_service
+        return message_inflation_service.inject_invisible_chars(text, target_multiplier=2.0)
     
     async def process_queue_batch(self, batch_size: int = 10):
         """Process a batch of pending messages."""
@@ -168,9 +243,20 @@ class MessageQueueService:
         if not messages:
             return 0
         
+        # 1. Startup Delay (3-10s)
+        startup_delay = random.uniform(3.0, 10.0)
+        logger.info("queue_batch_startup_delay", delay_seconds=round(startup_delay, 2))
+        await asyncio.sleep(startup_delay)
+
+        # 2. Go Online
+        provider = get_whatsapp_provider("baileys")
+        if hasattr(provider, 'set_presence'):
+            await provider.set_presence(online=True)
+
         logger.info("processing_queue_batch", count=len(messages))
         
         processed = 0
+        from app.services.anti_spam_service import anti_spam_service
         for message in messages:
             if not self._processing:
                 break
@@ -180,7 +266,9 @@ class MessageQueueService:
             
             # Small delay between messages to avoid rate limiting
             if processed < len(messages):
-                await asyncio.sleep(0.5)
+                # Use a smaller version of the anti-spam delay
+                delay = anti_spam_service.calculate_delay() / 3.0
+                await asyncio.sleep(max(1.0, delay))
         
         return processed
     

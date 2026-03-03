@@ -345,7 +345,7 @@ class AntiSpamService:
             return
         
         # Check if paused
-        await session.wait_if_paused()
+        await session._paused_event.wait()
         
         # Check if stopped
         if session.check_stop():
@@ -364,7 +364,7 @@ class AntiSpamService:
             session.metrics.reading_time_total += reading_time
         
         # Check again after reading
-        await session.wait_if_paused()
+        await session._paused_event.wait()
         if session.check_stop():
             raise asyncio.CancelledError("Session stopped by user")
     

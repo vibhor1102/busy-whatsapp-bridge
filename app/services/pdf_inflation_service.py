@@ -62,8 +62,8 @@ class PDFInflationService:
         Returns:
             Target size in bytes
         """
-        # Randomize between 1.5x and 3x
-        multiplier = random.uniform(1.5, min(3.0, target_multiplier))
+        # Randomize between 1.5x and 5x (max capacity)
+        multiplier = random.uniform(1.5, min(5.0, target_multiplier))
         target_size = int(original_size_bytes * multiplier)
         
         logger.debug(
@@ -128,17 +128,48 @@ class PDFInflationService:
         if not input_path.exists():
             raise FileNotFoundError(f"Input PDF not found: {input_path}")
             
-        # Due to PDF corruption issues on strict readers (like WhatsApp native viewer)
-        # when appending raw bytes after the %%EOF marker, structural inflation is disabled.
-        # Randomization is now handled natively via fpdf2 properties in ledger_pdf_service.
-        # We just copy the file now.
-        shutil.copy(input_path, output_path)
-        
-        logger.debug(
-            "pdf_inflation_skipped_structurally",
-            input_path=str(input_path),
-            output_path=str(output_path)
-        )
+        try:
+            # Read original content
+            with open(input_path, 'rb') as f:
+                content = f.read()
+            
+            # Calculate target size (limit up to 5.0x natively)
+            # though the service can handle more, we'll use the cap if provided in logic
+            original_size = len(content)
+            target_multiplier = min(5.0, target_multiplier)
+            
+            # Technique: Append a PDF comment with random data
+            # This is generally safe and doesn't break the structure for most readers
+            # format: % [random_hex]
+            import uuid
+            
+            # Calculate how much junk to add
+            target_size = int(original_size * target_multiplier)
+            junk_needed = max(100, target_size - original_size) # At least 100 bytes
+            
+            # Create a randomized comment block
+            # We split it into lines to look more like data
+            junk_str = "\n% AD-RANDOM-START\n"
+            while len(junk_str.encode('utf-8')) < junk_needed - 20: # 20 for footer
+                junk_str += f"% {uuid.uuid4().hex}{uuid.uuid4().hex}\n"
+            junk_str += "% AD-RANDOM-END\n"
+            
+            # Write new content
+            with open(output_path, 'wb') as f:
+                f.write(content)
+                f.write(junk_str.encode('utf-8'))
+                
+            logger.debug(
+                "pdf_inflated_with_comments",
+                input_path=str(input_path),
+                output_path=str(output_path),
+                added_bytes=len(junk_str.encode('utf-8'))
+            )
+        except Exception as e:
+            logger.error("pdf_inflation_failed_falling_back_to_copy", error=str(e))
+            import shutil
+            shutil.copy(input_path, output_path)
+            
         return str(output_path)
     
     def get_inflation_stats(
