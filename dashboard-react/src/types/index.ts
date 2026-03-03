@@ -107,6 +107,7 @@ export interface Settings {
   baileys_enabled: boolean;
   log_level: string;
   bds_file_path: string;
+  companies?: Record<string, any>;
 }
 
 // Payment Reminder Types

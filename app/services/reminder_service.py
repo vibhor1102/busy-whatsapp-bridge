@@ -374,7 +374,9 @@ class ReminderService:
         sent_by: str = "manual",
         schedule_delay: Optional[int] = None,
         party_templates: Optional[Dict[str, str]] = None,
-        company_id: str = "default"
+        company_id: str = "default",
+        batch_id: Optional[str] = None,
+        session: Optional[ReminderSession] = None
     ) -> Dict[str, Any]:
         """
         Send reminders to selected parties with anti-spam measures
@@ -385,11 +387,14 @@ class ReminderService:
             sent_by: Who triggered the send ("manual" or "scheduler")
             schedule_delay: Delay in seconds before sending (None = immediate)
             party_templates: Per-party template overrides {party_code: template_id}
+            company_id: Company ID
+            batch_id: Optional pre-generated batch ID
+            session: Optional pre-created anti-spam session
 
         Returns:
             Dict with batch_id and session_id
         """
-        batch_id = str(uuid.uuid4())
+        batch_id = batch_id or str(uuid.uuid4())
 
         logger.info(
             "sending_reminders",
@@ -401,16 +406,20 @@ class ReminderService:
 
         try:
             config = self.config_service.get_config(scope_key=company_id)
-            template = self.config_service.get_template(template_id, scope_key=company_id) # needs scope update?
+            template = self.config_service.get_template(template_id, scope_key=company_id) 
+            # Re-fetch from config list to ensure we have the full object
             template = next((t for t in config.templates if t.id == template_id), None)
             if template is None:
                 raise ValueError(f"Template '{template_id}' not found")
 
-            session = await anti_spam_service.create_session(
-                party_codes=party_codes,
-                template_id=template_id
-            )
-            session.metrics.start_time = datetime.now()
+            if not session:
+                session = await anti_spam_service.create_session(
+                    party_codes=party_codes,
+                    template_id=template_id
+                )
+            
+            if not session.metrics.start_time:
+                session.metrics.start_time = datetime.now()
 
             batch = ReminderBatch(
                 batch_id=batch_id,

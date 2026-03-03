@@ -133,156 +133,14 @@ class LedgerDataService:
     
     def get_financial_year(self, force_refresh: bool = False, company_id: str = "default") -> FinancialYearInfo:
         """
-        Fetch financial year from Config table.
-        
-        Returns configured FY dates or auto-detects from transaction dates.
+        Calculates financial year based directly on the current date.
+        Financial years strictly run April 1st to March 31st.
         """
         if company_id in self._financial_year_cache and not force_refresh:
             return self._financial_year_cache[company_id]
-        try:
-            query = f"""
-                SELECT C1, C2, C3 
-                FROM Config 
-                WHERE RecType = {ConfigRecType.FINANCIAL_YEAR}
-            """
-            
-            with self.db.get_cursor(company_id=company_id) as cursor:
-                cursor.execute(query)
-                row = cursor.fetchone()
-                
-                if row and row[0] and row[1]:
-                    start_date = self._parse_date(row[0])
-                    end_date = self._parse_date(row[1])
-                    year_name = row[2] if row[2] else self._calculate_year_name(start_date, end_date)
-                    
-                    logger.info(
-                        "financial_year_loaded",
-                        start_date=start_date,
-                        end_date=end_date,
-                        year_name=year_name
-                    )
-                    
-                    info = FinancialYearInfo(
-                        start_date=start_date,
-                        end_date=end_date,
-                        year_name=year_name
-                    )
-                    self._financial_year_cache[company_id] = info
-                    return info
-
-                # Config(RecType=7) missing/empty - attempt dynamic Config scan.
-                dynamic_fy = self._detect_financial_year_from_config_rows(company_id=company_id)
-                if dynamic_fy:
-                    self._financial_year_cache[company_id] = dynamic_fy
-                    return dynamic_fy
-
-                # Final fallback: detect from transactions.
-                logger.info("financial_year_config_missing_auto_detecting", company_id=company_id, rec_type=ConfigRecType.FINANCIAL_YEAR)
-                info = self._auto_detect_financial_year(company_id=company_id)
-                self._financial_year_cache[company_id] = info
-                return info
-                
-        except Exception as e:
-            logger.error("get_financial_year_error", company_id=company_id, error=str(e))
-            info = self._auto_detect_financial_year(company_id=company_id)
-            self._financial_year_cache[company_id] = info
-            return info
-
-    def _detect_financial_year_from_config_rows(self, company_id: str = "default") -> Optional[FinancialYearInfo]:
-        """
-        Try to discover financial year from any Config row that contains
-        parseable date range in C1/C2 even when RecType mapping differs.
-        """
-        try:
-            with self.db.get_cursor(company_id=company_id) as cursor:
-                cursor.execute("SELECT C1, C2, C3, RecType FROM Config")
-                candidates: List[Tuple[date, date, str, int]] = []
-                for row in cursor.fetchall():
-                    c1, c2, c3, rec_type = row[0], row[1], row[2], int(row[3] or 0)
-                    if not c1 or not c2:
-                        continue
-                    start_date = self._try_parse_date_strict(c1)
-                    end_date = self._try_parse_date_strict(c2)
-                    if not start_date or not end_date:
-                        continue
-                    if end_date < start_date:
-                        continue
-                    # Ignore placeholder epoch-ish rows.
-                    if start_date.year < 1950 or end_date.year < 1950:
-                        continue
-                    year_name = c3 if c3 else self._calculate_year_name(start_date, end_date)
-                    candidates.append((start_date, end_date, year_name, rec_type))
-
-                if not candidates:
-                    return None
-
-                # Prefer the most recent financial window.
-                start_date, end_date, year_name, rec_type = max(candidates, key=lambda x: x[1])
-                logger.info(
-                    "financial_year_detected_from_config_scan",
-                    rec_type=rec_type,
-                    start_date=start_date,
-                    end_date=end_date,
-                    year_name=year_name,
-                )
-                return FinancialYearInfo(
-                    start_date=start_date,
-                    end_date=end_date,
-                    year_name=year_name,
-                )
-        except Exception as e:
-            logger.debug("financial_year_config_scan_failed", company_id=company_id, error=str(e))
-            return None
-    
-    def _auto_detect_financial_year(self, company_id: str = "default") -> FinancialYearInfo:
-        """
-        Auto-detect financial year from transaction dates in database.
         
-        Looks for the earliest and latest transaction dates to determine FY.
-        """
-        try:
-            with self.db.get_cursor(company_id=company_id) as cursor:
-                cursor.execute("""
-                    SELECT MIN(Date) as min_date, MAX(Date) as max_date
-                    FROM Tran1
-                """)
-                row = cursor.fetchone()
-                
-                if row and row[0] and row[1]:
-                    min_date = self._parse_date(row[0])
-                    max_date = self._parse_date(row[1])
-                    
-                    # Determine active FY from LATEST transaction date (not earliest).
-                    # Using min_date can anchor to stale historical years.
-                    anchor_date = max_date
-                    if anchor_date.month >= 4:
-                        fy_start = date(anchor_date.year, 4, 1)
-                    else:
-                        fy_start = date(anchor_date.year - 1, 4, 1)
-                    
-                    fy_end = date(fy_start.year + 1, 3, 31)
-                    year_name = self._calculate_year_name(fy_start, fy_end)
-                    
-                    logger.info(
-                        "financial_year_auto_detected",
-                        start_date=fy_start,
-                        end_date=fy_end,
-                        year_name=year_name,
-                        min_transaction_date=min_date,
-                        max_transaction_date=max_date,
-                        anchor_date=anchor_date,
-                    )
-                    
-                    return FinancialYearInfo(
-                        start_date=fy_start,
-                        end_date=fy_end,
-                        year_name=year_name
-                    )
-        except Exception as e:
-            logger.error("auto_detect_financial_year_error", error=str(e))
-        
-        # Ultimate fallback - current year
         today = date.today()
+        
         if today.month >= 4:
             fy_start = date(today.year, 4, 1)
             fy_end = date(today.year + 1, 3, 31)
@@ -292,18 +150,20 @@ class LedgerDataService:
         
         year_name = self._calculate_year_name(fy_start, fy_end)
         
-        logger.warning(
-            "financial_year_using_fallback",
+        logger.info(
+            "financial_year_calculated",
             start_date=fy_start,
             end_date=fy_end,
             year_name=year_name
         )
         
-        return FinancialYearInfo(
+        info = FinancialYearInfo(
             start_date=fy_start,
             end_date=fy_end,
             year_name=year_name
         )
+        self._financial_year_cache[company_id] = info
+        return info
     
     def get_company_info(self, force_refresh: bool = False, company_id: str = "default") -> CompanyInfo:
         """
@@ -320,14 +180,44 @@ class LedgerDataService:
         if company_id in self._company_info_cache and not force_refresh:
             return self._company_info_cache[company_id]
         
-        # First try: Reminder config (user-configured company name)
+        # First try: Database specific config directly from memory
+        try:
+            if company_id in self.db.settings.database.companies:
+                company = self.db.settings.database.companies[company_id]
+                if company.company_name or company.contact_phone or company.company_address:
+                    logger.debug("company_name_from_db_config", company_name=company.company_name)
+                    info = CompanyInfo(
+                        name=company.company_name,
+                        address_line1=company.company_address,
+                        phone=company.contact_phone
+                    )
+                    self._company_info_cache[company_id] = info
+                    return info
+            # Backwards compatibility check
+            elif company_id == 'default':
+                company_name = self.db.settings.database.companies.get("default", type("obj", (object,), {"company_name": None})).company_name
+                # Fallback to the generic database level configs
+                if getattr(self.db.settings.database, 'company_name', None) or getattr(self.db.settings.database, 'contact_phone', None):
+                     logger.debug("company_name_from_root_config")
+                     info = CompanyInfo(
+                        name=getattr(self.db.settings.database, 'company_name', None),
+                        address_line1=getattr(self.db.settings.database, 'company_address', None),
+                        phone=getattr(self.db.settings.database, 'contact_phone', None)
+                     )
+                     self._company_info_cache[company_id] = info
+                     return info
+            
+        except Exception as e:
+            logger.debug("db_config_company_info_failed", company_id=company_id, error=str(e))
+        
+        # Second try: Reminder config (user-configured company name fallback)
         try:
             from app.services.reminder_config_service import reminder_config_service
             config = reminder_config_service.get_config(scope_key=company_id)
             if config and config.company and config.company.name:
                 company_name = config.company.name.strip()
                 if company_name:
-                    logger.debug("company_name_from_reminder_config", company_name=company_name)
+                    logger.debug("company_name_from_reminder_config_fallback", company_name=company_name)
                     info = CompanyInfo(
                         name=company_name,
                         address_line1=config.company.address,

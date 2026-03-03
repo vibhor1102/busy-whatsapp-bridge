@@ -102,15 +102,10 @@ class TemplateService:
         # Get config for company settings and currency
         config = self.config_service.get_config()
         currency_symbol = config.currency_symbol
-        contact_phone = config.company.contact_phone
-        
-        # Get party info
-        party_info = ledger_data_service.get_customer_info(party_code)
-        
-        # Get company name if not provided (from config fallback)
-        if company_name is None:
-            company_info = ledger_data_service.get_company_info()
-            company_name = company_info.name or config.company.name
+        # Get company info first, since that will contain our new DB-specific contact details
+        company_info = ledger_data_service.get_company_info()
+        contact_phone = company_info.phone or config.company.contact_phone
+        company_name = company_name or company_info.name or config.company.name
         
         # Get credit days
         credit_days, _ = ledger_data_service.get_credit_days(party_code)
@@ -157,13 +152,15 @@ class TemplateService:
     def get_default_variables(self) -> Dict[str, str]:
         """Get sample variables for template preview/testing"""
         config = self.config_service.get_config()
+        company_info = ledger_data_service.get_company_info()
+        
         return {
             "customer_name": "ABC Textiles",
-            "company_name": config.company.name,
+            "company_name": company_info.name or config.company.name,
             "amount_due": "50,000.00",
             "currency_symbol": config.currency_symbol,
             "credit_days": "30",
-            "contact_phone": config.company.contact_phone or "+91 98765 43210",
+            "contact_phone": company_info.phone or config.company.contact_phone or "+91 98765 43210",
             "party_code": "1234",
             "phone": "+91 98765 43210",
         }

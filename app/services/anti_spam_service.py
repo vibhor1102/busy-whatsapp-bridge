@@ -20,6 +20,11 @@ from uuid import uuid4
 logger = structlog.get_logger()
 
 
+import json
+from pathlib import Path
+from pydantic import BaseModel, Field, field_validator
+from app.config import get_roaming_appdata_path
+
 class SessionState(Enum):
     """Session state enumeration."""
     IDLE = "idle"
@@ -34,8 +39,7 @@ class SessionState(Enum):
     ERROR = "error"
 
 
-@dataclass
-class SessionMetrics:
+class SessionMetrics(BaseModel):
     """Metrics for a single session."""
     total_messages: int = 0
     sent_count: int = 0
@@ -45,7 +49,7 @@ class SessionMetrics:
     reading_time_total: float = 0.0
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
-    unsaved_contacts: List[Dict] = field(default_factory=list)
+    unsaved_contacts: List[Dict] = Field(default_factory=list)
     
     @property
     def duration_seconds(self) -> float:
@@ -63,23 +67,22 @@ class SessionMetrics:
         return self.delay_time_total / self.sent_count
 
 
-@dataclass
-class AntiSpamConfig:
+class AntiSpamConfig(BaseModel):
     """Anti-spam configuration."""
-    enabled: bool = True
-    message_inflation: bool = True
-    pdf_inflation: bool = True
-    typing_simulation: bool = True
-    startup_delay_min: int = 3  # Minutes
-    startup_delay_max: int = 5  # Minutes
-    reading_time_base: float = 2.0  # Seconds
-    batch_size_min: int = 8
-    batch_size_max: int = 15
-    reconnect_interval_hours: int = 4
-    admin_phone: str = "+917206366664"
-    send_session_reports: bool = True
-    reminder_cooldown_enabled: bool = True  # Prevent re-sending within cooldown period
-    reminder_cooldown_minutes: int = 60  # Cooldown period in minutes
+    enabled: bool = Field(default=True, description="Enable anti-spam measures")
+    message_inflation: bool = Field(default=True, description="Inject invisible characters")
+    pdf_inflation: bool = Field(default=True, description="Inflate PDF file sizes")
+    typing_simulation: bool = Field(default=True, description="Simulate typing indicator")
+    startup_delay_min: int = Field(default=3, description="Min startup delay in minutes")
+    startup_delay_max: int = Field(default=5, description="Max startup delay in minutes")
+    reading_time_base: float = Field(default=2.0, description="Base reading time in seconds")
+    batch_size_min: int = Field(default=8, description="Min batch size jitter")
+    batch_size_max: int = Field(default=15, description="Max batch size jitter")
+    reconnect_interval_hours: int = Field(default=4, description="Simulated reconnect interval")
+    admin_phone: str = Field(default="+917206366664", description="Phone for status reports")
+    send_session_reports: bool = Field(default=True, description="Send report after completion")
+    reminder_cooldown_enabled: bool = Field(default=True, description="Enable anti-repetition cooldown")
+    reminder_cooldown_minutes: int = Field(default=60, description="Cooldown period in minutes")
 
 
 @dataclass
@@ -144,17 +147,40 @@ class AntiSpamService:
     - Session management
     - Batch size jitter
     - Connection pattern simulation
+    - JSON configuration persistence
     """
     
     def __init__(self):
-        self._config: AntiSpamConfig = AntiSpamConfig()
+        self._config_path = get_roaming_appdata_path() / "data" / "antispam_config.json"
+        self._config: AntiSpamConfig = self._load_config()
         self._active_sessions: Dict[str, ReminderSession] = {}
         self._session_lock = asyncio.Lock()
     
+    def _load_config(self) -> AntiSpamConfig:
+        """Load anti-spam configuration from file."""
+        try:
+            if self._config_path.exists():
+                with open(self._config_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                return AntiSpamConfig(**data)
+        except Exception as e:
+            logger.error("failed_to_load_antispam_config", error=str(e))
+        return AntiSpamConfig()
+
+    def _save_config(self):
+        """Save anti-spam configuration to file."""
+        try:
+            self._config_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._config_path, 'w', encoding='utf-8') as f:
+                json.dump(self._config.model_dump(), f, indent=2)
+        except Exception as e:
+            logger.error("failed_to_save_antispam_config", error=str(e))
+
     def update_config(self, config: AntiSpamConfig):
         """Update anti-spam configuration."""
         self._config = config
-        logger.info("antispam_config_updated", config=config.__dict__)
+        self._save_config()
+        logger.info("antispam_config_updated", config=config.model_dump())
     
     def get_config(self) -> AntiSpamConfig:
         """Get current configuration."""

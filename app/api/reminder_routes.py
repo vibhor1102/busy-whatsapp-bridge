@@ -244,8 +244,12 @@ async def calculate_amount_due(
 # ============================================
 
 @router.post("/batch")
-async def send_reminders_batch(request: CreateBatchRequest, company_id: str = Depends(get_company_id)):
-    """Send reminders to selected parties immediately"""
+async def send_reminders_batch(
+    request: CreateBatchRequest, 
+    background_tasks: BackgroundTasks,
+    company_id: str = Depends(get_company_id)
+):
+    """Send reminders to selected parties immediately (via background task)"""
     try:
         from datetime import timedelta
 
@@ -257,6 +261,7 @@ async def send_reminders_batch(request: CreateBatchRequest, company_id: str = De
             staleness = datetime.now() - last_refresh_dt
             if staleness > timedelta(hours=2):
                 hours_ago = round(staleness.total_seconds() / 3600, 1)
+                logger.warning("stale_data_blocking_send", company_id=company_id, hours_ago=hours_ago)
                 raise HTTPException(
                     status_code=409,
                     detail={
@@ -266,6 +271,7 @@ async def send_reminders_batch(request: CreateBatchRequest, company_id: str = De
                     }
                 )
         else:
+            logger.warning("no_snapshot_blocking_send", company_id=company_id)
             raise HTTPException(
                 status_code=409,
                 detail={
@@ -277,48 +283,79 @@ async def send_reminders_batch(request: CreateBatchRequest, company_id: str = De
 
         # --- Validation 2: Reminder cooldown ---
         antispam_config = anti_spam_service.get_config()
-        if antispam_config.reminder_cooldown_enabled:
+        cooldown_enabled = antispam_config.enabled and antispam_config.reminder_cooldown_enabled
+        
+        logger.info(
+            "checking_cooldown", 
+            company_id=company_id, 
+            cooldown_enabled=cooldown_enabled,
+            global_enabled=antispam_config.enabled,
+            per_feature_enabled=antispam_config.reminder_cooldown_enabled
+        )
+
+        if cooldown_enabled:
             last_sent = refresh_stats.get("last_reminder_sent_at")
             if last_sent:
                 last_sent_dt = datetime.fromisoformat(last_sent)
-                cooldown = timedelta(minutes=antispam_config.reminder_cooldown_minutes)
+                cooldown_minutes = antispam_config.reminder_cooldown_minutes
+                cooldown_delta = timedelta(minutes=cooldown_minutes)
                 time_since = datetime.now() - last_sent_dt
-                if time_since < cooldown:
-                    remaining = cooldown - time_since
+                
+                if time_since < cooldown_delta:
+                    remaining = cooldown_delta - time_since
                     remaining_min = int(remaining.total_seconds() / 60)
+                    logger.warning("cooldown_active_blocking_send", company_id=company_id, remaining_min=remaining_min)
                     raise HTTPException(
                         status_code=429,
                         detail={
                             "error": "cooldown_active",
                             "message": f"Reminders were sent {int(time_since.total_seconds() / 60)} minutes ago. Please wait {remaining_min} more minutes.",
                             "last_sent_at": last_sent,
-                            "cooldown_minutes": antispam_config.reminder_cooldown_minutes,
+                            "cooldown_minutes": cooldown_minutes,
                             "remaining_minutes": remaining_min,
                         }
                     )
 
-        result = await reminder_service.send_reminders_to_parties(
+        # Pre-create identifiers and session so we can return them immediately
+        batch_id = str(uuid.uuid4())
+        session = await anti_spam_service.create_session(
             party_codes=request.party_codes,
-            template_id=request.template_id,
-            sent_by="manual",
-            party_templates=getattr(request, 'party_templates', None),
-            company_id=company_id,
+            template_id=request.template_id
         )
 
-        # Record that reminders were sent for this company
-        try:
-            reminder_config_service.record_reminder_sent(scope_key=company_id)
-        except Exception as rec_err:
-            logger.warning("failed_to_record_reminder_sent", error=str(rec_err))
+        # Define the background task wrapper
+        async def _background_send():
+            try:
+                logger.info("background_batch_started", batch_id=batch_id, session_id=session.session_id)
+                await reminder_service.send_reminders_to_parties(
+                    party_codes=request.party_codes,
+                    template_id=request.template_id,
+                    sent_by="manual",
+                    party_templates=getattr(request, 'party_templates', None),
+                    company_id=company_id,
+                    batch_id=batch_id,
+                    session=session
+                )
+                
+                # Record that reminders were sent for this company
+                try:
+                    reminder_config_service.record_reminder_sent(scope_key=company_id)
+                    logger.info("reminder_sent_recorded", batch_id=batch_id)
+                except Exception as rec_err:
+                    logger.warning("failed_to_record_reminder_sent", error=str(rec_err))
+                    
+                logger.info("background_batch_completed", batch_id=batch_id)
+            except Exception as e:
+                logger.error("background_batch_failed", batch_id=batch_id, error=str(e), exc_info=True)
 
-        batch_id = result.get("batch_id") if isinstance(result, dict) else result
-        session_id = result.get("session_id") if isinstance(result, dict) else None
+        # Schedule the background task
+        background_tasks.add_task(_background_send)
 
         return {
             "status": "success",
             "batch_id": batch_id,
-            "session_id": session_id,
-            "message": f"Sending reminders to {len(request.party_codes)} parties"
+            "session_id": session.session_id,
+            "message": f"Reminder batch initiated for {len(request.party_codes)} parties. Processing in background."
         }
 
     except HTTPException:
@@ -644,21 +681,14 @@ async def update_antispam_config(config_update: dict):
         from app.services.anti_spam_service import AntiSpamConfig
         
         current_config = anti_spam_service.get_config()
-        new_config = AntiSpamConfig(
-            enabled=config_update.get("enabled", current_config.enabled),
-            message_inflation=config_update.get("message_inflation", current_config.message_inflation),
-            pdf_inflation=config_update.get("pdf_inflation", current_config.pdf_inflation),
-            typing_simulation=config_update.get("typing_simulation", current_config.typing_simulation),
-            startup_delay_min=current_config.startup_delay_min,
-            startup_delay_max=current_config.startup_delay_max,
-            admin_phone=current_config.admin_phone,
-            send_session_reports=current_config.send_session_reports,
-            reminder_cooldown_enabled=config_update.get("reminder_cooldown_enabled", current_config.reminder_cooldown_enabled),
-            reminder_cooldown_minutes=config_update.get("reminder_cooldown_minutes", current_config.reminder_cooldown_minutes),
-        )
+        # Merge current with update and validate via Pydantic
+        current_data = current_config.model_dump()
+        current_data.update(config_update)
+        
+        new_config = AntiSpamConfig(**current_data)
         anti_spam_service.update_config(new_config)
         
-        logger.info("antispam_config_updated", config=config_update)
+        logger.info("antispam_config_updated", config=new_config.model_dump())
         return {"status": "success", "message": "Anti-spam configuration updated"}
     except Exception as e:
         logger.error("update_antispam_config_error", error=str(e))

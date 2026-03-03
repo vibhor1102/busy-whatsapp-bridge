@@ -19,6 +19,8 @@ class CompanyDatabase(BaseModel):
     bds_file_path: str = ""
     bds_password: str = "ILoveMyINDIA"
     company_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    company_address: Optional[str] = None
 
 
 class DatabaseSettings(BaseModel):

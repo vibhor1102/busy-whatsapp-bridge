@@ -17,6 +17,8 @@ interface CompanyConfig {
     bds_file_path: string;
     bds_password?: string;
     company_name?: string;
+    contact_phone?: string;
+    company_address?: string;
 }
 
 interface DatabaseSettingsManagerProps {
@@ -165,9 +167,9 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
                         {isAutoDetecting ? (
                             <div className="w-3.5 h-3.5 mr-1 border-2 border-t-transparent border-current rounded-full animate-spin" />
                         ) : (
-                            <Wand2 className="w-3.5 h-3.5 mr-1" />
+                            <FolderSearch className="w-3.5 h-3.5 mr-1" />
                         )}
-                        Auto Detect DB
+                        Browse
                     </button>
                 </div>
             </div>
@@ -282,6 +284,30 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
                                         />
                                         <KeyRound className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                                     </div>
+                                </div>
+
+                                <div className="md:col-span-4">
+                                    <label className="block text-xs font-medium mt-1 mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                                        Contact Phone (Optional)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={config.contact_phone || ''}
+                                        onChange={(e) => handleUpdateCompany(id, 'contact_phone', e.target.value)}
+                                        placeholder="e.g. +91 9876543210"
+                                        className="input text-sm"
+                                    />
+                                </div>
+                                <div className="md:col-span-12">
+                                    <label className="block text-xs font-medium mt-1 mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                                        Registered Address (Optional)
+                                    </label>
+                                    <textarea
+                                        value={config.company_address || ''}
+                                        onChange={(e) => handleUpdateCompany(id, 'company_address', e.target.value)}
+                                        placeholder="Full company address..."
+                                        className="input text-sm min-h-[60px] resize-y py-2"
+                                    />
                                 </div>
                             </div>
                         </motion.div>
