@@ -24,11 +24,12 @@ import { api, type CompanyInfo } from '../services/api';
 import { useRemindersStore } from '../stores/remindersStore';
 import { LoadingState } from '../components/ui/LoadingState';
 import { TemplateEditor } from '../components/reminders/TemplateEditor';
+import RefreshGate from '../components/reminders/RefreshGate';
 import { getStatusDotColor } from '../utils/statusColors';
 import { formatCurrency, formatDateTime, formatDuration } from '../utils/formatters';
 import { REFETCH_INTERVALS, LIMITS, RETRY_DELAYS, POLLING } from '../constants';
 import { toast } from 'sonner';
-import type { MessageTemplate, ReminderSession, PartyReminderInfo, AntiSpamConfig } from '../types';
+import type { MessageTemplate, ReminderSession, PartyReminderInfo, AntiSpamConfig, RefreshStats } from '../types';
 
 // ─── Sub-Components ────────────────────────────────────
 
@@ -206,10 +207,43 @@ export function Reminders() {
   const [companies, setCompanies] = useState<CompanyInfo[]>([]);
   const activeCompanyId = api.getCompanyId();
 
+  // --- Refresh Gate State ---
+  // 'select' = only company selector visible
+  // 'gate' = refresh gate overlay (data stale)
+  // 'ready' = normal page
+  const [pagePhase, setPagePhase] = useState<'select' | 'gate' | 'ready'>('select');
+  const [refreshStats, setRefreshStats] = useState<RefreshStats | null>(null);
+
   // Load available companies
   useEffect(() => {
     api.getCompanies().then(res => setCompanies(res.companies)).catch(console.error);
   }, []);
+
+  // Check refresh stats after companies are loaded to decide phase
+  useEffect(() => {
+    if (companies.length === 0) return;
+    api.getRefreshStats()
+      .then((stats) => {
+        setRefreshStats(stats);
+        const lastRefresh = stats.last_refresh_at;
+        if (!lastRefresh) {
+          // Never refreshed — go to gate
+          setPagePhase('gate');
+          return;
+        }
+        const ageMs = Date.now() - new Date(lastRefresh).getTime();
+        const ONE_HOUR = 60 * 60 * 1000;
+        if (ageMs > ONE_HOUR) {
+          setPagePhase('gate');
+        } else {
+          setPagePhase('ready');
+        }
+      })
+      .catch(() => {
+        // If we can't fetch stats, go straight to ready (graceful degradation)
+        setPagePhase('ready');
+      });
+  }, [companies, activeCompanyId]);
 
   // Store - use individual selectors to prevent infinite re-renders
   const setConfig = useRemindersStore((state) => state.setConfig);
@@ -392,16 +426,45 @@ export function Reminders() {
     [parties, selectedPartyCodes]
   );
 
-  const handleSendReminders = useCallback(() => {
+  const handleSendReminders = useCallback(async () => {
     const selectedCodes = Array.from(selectedPartyCodes);
     if (selectedCodes.length === 0 || !defaultTemplateId) return;
+
+    // --- Send-time validation: data freshness ---
+    try {
+      const stats = await api.getRefreshStats();
+      if (!stats.last_refresh_at) {
+        toast.error('Data has never been refreshed. Please refresh before sending.');
+        return;
+      }
+      const ageMs = Date.now() - new Date(stats.last_refresh_at).getTime();
+      const TWO_HOURS = 2 * 60 * 60 * 1000;
+      if (ageMs > TWO_HOURS) {
+        const hoursAgo = (ageMs / 3_600_000).toFixed(1);
+        toast.error(`Data is ${hoursAgo} hours old. Please refresh before sending.`);
+        return;
+      }
+
+      // --- Send-time validation: cooldown ---
+      if (antiSpamConfig.reminder_cooldown_enabled && stats.last_reminder_sent_at) {
+        const sinceMs = Date.now() - new Date(stats.last_reminder_sent_at).getTime();
+        const cooldownMs = (antiSpamConfig.reminder_cooldown_minutes || 60) * 60 * 1000;
+        if (sinceMs < cooldownMs) {
+          const remainingMin = Math.ceil((cooldownMs - sinceMs) / 60_000);
+          toast.error(`Cooldown active. Please wait ${remainingMin} more minute${remainingMin !== 1 ? 's' : ''} before sending again.`);
+          return;
+        }
+      }
+    } catch {
+      // If stats fetch fails, let the backend validate
+    }
 
     sendRemindersMutation.mutate({
       partyCodes: selectedCodes,
       templateId: defaultTemplateId,
       partyTemplates: partyTemplates,
     });
-  }, [selectedPartyCodes, defaultTemplateId, partyTemplates, sendRemindersMutation]);
+  }, [selectedPartyCodes, defaultTemplateId, partyTemplates, sendRemindersMutation, antiSpamConfig]);
 
   const selectedTotalAmount = useMemo(() =>
     selectedParties.reduce((sum, p) => sum + (Number(p.amount_due) || 0), 0),
@@ -433,7 +496,7 @@ export function Reminders() {
     overscan: 5,
   });
 
-  if (isLoading) {
+  if (isLoading && pagePhase === 'ready') {
     return <LoadingState size="lg" fullPage />;
   }
 
@@ -483,269 +546,425 @@ export function Reminders() {
         </div>
       </div>
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
-            Payment Reminders
-          </h2>
-          <p className="text-xs sm:text-sm mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
-            Send reminders with attached ledgers
-            {snapshotStatus?.has_snapshot && (
-              <span className="hidden sm:inline"> · Last refreshed {formatDateTime(snapshotStatus.last_refreshed_at || null)}</span>
-            )}
-          </p>
-        </div>
-        <div className="text-right flex items-center gap-6">
-          <div>
-            <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Selected Total</p>
-            <p className="text-lg font-bold" style={{ color: 'var(--success)' }}>{formatCurrency(selectedTotalAmount)}</p>
-          </div>
-          <div>
-            <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Remaining Total</p>
-            <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{formatCurrency(availableTotalAmount)}</p>
-          </div>
-
-          <button
-            onClick={() => refreshSnapshotMutation.mutate()}
-            disabled={refreshSnapshotMutation.isPending}
-            className="btn-secondary"
-          >
-            <RefreshCw className={`w-4 h-4 ${refreshSnapshotMutation.isPending && 'animate-spin'}`} />
-            Refresh Data
-          </button>
-        </div>
-      </div>
-
-      {/* Stats */}
-      < div className="grid grid-cols-2 md:grid-cols-4 gap-3" >
-        <StatCard title="Eligible" value={stats?.eligible_parties || 0} />
-        <StatCard title="Enabled" value={stats?.enabled_parties || 0} />
-        <StatCard
-          title="Total Due"
-          value={formatCurrency(stats?.total_amount_due || 0)}
+      {/* Refresh Gate (Phase 2) */}
+      {pagePhase === 'gate' && (
+        <RefreshGate
+          refreshStats={refreshStats}
+          onRefreshComplete={() => {
+            setPagePhase('ready');
+            // Refetch all data now that snapshot is fresh
+            api.getRefreshStats().then(setRefreshStats).catch(() => { });
+            queryClient.invalidateQueries({ queryKey: ['reminder-snapshot'] });
+            queryClient.invalidateQueries({ queryKey: ['reminder-stats'] });
+            queryClient.invalidateQueries({ queryKey: ['reminder-parties'] });
+            toast.success('Data refreshed successfully');
+          }}
+          onCancel={() => {
+            // Go back to just the company selector
+            setPagePhase('select');
+          }}
         />
-        <StatCard
-          title="Session"
-          value={sessionData ? `${sessionData.progress.percentage}%` : 'Ready'}
-          accent={!!sessionData}
-        />
-      </div >
+      )}
 
-      {/* Active Session */}
-      <AnimatePresence>
-        {
-          sessionData && (
-            <SessionPanel
-              session={sessionData}
-              onPause={() => activeSessionId && api.pauseSession(activeSessionId)}
-              onResume={() => activeSessionId && api.resumeSession(activeSessionId)}
-              onStop={() => activeSessionId && api.stopSession(activeSessionId)}
-            />
-          )
-        }
-      </AnimatePresence >
-
-      {/* Template Selection */}
-      < div className="card p-5" >
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <FileText className="w-4 h-4" style={{ color: 'var(--brand-accent)' }} />
-            <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              Message Template
-            </h3>
+      {/* Main Content (Phase 3) */}
+      {pagePhase === 'ready' && (<>
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-xl sm:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+              Payment Reminders
+            </h2>
+            <p className="text-xs sm:text-sm mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+              Send reminders with attached ledgers
+              {snapshotStatus?.has_snapshot && (
+                <span className="hidden sm:inline"> · Last refreshed {formatDateTime(snapshotStatus.last_refreshed_at || null)}</span>
+              )}
+            </p>
           </div>
-          <button
-            onClick={() => setIsTemplateEditorOpen(true)}
-            className="text-xs font-medium px-3 py-1.5 rounded-md transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-            style={{ color: 'var(--brand-accent)' }}
-          >
-            Manage Templates
-          </button>
-        </div>
+          <div className="text-right flex items-center gap-6">
+            <div>
+              <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Selected Total</p>
+              <p className="text-lg font-bold" style={{ color: 'var(--success)' }}>{formatCurrency(selectedTotalAmount)}</p>
+            </div>
+            <div>
+              <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Remaining Total</p>
+              <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{formatCurrency(availableTotalAmount)}</p>
+            </div>
 
-        <select
-          value={defaultTemplateId}
-          onChange={(e) => setDefaultTemplateId(e.target.value)}
-          className="input max-w-md"
-          aria-label="Select message template"
-        >
-          <option value="">Select a template...</option>
-          {templates?.map((t: MessageTemplate) => (
-            <option key={t.id} value={t.id}>{t.name} {t.is_default && '(Default)'}</option>
-          ))}
-        </select>
-
-        {
-          defaultTemplateId && (
-            <div
-              className="mt-3 p-3 rounded-lg"
-              style={{ background: 'var(--bg-input)' }}
+            <button
+              onClick={() => refreshSnapshotMutation.mutate()}
+              disabled={refreshSnapshotMutation.isPending}
+              className="btn-secondary"
             >
-              <p className="text-xs mb-1" style={{ color: 'var(--text-tertiary)' }}>Preview:</p>
-              <pre
-                className="text-xs whitespace-pre-wrap font-mono"
-                style={{ color: 'var(--text-secondary)' }}
-              >
-                {templates?.find((t: MessageTemplate) => t.id === defaultTemplateId)?.content}
-              </pre>
-            </div>
-          )
-        }
-      </div >
-
-      {/* Anti-Spam Panel */}
-      < div className="card overflow-hidden" >
-        <button
-          onClick={() => setShowAntiSpam(!showAntiSpam)}
-          className="w-full flex items-center justify-between p-4 transition-colors"
-          style={{ color: 'var(--text-primary)' }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-input)')}
-          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-        >
-          <div className="flex items-center gap-2.5">
-            <Shield className="w-4 h-4" style={{ color: 'var(--brand-accent)' }} />
-            <div className="text-left">
-              <h3 className="text-sm font-semibold">Anti-Spam Protection</h3>
-              <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                {antiSpamConfig.enabled ? 'Enabled' : 'Disabled'}
-              </p>
-            </div>
+              <RefreshCw className={`w-4 h-4 ${refreshSnapshotMutation.isPending && 'animate-spin'}`} />
+              Refresh Data
+            </button>
           </div>
-          {showAntiSpam
-            ? <ChevronUp className="w-4 h-4" style={{ color: 'var(--text-tertiary)' }} />
-            : <ChevronDown className="w-4 h-4" style={{ color: 'var(--text-tertiary)' }} />
-          }
-        </button>
+        </div>
 
+        {/* Stats */}
+        < div className="grid grid-cols-2 md:grid-cols-4 gap-3" >
+          <StatCard title="Eligible" value={stats?.eligible_parties || 0} />
+          <StatCard title="Enabled" value={stats?.enabled_parties || 0} />
+          <StatCard
+            title="Total Due"
+            value={formatCurrency(stats?.total_amount_due || 0)}
+          />
+          <StatCard
+            title="Session"
+            value={sessionData ? `${sessionData.progress.percentage}%` : 'Ready'}
+            accent={!!sessionData}
+          />
+        </div >
+
+        {/* Active Session */}
         <AnimatePresence>
-          {showAntiSpam && (
-            <motion.div
-              initial={{ height: 0 }}
-              animate={{ height: 'auto' }}
-              exit={{ height: 0 }}
-              className="overflow-hidden border-t"
+          {
+            sessionData && (
+              <SessionPanel
+                session={sessionData}
+                onPause={() => activeSessionId && api.pauseSession(activeSessionId)}
+                onResume={() => activeSessionId && api.resumeSession(activeSessionId)}
+                onStop={() => activeSessionId && api.stopSession(activeSessionId)}
+              />
+            )
+          }
+        </AnimatePresence >
+
+        {/* Template Selection */}
+        < div className="card p-5" >
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <FileText className="w-4 h-4" style={{ color: 'var(--brand-accent)' }} />
+              <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                Message Template
+              </h3>
+            </div>
+            <button
+              onClick={() => setIsTemplateEditorOpen(true)}
+              className="text-xs font-medium px-3 py-1.5 rounded-md transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+              style={{ color: 'var(--brand-accent)' }}
+            >
+              Manage Templates
+            </button>
+          </div>
+
+          <select
+            value={defaultTemplateId}
+            onChange={(e) => setDefaultTemplateId(e.target.value)}
+            className="input max-w-md"
+            aria-label="Select message template"
+          >
+            <option value="">Select a template...</option>
+            {templates?.map((t: MessageTemplate) => (
+              <option key={t.id} value={t.id}>{t.name} {t.is_default && '(Default)'}</option>
+            ))}
+          </select>
+
+          {
+            defaultTemplateId && (
+              <div
+                className="mt-3 p-3 rounded-lg"
+                style={{ background: 'var(--bg-input)' }}
+              >
+                <p className="text-xs mb-1" style={{ color: 'var(--text-tertiary)' }}>Preview:</p>
+                <pre
+                  className="text-xs whitespace-pre-wrap font-mono"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  {templates?.find((t: MessageTemplate) => t.id === defaultTemplateId)?.content}
+                </pre>
+              </div>
+            )
+          }
+        </div >
+
+        {/* Anti-Spam Panel */}
+        < div className="card overflow-hidden" >
+          <button
+            onClick={() => setShowAntiSpam(!showAntiSpam)}
+            className="w-full flex items-center justify-between p-4 transition-colors"
+            style={{ color: 'var(--text-primary)' }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-input)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            <div className="flex items-center gap-2.5">
+              <Shield className="w-4 h-4" style={{ color: 'var(--brand-accent)' }} />
+              <div className="text-left">
+                <h3 className="text-sm font-semibold">Anti-Spam Protection</h3>
+                <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                  {antiSpamConfig.enabled ? 'Enabled' : 'Disabled'}
+                </p>
+              </div>
+            </div>
+            {showAntiSpam
+              ? <ChevronUp className="w-4 h-4" style={{ color: 'var(--text-tertiary)' }} />
+              : <ChevronDown className="w-4 h-4" style={{ color: 'var(--text-tertiary)' }} />
+            }
+          </button>
+
+          <AnimatePresence>
+            {showAntiSpam && (
+              <motion.div
+                initial={{ height: 0 }}
+                animate={{ height: 'auto' }}
+                exit={{ height: 0 }}
+                className="overflow-hidden border-t"
+                style={{ borderColor: 'var(--border-default)' }}
+              >
+                <div className="p-4 space-y-2">
+                  <Toggle
+                    checked={antiSpamConfig.enabled}
+                    onChange={(val) => {
+                      const newConfig = { ...antiSpamConfig, enabled: val };
+                      setAntiSpamConfig(newConfig);
+                      updateAntiSpamMutation.mutate(newConfig);
+                    }}
+                    label="Enable Anti-Spam"
+                    description="Protect against WhatsApp bulk detection"
+                  />
+
+                  {antiSpamConfig.enabled && (
+                    <>
+                      <Toggle
+                        checked={antiSpamConfig.message_inflation}
+                        onChange={(val) => {
+                          const newConfig = { ...antiSpamConfig, message_inflation: val };
+                          setAntiSpamConfig(newConfig);
+                          updateAntiSpamMutation.mutate(newConfig);
+                        }}
+                        label="Message Size Inflation"
+                      />
+                      <Toggle
+                        checked={antiSpamConfig.pdf_inflation}
+                        onChange={(val) => {
+                          const newConfig = { ...antiSpamConfig, pdf_inflation: val };
+                          setAntiSpamConfig(newConfig);
+                          updateAntiSpamMutation.mutate(newConfig);
+                        }}
+                        label="PDF Size Inflation"
+                      />
+                      <Toggle
+                        checked={antiSpamConfig.typing_simulation}
+                        onChange={(val) => {
+                          const newConfig = { ...antiSpamConfig, typing_simulation: val };
+                          setAntiSpamConfig(newConfig);
+                          updateAntiSpamMutation.mutate(newConfig);
+                        }}
+                        label="Human Typing Simulation"
+                      />
+                      <Toggle
+                        checked={antiSpamConfig.startup_delay_enabled}
+                        onChange={(val) => {
+                          const newConfig = { ...antiSpamConfig, startup_delay_enabled: val };
+                          setAntiSpamConfig(newConfig);
+                          updateAntiSpamMutation.mutate(newConfig);
+                        }}
+                        label="Session Startup Delay"
+                      />
+                      <Toggle
+                        checked={antiSpamConfig.reminder_cooldown_enabled}
+                        onChange={(val) => {
+                          const newConfig = { ...antiSpamConfig, reminder_cooldown_enabled: val };
+                          setAntiSpamConfig(newConfig);
+                          updateAntiSpamMutation.mutate(newConfig);
+                        }}
+                        label="Send Cooldown"
+                        description={`Prevent re-sending within ${antiSpamConfig.reminder_cooldown_minutes || 60} minutes`}
+                      />
+                    </>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div >
+
+        {/* Party Selection */}
+        < div className="grid grid-cols-1 lg:grid-cols-2 gap-5" >
+          {/* Selected Parties */}
+          < div className="card overflow-hidden" >
+            <div
+              className="p-4 border-b flex items-center justify-between"
               style={{ borderColor: 'var(--border-default)' }}
             >
-              <div className="p-4 space-y-2">
-                <Toggle
-                  checked={antiSpamConfig.enabled}
-                  onChange={(val) => {
-                    const newConfig = { ...antiSpamConfig, enabled: val };
-                    setAntiSpamConfig(newConfig);
-                    updateAntiSpamMutation.mutate(newConfig);
-                  }}
-                  label="Enable Anti-Spam"
-                  description="Protect against WhatsApp bulk detection"
-                />
-
-                {antiSpamConfig.enabled && (
-                  <>
-                    <Toggle
-                      checked={antiSpamConfig.message_inflation}
-                      onChange={(val) => {
-                        const newConfig = { ...antiSpamConfig, message_inflation: val };
-                        setAntiSpamConfig(newConfig);
-                        updateAntiSpamMutation.mutate(newConfig);
-                      }}
-                      label="Message Size Inflation"
-                    />
-                    <Toggle
-                      checked={antiSpamConfig.pdf_inflation}
-                      onChange={(val) => {
-                        const newConfig = { ...antiSpamConfig, pdf_inflation: val };
-                        setAntiSpamConfig(newConfig);
-                        updateAntiSpamMutation.mutate(newConfig);
-                      }}
-                      label="PDF Size Inflation"
-                    />
-                    <Toggle
-                      checked={antiSpamConfig.typing_simulation}
-                      onChange={(val) => {
-                        const newConfig = { ...antiSpamConfig, typing_simulation: val };
-                        setAntiSpamConfig(newConfig);
-                        updateAntiSpamMutation.mutate(newConfig);
-                      }}
-                      label="Human Typing Simulation"
-                    />
-                    <Toggle
-                      checked={antiSpamConfig.startup_delay_enabled}
-                      onChange={(val) => {
-                        const newConfig = { ...antiSpamConfig, startup_delay_enabled: val };
-                        setAntiSpamConfig(newConfig);
-                        updateAntiSpamMutation.mutate(newConfig);
-                      }}
-                      label="Session Startup Delay"
-                    />
-                  </>
-                )}
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-4 h-4" style={{ color: 'var(--success)' }} />
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  Selected
+                </h3>
+                <span
+                  className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                  style={{ background: 'var(--brand-accent)', color: 'white' }}
+                >
+                  {selectedParties.length}
+                </span>
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div >
-
-      {/* Party Selection */}
-      < div className="grid grid-cols-1 lg:grid-cols-2 gap-5" >
-        {/* Selected Parties */}
-        < div className="card overflow-hidden" >
-          <div
-            className="p-4 border-b flex items-center justify-between"
-            style={{ borderColor: 'var(--border-default)' }}
-          >
-            <div className="flex items-center gap-2">
-              <CheckCircle className="w-4 h-4" style={{ color: 'var(--success)' }} />
-              <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                Selected
-              </h3>
-              <span
-                className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                style={{ background: 'var(--brand-accent)', color: 'white' }}
-              >
-                {selectedParties.length}
-              </span>
             </div>
-          </div>
 
-          <div className="p-4">
-            {selectedParties.length === 0 ? (
-              <div className="text-center py-10" style={{ color: 'var(--text-tertiary)' }}>
-                <Users className="w-10 h-10 mx-auto mb-2 opacity-40" />
-                <p className="text-sm">No parties selected</p>
+            <div className="p-4">
+              {selectedParties.length === 0 ? (
+                <div className="text-center py-10" style={{ color: 'var(--text-tertiary)' }}>
+                  <Users className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                  <p className="text-sm">No parties selected</p>
+                </div>
+              ) : (
+                <>
+                  <div ref={selectedParentRef} className="max-h-80 overflow-y-auto w-full">
+                    <div
+                      style={{
+                        height: `${selectedVirtualizer.getTotalSize()}px`,
+                        width: '100%',
+                        position: 'relative',
+                      }}
+                    >
+                      {selectedVirtualizer.getVirtualItems().map((virtualItem: any) => {
+                        const party = selectedParties[virtualItem.index];
+                        return (
+                          <div
+                            key={party.code}
+                            className="flex items-center justify-between p-2.5 rounded-lg group absolute top-0 left-0 w-full"
+                            style={{
+                              height: `${virtualItem.size - 6}px`, // -6px for gap accounting
+                              transform: `translateY(${virtualItem.start}px)`,
+                              background: 'var(--bg-input)'
+                            }}
+                          >
+                            <div className="flex items-center gap-3 min-w-0 pr-4">
+                              <button
+                                onClick={() => handleToggleSelection(party.code)}
+                                className="p-1.5 rounded-md transition-colors opacity-60 hover:opacity-100 flex-shrink-0"
+                                style={{ color: 'var(--danger)' }}
+                                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--danger-soft)')}
+                                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                                aria-label={`Remove ${party.name}`}
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                              <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                                {party.name}
+                              </p>
+                            </div>
+
+                            <p className="text-sm font-medium flex-shrink-0 text-right" style={{ color: 'var(--text-primary)' }}>
+                              {formatCurrency(party.amount_due)}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div >
+
+          {/* Available Parties */}
+          < div className="card overflow-hidden" >
+            <div
+              className="p-4 border-b space-y-3"
+              style={{ borderColor: 'var(--border-default)' }}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4" style={{ color: 'var(--text-tertiary)' }} />
+                  <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    Available
+                  </h3>
+                  <span
+                    className="text-xs font-medium px-2 py-0.5 rounded-full"
+                    style={{
+                      background: 'var(--bg-input)',
+                      color: 'var(--text-secondary)',
+                    }}
+                  >
+                    {availableParties.length}
+                  </span>
+                </div>
               </div>
-            ) : (
-              <>
-                <div ref={selectedParentRef} className="max-h-80 overflow-y-auto w-full">
+
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <label htmlFor="party-search" className="sr-only">
+                    Search parties
+                  </label>
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--text-tertiary)' }} aria-hidden="true" />
+                  <input
+                    id="party-search"
+                    type="text"
+                    placeholder="Search parties..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="input pl-9 pr-9"
+                    aria-label="Search for parties by name or code"
+                  />
+                  <AnimatePresence>
+                    {partiesFetching && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.8 }}
+                        className="absolute right-3 top-1/2 -translate-y-1/2"
+                      >
+                        <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--brand-accent)' }} />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                <select
+                  value={filterBy}
+                  onChange={(e) => setFilterBy(e.target.value)}
+                  className="input w-auto"
+                  aria-label="Filter parties by status"
+                >
+                  <option value="all">All</option>
+                  <option value="enabled">Enabled</option>
+                  <option value="recent">Not Recent</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="p-4">
+              <div ref={availableParentRef} className="max-h-80 overflow-y-auto w-full">
+                {availableParties.length > 0 && (
                   <div
                     style={{
-                      height: `${selectedVirtualizer.getTotalSize()}px`,
+                      height: `${availableVirtualizer.getTotalSize()}px`,
                       width: '100%',
                       position: 'relative',
                     }}
                   >
-                    {selectedVirtualizer.getVirtualItems().map((virtualItem: any) => {
-                      const party = selectedParties[virtualItem.index];
+                    {availableVirtualizer.getVirtualItems().map((virtualItem: any) => {
+                      const party = availableParties[virtualItem.index];
                       return (
-                        <div
+                        <button
                           key={party.code}
-                          className="flex items-center justify-between p-2.5 rounded-lg group absolute top-0 left-0 w-full"
+                          onClick={() => handleToggleSelection(party.code)}
+                          className="w-full flex items-center justify-between p-2.5 rounded-lg transition-colors text-left absolute top-0 left-0"
                           style={{
-                            height: `${virtualItem.size - 6}px`, // -6px for gap accounting
+                            height: `${virtualItem.size - 6}px`, // gap accounting
                             transform: `translateY(${virtualItem.start}px)`,
                             background: 'var(--bg-input)'
                           }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'var(--bg-input-hover)';
+                            const checkbox = e.currentTarget.querySelector('.party-checkbox') as HTMLDivElement;
+                            if (checkbox) checkbox.style.borderColor = 'var(--text-primary)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'var(--bg-input)';
+                            const checkbox = e.currentTarget.querySelector('.party-checkbox') as HTMLDivElement;
+                            if (checkbox) checkbox.style.borderColor = 'var(--border-strong)';
+                          }}
+                          aria-label={`Select ${party.name} with amount due ${formatCurrency(party.amount_due)}`}
                         >
                           <div className="flex items-center gap-3 min-w-0 pr-4">
-                            <button
-                              onClick={() => handleToggleSelection(party.code)}
-                              className="p-1.5 rounded-md transition-colors opacity-60 hover:opacity-100 flex-shrink-0"
-                              style={{ color: 'var(--danger)' }}
-                              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--danger-soft)')}
-                              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                              aria-label={`Remove ${party.name}`}
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
+                            <div
+                              className="party-checkbox w-4 h-4 border-2 rounded flex items-center justify-center flex-shrink-0 transition-colors"
+                              style={{ borderColor: 'var(--border-strong)' }}
+                              aria-hidden="true"
+                            />
                             <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                               {party.name}
                             </p>
@@ -754,220 +973,97 @@ export function Reminders() {
                           <p className="text-sm font-medium flex-shrink-0 text-right" style={{ color: 'var(--text-primary)' }}>
                             {formatCurrency(party.amount_due)}
                           </p>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
-                </div>
-              </>
-            )}
-          </div>
+                )}
+
+                {availableParties.length === 0 && (
+                  <div className="text-center py-10" style={{ color: 'var(--text-tertiary)' }}>
+                    <p className="text-sm">No parties available</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div >
         </div >
 
-        {/* Available Parties */}
-        < div className="card overflow-hidden" >
-          <div
-            className="p-4 border-b space-y-3"
-            style={{ borderColor: 'var(--border-default)' }}
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4" style={{ color: 'var(--text-tertiary)' }} />
-                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  Available
-                </h3>
-                <span
-                  className="text-xs font-medium px-2 py-0.5 rounded-full"
-                  style={{
-                    background: 'var(--bg-input)',
-                    color: 'var(--text-secondary)',
-                  }}
-                >
-                  {availableParties.length}
+        {/* Sticky Action Bar */}
+        < div
+          className="sticky bottom-4 rounded-xl p-4 backdrop-blur-xl"
+          style={{
+            background: 'var(--bg-sidebar)',
+            border: '1px solid var(--border-default)',
+            boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.08)',
+          }
+          }
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-5">
+              <div>
+                <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Selected: </span>
+                <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
+                  {selectedParties.length}
+                </span>
+              </div>
+
+              <div>
+                <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Total: </span>
+                <span className="text-sm font-bold" style={{ color: 'var(--brand-accent)' }}>
+                  {formatCurrency(selectedTotalAmount)}
                 </span>
               </div>
             </div>
 
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <label htmlFor="party-search" className="sr-only">
-                  Search parties
-                </label>
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--text-tertiary)' }} aria-hidden="true" />
-                <input
-                  id="party-search"
-                  type="text"
-                  placeholder="Search parties..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="input pl-9 pr-9"
-                  aria-label="Search for parties by name or code"
-                />
-                <AnimatePresence>
-                  {partiesFetching && (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.8 }}
-                      className="absolute right-3 top-1/2 -translate-y-1/2"
-                    >
-                      <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--brand-accent)' }} />
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-
-              <select
-                value={filterBy}
-                onChange={(e) => setFilterBy(e.target.value)}
-                className="input w-auto"
-                aria-label="Filter parties by status"
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  const csv = [
+                    ['Name', 'Phone', 'Amount Due'].join(','),
+                    ...selectedParties.map(p => [p.name, p.phone || '', p.amount_due].join(',')),
+                  ].join('\n');
+                  const blob = new Blob([csv], { type: 'text/csv' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'selected-parties.csv';
+                  a.click();
+                }}
+                disabled={selectedParties.length === 0}
+                className="btn-secondary text-xs"
               >
-                <option value="all">All</option>
-                <option value="enabled">Enabled</option>
-                <option value="recent">Not Recent</option>
-              </select>
+                <Download className="w-3.5 h-3.5" />
+                Export
+              </button>
+
+              <button
+                onClick={handleSendReminders}
+                disabled={selectedParties.length === 0 || !defaultTemplateId || sendRemindersMutation.isPending || activeSessionId !== null}
+                className="btn-primary"
+              >
+                {sendRemindersMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" />
+                    Send Reminders
+                  </>
+                )}
+              </button>
             </div>
-          </div>
-
-          <div className="p-4">
-            <div ref={availableParentRef} className="max-h-80 overflow-y-auto w-full">
-              {availableParties.length > 0 && (
-                <div
-                  style={{
-                    height: `${availableVirtualizer.getTotalSize()}px`,
-                    width: '100%',
-                    position: 'relative',
-                  }}
-                >
-                  {availableVirtualizer.getVirtualItems().map((virtualItem: any) => {
-                    const party = availableParties[virtualItem.index];
-                    return (
-                      <button
-                        key={party.code}
-                        onClick={() => handleToggleSelection(party.code)}
-                        className="w-full flex items-center justify-between p-2.5 rounded-lg transition-colors text-left absolute top-0 left-0"
-                        style={{
-                          height: `${virtualItem.size - 6}px`, // gap accounting
-                          transform: `translateY(${virtualItem.start}px)`,
-                          background: 'var(--bg-input)'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = 'var(--bg-input-hover)';
-                          const checkbox = e.currentTarget.querySelector('.party-checkbox') as HTMLDivElement;
-                          if (checkbox) checkbox.style.borderColor = 'var(--text-primary)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = 'var(--bg-input)';
-                          const checkbox = e.currentTarget.querySelector('.party-checkbox') as HTMLDivElement;
-                          if (checkbox) checkbox.style.borderColor = 'var(--border-strong)';
-                        }}
-                        aria-label={`Select ${party.name} with amount due ${formatCurrency(party.amount_due)}`}
-                      >
-                        <div className="flex items-center gap-3 min-w-0 pr-4">
-                          <div
-                            className="party-checkbox w-4 h-4 border-2 rounded flex items-center justify-center flex-shrink-0 transition-colors"
-                            style={{ borderColor: 'var(--border-strong)' }}
-                            aria-hidden="true"
-                          />
-                          <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                            {party.name}
-                          </p>
-                        </div>
-
-                        <p className="text-sm font-medium flex-shrink-0 text-right" style={{ color: 'var(--text-primary)' }}>
-                          {formatCurrency(party.amount_due)}
-                        </p>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {availableParties.length === 0 && (
-                <div className="text-center py-10" style={{ color: 'var(--text-tertiary)' }}>
-                  <p className="text-sm">No parties available</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div >
-      </div >
-
-      {/* Sticky Action Bar */}
-      < div
-        className="sticky bottom-4 rounded-xl p-4 backdrop-blur-xl"
-        style={{
-          background: 'var(--bg-sidebar)',
-          border: '1px solid var(--border-default)',
-          boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.08)',
-        }
-        }
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-5">
-            <div>
-              <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Selected: </span>
-              <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
-                {selectedParties.length}
-              </span>
-            </div>
-
-            <div>
-              <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Total: </span>
-              <span className="text-sm font-bold" style={{ color: 'var(--brand-accent)' }}>
-                {formatCurrency(selectedTotalAmount)}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                const csv = [
-                  ['Name', 'Phone', 'Amount Due'].join(','),
-                  ...selectedParties.map(p => [p.name, p.phone || '', p.amount_due].join(',')),
-                ].join('\n');
-                const blob = new Blob([csv], { type: 'text/csv' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'selected-parties.csv';
-                a.click();
-              }}
-              disabled={selectedParties.length === 0}
-              className="btn-secondary text-xs"
-            >
-              <Download className="w-3.5 h-3.5" />
-              Export
-            </button>
-
-            <button
-              onClick={handleSendReminders}
-              disabled={selectedParties.length === 0 || !defaultTemplateId || sendRemindersMutation.isPending || activeSessionId !== null}
-              className="btn-primary"
-            >
-              {sendRemindersMutation.isPending ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Sending...
-                </>
-              ) : (
-                <>
-                  <Send className="w-4 h-4" />
-                  Send Reminders
-                </>
-              )}
-            </button>
           </div>
         </div>
-      </div>
 
-      <TemplateEditor
-        isOpen={isTemplateEditorOpen}
-        onClose={() => setIsTemplateEditorOpen(false)}
-        activeCompanyId={activeCompanyId}
-      />
+        <TemplateEditor
+          isOpen={isTemplateEditorOpen}
+          onClose={() => setIsTemplateEditorOpen(false)}
+          activeCompanyId={activeCompanyId}
+        />
+      </>)}
     </div>
   );
 }

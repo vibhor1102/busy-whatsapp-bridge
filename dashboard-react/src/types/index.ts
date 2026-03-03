@@ -192,6 +192,13 @@ export interface ReminderSnapshotStatus {
   duration_ms?: number;
 }
 
+export interface RefreshStats {
+  last_refresh_at: string | null;
+  last_5_durations_ms: number[];
+  rolling_avg_ms: number;
+  last_reminder_sent_at: string | null;
+}
+
 export interface SchedulerStatus {
   is_running: boolean;
   next_run?: string;
@@ -235,6 +242,8 @@ export interface AntiSpamConfig {
   pdf_inflation: boolean;
   typing_simulation: boolean;
   startup_delay_enabled: boolean;
+  reminder_cooldown_enabled: boolean;
+  reminder_cooldown_minutes: number;
 }
 
 export interface MetaWebhookStatus {

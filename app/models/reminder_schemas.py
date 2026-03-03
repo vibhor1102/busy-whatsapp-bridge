@@ -296,6 +296,14 @@ class ReminderSnapshotStatus(BaseModel):
     source_db_path_hash: Optional[str] = None
 
 
+class RefreshStats(BaseModel):
+    """Refresh statistics for progress tracking and staleness checks."""
+    last_refresh_at: Optional[datetime] = Field(None, description="When data was last refreshed")
+    last_5_durations_ms: List[int] = Field(default_factory=list, description="Last 5 refresh durations in ms")
+    rolling_avg_ms: int = Field(default=0, description="Rolling average of last 5 refresh durations")
+    last_reminder_sent_at: Optional[datetime] = Field(None, description="When reminders were last sent for this company")
+
+
 class CreateBatchRequest(BaseModel):
     """Request body for creating a reminder batch"""
     party_codes: List[str] = Field(..., description="List of party codes to include")

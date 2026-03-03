@@ -240,6 +240,13 @@ class ReminderSnapshotService:
             nonzero_count=status["nonzero_count"],
             duration_ms=status["duration_ms"],
         )
+
+        # Record refresh stats for rolling average progress tracking
+        try:
+            self.config_service.record_refresh_completed(duration_ms, scope_key=company_id)
+        except Exception as e:
+            logger.warning("failed_to_record_refresh_stats", error=str(e))
+
         return status
 
 

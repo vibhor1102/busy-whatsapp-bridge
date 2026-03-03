@@ -12,6 +12,7 @@ import type {
   ScheduleConfig,
   ReminderStats,
   ReminderSnapshotStatus,
+  RefreshStats,
   PartyReminderInfo,
   MessageTemplate,
   AmountDueCalculation,
@@ -422,9 +423,24 @@ class ApiService {
     const response: AxiosResponse<ReminderSnapshotStatus> = await this.client.request({
       url: '/reminders/snapshot/refresh',
       method: 'POST',
-      timeout: 300000, // 5 minutes — this is a heavy DB operation
+      timeout: 1800000, // 30 minutes — this is a heavy DB operation
     });
     return response.data;
+  }
+
+  async refreshReminderSnapshotWithSignal(signal: AbortSignal): Promise<ReminderSnapshotStatus> {
+    // Same as refreshReminderSnapshot but with a cancellable AbortSignal
+    const response: AxiosResponse<ReminderSnapshotStatus> = await this.client.request({
+      url: '/reminders/snapshot/refresh',
+      method: 'POST',
+      timeout: 1800000, // 30 minutes with signal for manual cancel
+      signal,
+    });
+    return response.data;
+  }
+
+  async getRefreshStats(): Promise<RefreshStats> {
+    return this.fetch('/reminders/refresh-stats');
   }
 
   // Payment Reminders - Batch/Session

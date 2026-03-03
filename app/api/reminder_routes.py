@@ -23,6 +23,7 @@ from app.models.reminder_schemas import (
     PartyReminderInfo,
     PaginatedPartyReminderResponse,
     ReminderSnapshotStatus,
+    RefreshStats,
     ReminderConfig,
     ScheduleConfig,
     MessageTemplate,
@@ -144,6 +145,17 @@ async def refresh_snapshot(company_id: str = Depends(get_company_id)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/refresh-stats", response_model=RefreshStats)
+async def get_refresh_stats(company_id: str = Depends(get_company_id)):
+    """Get refresh statistics for progress tracking and staleness checks."""
+    try:
+        stats = reminder_config_service.get_refresh_stats(scope_key=company_id)
+        return RefreshStats(**stats)
+    except Exception as e:
+        logger.error("get_refresh_stats_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/parties/{party_code}", response_model=PartyReminderInfo)
 async def get_party_details(party_code: str, company_id: str = Depends(get_company_id)):
     """Get detailed information for a specific party"""
@@ -235,6 +247,56 @@ async def calculate_amount_due(
 async def send_reminders_batch(request: CreateBatchRequest, company_id: str = Depends(get_company_id)):
     """Send reminders to selected parties immediately"""
     try:
+        from datetime import timedelta
+
+        # --- Validation 1: Data freshness (must be < 2 hours old) ---
+        refresh_stats = reminder_config_service.get_refresh_stats(scope_key=company_id)
+        last_refresh = refresh_stats.get("last_refresh_at")
+        if last_refresh:
+            last_refresh_dt = datetime.fromisoformat(last_refresh)
+            staleness = datetime.now() - last_refresh_dt
+            if staleness > timedelta(hours=2):
+                hours_ago = round(staleness.total_seconds() / 3600, 1)
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "stale_data",
+                        "message": f"Data was last refreshed {hours_ago} hours ago. Please refresh before sending.",
+                        "last_refreshed_at": last_refresh,
+                    }
+                )
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "stale_data",
+                    "message": "Data has never been refreshed. Please refresh before sending.",
+                    "last_refreshed_at": None,
+                }
+            )
+
+        # --- Validation 2: Reminder cooldown ---
+        antispam_config = anti_spam_service.get_config()
+        if antispam_config.reminder_cooldown_enabled:
+            last_sent = refresh_stats.get("last_reminder_sent_at")
+            if last_sent:
+                last_sent_dt = datetime.fromisoformat(last_sent)
+                cooldown = timedelta(minutes=antispam_config.reminder_cooldown_minutes)
+                time_since = datetime.now() - last_sent_dt
+                if time_since < cooldown:
+                    remaining = cooldown - time_since
+                    remaining_min = int(remaining.total_seconds() / 60)
+                    raise HTTPException(
+                        status_code=429,
+                        detail={
+                            "error": "cooldown_active",
+                            "message": f"Reminders were sent {int(time_since.total_seconds() / 60)} minutes ago. Please wait {remaining_min} more minutes.",
+                            "last_sent_at": last_sent,
+                            "cooldown_minutes": antispam_config.reminder_cooldown_minutes,
+                            "remaining_minutes": remaining_min,
+                        }
+                    )
+
         result = await reminder_service.send_reminders_to_parties(
             party_codes=request.party_codes,
             template_id=request.template_id,
@@ -242,6 +304,12 @@ async def send_reminders_batch(request: CreateBatchRequest, company_id: str = De
             party_templates=getattr(request, 'party_templates', None),
             company_id=company_id,
         )
+
+        # Record that reminders were sent for this company
+        try:
+            reminder_config_service.record_reminder_sent(scope_key=company_id)
+        except Exception as rec_err:
+            logger.warning("failed_to_record_reminder_sent", error=str(rec_err))
 
         batch_id = result.get("batch_id") if isinstance(result, dict) else result
         session_id = result.get("session_id") if isinstance(result, dict) else None
@@ -253,6 +321,8 @@ async def send_reminders_batch(request: CreateBatchRequest, company_id: str = De
             "message": f"Sending reminders to {len(request.party_codes)} parties"
         }
 
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -558,7 +628,9 @@ async def get_antispam_config():
             "message_inflation": config.message_inflation,
             "pdf_inflation": config.pdf_inflation,
             "typing_simulation": config.typing_simulation,
-            "startup_delay_enabled": True  # Always enabled when anti-spam is on
+            "startup_delay_enabled": True,  # Always enabled when anti-spam is on
+            "reminder_cooldown_enabled": config.reminder_cooldown_enabled,
+            "reminder_cooldown_minutes": config.reminder_cooldown_minutes,
         }
     except Exception as e:
         logger.error("get_antispam_config_error", error=str(e))
@@ -580,7 +652,9 @@ async def update_antispam_config(config_update: dict):
             startup_delay_min=current_config.startup_delay_min,
             startup_delay_max=current_config.startup_delay_max,
             admin_phone=current_config.admin_phone,
-            send_session_reports=current_config.send_session_reports
+            send_session_reports=current_config.send_session_reports,
+            reminder_cooldown_enabled=config_update.get("reminder_cooldown_enabled", current_config.reminder_cooldown_enabled),
+            reminder_cooldown_minutes=config_update.get("reminder_cooldown_minutes", current_config.reminder_cooldown_minutes),
         )
         anti_spam_service.update_config(new_config)
         

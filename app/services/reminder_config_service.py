@@ -482,6 +482,88 @@ class ReminderConfigService:
         self.save_config(config, scope_key)
         logger.info("default_template_set", template_id=template_id)
 
+    # =========================================================================
+    # Refresh Stats Persistence (separate file to avoid config churn)
+    # =========================================================================
+
+    def _get_refresh_stats_path(self, scope_key: str) -> Path:
+        """Get refresh stats file path for a scope"""
+        config_path = self._get_config_path(scope_key)
+        return config_path.parent / "refresh_stats.json"
+
+    def _load_refresh_stats(self, scope_key: str) -> dict:
+        """Load refresh stats from file"""
+        stats_path = self._get_refresh_stats_path(scope_key)
+        if stats_path.exists():
+            try:
+                with open(stats_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning("failed_to_load_refresh_stats", error=str(e))
+        return {
+            "last_refresh_at": None,
+            "last_5_durations_ms": [],
+            "rolling_avg_ms": 0,
+            "last_reminder_sent_at": None,
+        }
+
+    def _save_refresh_stats(self, stats: dict, scope_key: str):
+        """Save refresh stats to file"""
+        stats_path = self._get_refresh_stats_path(scope_key)
+        stats_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(stats_path, 'w', encoding='utf-8') as f:
+                json.dump(stats, f, indent=2, default=str)
+        except Exception as e:
+            logger.error("failed_to_save_refresh_stats", error=str(e))
+
+    def get_refresh_stats(self, scope_key: Optional[str] = None) -> dict:
+        """Get refresh stats for a company"""
+        if scope_key is None:
+            scope_key = self.get_current_scope()
+        return self._load_refresh_stats(scope_key)
+
+    def record_refresh_completed(self, duration_ms: int, scope_key: Optional[str] = None):
+        """Record a completed refresh for rolling average tracking"""
+        if scope_key is None:
+            scope_key = self.get_current_scope()
+        stats = self._load_refresh_stats(scope_key)
+
+        stats["last_refresh_at"] = datetime.now().isoformat()
+
+        durations = stats.get("last_5_durations_ms", [])
+        durations.append(duration_ms)
+        # Keep only last 5
+        if len(durations) > 5:
+            durations = durations[-5:]
+        stats["last_5_durations_ms"] = durations
+        stats["rolling_avg_ms"] = int(sum(durations) / len(durations)) if durations else 0
+
+        self._save_refresh_stats(stats, scope_key)
+        logger.info(
+            "refresh_stats_recorded",
+            duration_ms=duration_ms,
+            rolling_avg_ms=stats["rolling_avg_ms"],
+            scope=scope_key,
+        )
+
+    def record_reminder_sent(self, scope_key: Optional[str] = None):
+        """Record when reminders were last sent for cooldown tracking"""
+        if scope_key is None:
+            scope_key = self.get_current_scope()
+        stats = self._load_refresh_stats(scope_key)
+        stats["last_reminder_sent_at"] = datetime.now().isoformat()
+        self._save_refresh_stats(stats, scope_key)
+        logger.info("reminder_sent_timestamp_recorded", scope=scope_key)
+
+    def get_last_reminder_sent_at(self, scope_key: Optional[str] = None) -> Optional[str]:
+        """Get the last time reminders were sent for a company"""
+        if scope_key is None:
+            scope_key = self.get_current_scope()
+        stats = self._load_refresh_stats(scope_key)
+        return stats.get("last_reminder_sent_at")
+
 
 # Global instance
 reminder_config_service = ReminderConfigService()
+

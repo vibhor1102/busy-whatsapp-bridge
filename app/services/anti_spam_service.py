@@ -78,6 +78,8 @@ class AntiSpamConfig:
     reconnect_interval_hours: int = 4
     admin_phone: str = "+917206366664"
     send_session_reports: bool = True
+    reminder_cooldown_enabled: bool = True  # Prevent re-sending within cooldown period
+    reminder_cooldown_minutes: int = 60  # Cooldown period in minutes
 
 
 @dataclass
