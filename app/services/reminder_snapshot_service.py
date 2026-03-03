@@ -56,8 +56,8 @@ class ReminderSnapshotService:
             return -abs(value1)
         return -value1
 
-    def _fetch_debtor_roster(self) -> List[Dict[str, Any]]:
-        debtor_groups = self.calculator._get_debtor_group_codes()  # intentionally shared canonical resolver
+    def _fetch_debtor_roster(self, company_id: str = "default") -> List[Dict[str, Any]]:
+        debtor_groups = self.calculator._get_debtor_group_codes(company_id=company_id)  # intentionally shared canonical resolver
         if not debtor_groups:
             return []
         in_clause = ",".join(str(c) for c in debtor_groups)
@@ -68,7 +68,7 @@ class ReminderSnapshotService:
               AND ParentGrp IN ({in_clause})
             ORDER BY Code
         """
-        with self.db.get_cursor() as cursor:
+        with self.db.get_cursor(company_id=company_id) as cursor:
             cursor.execute(query)
             rows = cursor.fetchall()
         roster: List[Dict[str, Any]] = []
@@ -88,12 +88,21 @@ class ReminderSnapshotService:
             )
         return roster
 
-    def refresh_snapshot(self, *, as_of_date: Optional[date] = None) -> Dict[str, Any]:
+    def refresh_snapshot(self, *, as_of_date: Optional[date] = None, company_id: str = "default") -> Dict[str, Any]:
         if as_of_date is None:
             as_of_date = date.today()
 
         t0 = time.perf_counter()
-        roster = self._fetch_debtor_roster()
+        roster = self._fetch_debtor_roster(company_id=company_id)
+        
+        # Determine the current db path for this company to hash
+        if company_id in self.db.settings.database.companies:
+            current_db_path = self.db.settings.database.companies[company_id].bds_file_path
+        elif company_id == "default" and self.db.settings.database.bds_file_path:
+            current_db_path = self.db.settings.database.bds_file_path
+        else:
+            current_db_path = ""
+            
         if not roster:
             self.snapshot_db.replace_snapshot(
                 [],
@@ -101,9 +110,10 @@ class ReminderSnapshotService:
                 row_count=0,
                 nonzero_count=0,
                 error_count=0,
-                source_db_path_hash=hashlib.sha256((self.db.settings.BDS_FILE_PATH or "").encode("utf-8")).hexdigest(),
+                source_db_path_hash=hashlib.sha256((current_db_path).encode("utf-8")).hexdigest(),
+                company_id=company_id,
             )
-            return self.snapshot_db.get_status()
+            return self.snapshot_db.get_status(company_id=company_id)
 
         party_codes_int = [int(r["party_code"]) for r in roster]
         party_code_set = set(party_codes_int)
@@ -129,12 +139,12 @@ class ReminderSnapshotService:
                 WHERE MasterType = 2
                   AND MasterCode IN ({in_clause})
             """
-            with self.db.get_cursor() as cursor:
+            with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute(query)
                 for row in cursor.fetchall():
                     closing_map[int(row[0])] = self._to_decimal(row[1])
 
-        fy = ledger_data_service.get_financial_year()
+        fy = ledger_data_service.get_financial_year(company_id=company_id)
         start_s = self._fmt_access_date(fy.start_date)
         end_s = self._fmt_access_date(fy.end_date)
 
@@ -158,7 +168,7 @@ class ReminderSnapshotService:
                   AND t1.Date <= #{end_s}#
                   AND (t2.MasterCode1 IN ({in_clause}) OR t2.MasterCode2 IN ({in_clause}))
             """
-            with self.db.get_cursor() as cursor:
+            with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute(query)
                 for row in cursor.fetchall():
                     mc1 = int(row[0] or 0)
@@ -184,7 +194,7 @@ class ReminderSnapshotService:
                             recent_sales_map[mc1] += vamt
                             recent_sales_count[mc1] += 1
 
-        config = self.config_service.get_config()
+        config = self.config_service.get_config(scope_key=company_id)
         permanent_map = {int(k): bool(v.enabled) for k, v in config.parties.items() if str(k).isdigit()}
 
         snapshot_rows: List[Dict[str, Any]] = []
@@ -212,7 +222,7 @@ class ReminderSnapshotService:
             )
 
         duration_ms = int((time.perf_counter() - t0) * 1000)
-        path_hash = hashlib.sha256((self.db.settings.BDS_FILE_PATH or "").encode("utf-8")).hexdigest()
+        path_hash = hashlib.sha256((current_db_path).encode("utf-8")).hexdigest()
         self.snapshot_db.replace_snapshot(
             snapshot_rows,
             duration_ms=duration_ms,
@@ -220,9 +230,10 @@ class ReminderSnapshotService:
             nonzero_count=nonzero_count,
             error_count=0,
             source_db_path_hash=path_hash,
+            company_id=company_id,
         )
 
-        status = self.snapshot_db.get_status()
+        status = self.snapshot_db.get_status(company_id=company_id)
         logger.info(
             "reminder_snapshot_refreshed",
             row_count=status["row_count"],

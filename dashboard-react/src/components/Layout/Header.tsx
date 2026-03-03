@@ -1,9 +1,10 @@
+import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { RefreshCw, Database, Wifi, Inbox, AlertCircle } from 'lucide-react';
+import { RefreshCw, Database, Wifi, Inbox, AlertCircle, Building2 } from 'lucide-react';
 import { useDashboardStore } from '../../stores/dashboardStore';
 import { useSystemStore, selectIsBaileysConnected } from '../../stores/systemStore';
 import { useQueueStore } from '../../stores/queueStore';
-import { api } from '../../services/api';
+import { api, type CompanyInfo } from '../../services/api';
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -27,6 +28,24 @@ export function Header({ onMenuClick }: HeaderProps) {
       case '/settings': return 'Settings';
       default: return 'Dashboard';
     }
+  };
+
+  const [companies, setCompanies] = useState<CompanyInfo[]>([]);
+  const [activeCompany, setActiveCompany] = useState(api.getCompanyId());
+
+  useEffect(() => {
+    api.getCompanies().then(res => {
+      setCompanies(res.companies);
+      if (res.companies.length > 0 && !res.companies.find(c => c.id === activeCompany)) {
+        api.setCompanyId(res.companies[0].id);
+        setActiveCompany(res.companies[0].id);
+      }
+    }).catch(console.error);
+  }, []);
+
+  const handleCompanyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    api.setCompanyId(e.target.value);
+    window.location.reload();
   };
 
   const handleRefresh = async () => {
@@ -67,6 +86,23 @@ export function Header({ onMenuClick }: HeaderProps) {
         >
           {getPageTitle()}
         </h1>
+
+        {/* Company Selector */}
+        {companies.length > 0 && (
+          <div className="hidden md:flex items-center ml-4 pl-4 border-l" style={{ borderColor: 'var(--border-default)' }}>
+            <Building2 className="w-4 h-4 mr-2" style={{ color: 'var(--text-tertiary)' }} />
+            <select
+              value={activeCompany}
+              onChange={handleCompanyChange}
+              className="input py-1 text-sm bg-transparent border-none appearance-none cursor-pointer focus:ring-0"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              {companies.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Right Section - Status Pills */}

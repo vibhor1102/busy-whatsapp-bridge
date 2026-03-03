@@ -14,7 +14,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.models.reminder_schemas import ScheduleConfig
 from app.services.reminder_config_service import reminder_config_service
 from app.constants.reminder_constants import DAYS_OF_WEEK
-from app.config import get_roaming_appdata_path
+from app.config import get_roaming_appdata_path, get_settings
 
 logger = structlog.get_logger()
 
@@ -24,15 +24,20 @@ class ReminderSchedulerService:
     
     def __init__(self):
         self.scheduler: Optional[AsyncIOScheduler] = None
-        self.job_id = "payment_reminder_job"
+        self.job_prefix = "payment_reminder_job_"
         self.is_running = False
-        self._last_run_file = get_roaming_appdata_path() / "scheduler_last_run.txt"
+        self._last_run_dir = get_roaming_appdata_path() / "data" / "scheduler"
+        self._last_run_dir.mkdir(parents=True, exist_ok=True)
     
-    def _get_last_run_time(self) -> Optional[datetime]:
+    def _get_last_run_file(self, company_id: str) -> Path:
+        return self._last_run_dir / f"last_run_{company_id}.txt"
+    
+    def _get_last_run_time(self, company_id: str) -> Optional[datetime]:
         """Get the last time the scheduler ran from file."""
         try:
-            if self._last_run_file.exists():
-                with open(self._last_run_file, 'r') as f:
+            last_run_file = self._get_last_run_file(company_id)
+            if last_run_file.exists():
+                with open(last_run_file, 'r') as f:
                     timestamp = f.read().strip()
                     if timestamp:
                         return datetime.fromisoformat(timestamp)
@@ -40,14 +45,15 @@ class ReminderSchedulerService:
             logger.warning("failed_to_read_last_run_time", error=str(e))
         return None
 
-    def get_last_run_time(self) -> Optional[datetime]:
+    def get_last_run_time(self, company_id: str = "default") -> Optional[datetime]:
         """Public accessor for last scheduler run timestamp."""
-        return self._get_last_run_time()
+        return self._get_last_run_time(company_id)
     
-    def _set_last_run_time(self, run_time: datetime):
+    def _set_last_run_time(self, run_time: datetime, company_id: str):
         """Save the last run time to file."""
         try:
-            with open(self._last_run_file, 'w') as f:
+            last_run_file = self._get_last_run_file(company_id)
+            with open(last_run_file, 'w') as f:
                 f.write(run_time.isoformat())
         except Exception as e:
             logger.warning("failed_to_write_last_run_time", error=str(e))
@@ -59,23 +65,31 @@ class ReminderSchedulerService:
         # Create scheduler
         self.scheduler = AsyncIOScheduler()
         
-        # Load config
-        config = reminder_config_service.get_config()
-        
-        if config.schedule.enabled:
-            await self._schedule_job(config.schedule)
+        settings = get_settings()
+        started_any = False
+        for company_id in settings.database.companies.keys():
+            # Load config
+            config = reminder_config_service.get_config(scope_key=company_id)
+            
+            if config.schedule.enabled:
+                await self._schedule_job(config.schedule, company_id)
+                started_any = True
+                logger.info(
+                    "scheduler_job_added",
+                    company_id=company_id,
+                    frequency=config.schedule.frequency,
+                    day=DAYS_OF_WEEK.get(config.schedule.day_of_week, "Unknown"),
+                    time=config.schedule.time
+                )
+            else:
+                logger.info("scheduler_disabled_in_config", company_id=company_id)
+
+        if started_any:
             self.scheduler.start()
             self.is_running = True
-            logger.info(
-                "scheduler_started",
-                frequency=config.schedule.frequency,
-                day=DAYS_OF_WEEK.get(config.schedule.day_of_week, "Unknown"),
-                time=config.schedule.time
-            )
-        else:
-            logger.info("scheduler_disabled_in_config")
+            logger.info("scheduler_started_for_companies")
     
-    async def _schedule_job(self, schedule: ScheduleConfig):
+    async def _schedule_job(self, schedule: ScheduleConfig, company_id: str):
         """Schedule the reminder job"""
         hour, minute = map(int, schedule.time.split(':'))
         
@@ -103,25 +117,27 @@ class ReminderSchedulerService:
         # Add job
         self.scheduler.add_job(
             self._run_scheduled_reminders,
+            args=[company_id],
             trigger=trigger,
-            id=self.job_id,
+            id=f"{self.job_prefix}{company_id}",
             replace_existing=True,
             misfire_grace_time=3600  # 1 hour grace period
         )
         
         logger.info(
             "job_scheduled",
+            company_id=company_id,
             frequency=schedule.frequency,
             day_of_week=schedule.day_of_week,
             time=schedule.time
         )
     
-    async def _check_biweekly_run(self) -> bool:
+    async def _check_biweekly_run(self, company_id: str) -> bool:
         """
         Check if bi-weekly reminder should run based on last run timestamp.
         Stores and checks last run time to maintain consistent 14-day intervals.
         """
-        last_run = self._get_last_run_time()
+        last_run = self._get_last_run_time(company_id)
         
         if last_run:
             days_since_last_run = (datetime.now() - last_run).days
@@ -133,48 +149,50 @@ class ReminderSchedulerService:
             logger.info("biweekly_first_run")
             return True
     
-    async def _run_scheduled_reminders(self):
+    async def _run_scheduled_reminders(self, company_id: str):
         """Job callback - runs scheduled reminders"""
-        logger.info("running_scheduled_reminders")
+        logger.info("running_scheduled_reminders", company_id=company_id)
         
         try:
             # Import here to avoid circular dependency
             from app.services.reminder_service import reminder_service
             
             # Check if bi-weekly and correct week
-            config = reminder_config_service.get_config()
+            config = reminder_config_service.get_config(scope_key=company_id)
             if config.schedule.frequency == "biweekly":
                 # Use proper 14-day interval check instead of ISO week
-                if not await self._check_biweekly_run():
+                if not await self._check_biweekly_run(company_id):
                     logger.info("skipping_biweekly_reminder_not_due")
                     return
                 
                 # Record this run time
-                self._set_last_run_time(datetime.now())
+                self._set_last_run_time(datetime.now(), company_id)
             
             # Get all enabled parties
-            eligible_parties = await reminder_service.get_eligible_parties()
+            eligible_parties = await reminder_service.get_eligible_parties(company_id=company_id)
             enabled_parties = [p for p in eligible_parties if p.permanent_enabled]
             
             if not enabled_parties:
-                logger.info("no_enabled_parties_for_scheduled_reminders")
+                logger.info("no_enabled_parties_for_scheduled_reminders", company_id=company_id)
                 return
             
             party_codes = [p.code for p in enabled_parties]
             
             # Get active template
-            template = reminder_config_service.get_active_template()
+            template = reminder_config_service.get_active_template(scope_key=company_id)
             
             # Send reminders
             await reminder_service.send_reminders_to_parties(
                 party_codes=party_codes,
                 template_id=template.id,
-                sent_by="scheduler"
+                sent_by="scheduler",
+                company_id=company_id
             )
-            self._set_last_run_time(datetime.now())
+            self._set_last_run_time(datetime.now(), company_id)
             
             logger.info(
                 "scheduled_reminders_completed",
+                company_id=company_id,
                 party_count=len(party_codes),
                 template_id=template.id
             )
@@ -194,11 +212,17 @@ class ReminderSchedulerService:
         
         if not self.is_running:
             # Load config and schedule job regardless of config.schedule.enabled
-            config = reminder_config_service.get_config()
-            await self._schedule_job(config.schedule)
-            self.scheduler.start()
-            self.is_running = True
-            logger.info("scheduler_started_manually")
+            settings = get_settings()
+            started_any = False
+            for company_id in settings.database.companies.keys():
+                config = reminder_config_service.get_config(scope_key=company_id)
+                await self._schedule_job(config.schedule, company_id)
+                started_any = True
+            
+            if started_any:
+                self.scheduler.start()
+                self.is_running = True
+                logger.info("scheduler_started_manually")
     
     async def stop_scheduler(self):
         """Stop the scheduler"""
@@ -219,39 +243,41 @@ class ReminderSchedulerService:
             self.scheduler.resume()
             logger.info("scheduler_resumed")
     
-    async def trigger_manual_run(self) -> str:
+    async def trigger_manual_run(self, company_id: str = "default") -> str:
         """
         Manually trigger a reminder run
         
         Returns:
             Batch ID of the triggered run
         """
-        logger.info("manual_reminder_run_triggered")
+        logger.info("manual_reminder_run_triggered", company_id=company_id)
         
         try:
             from app.services.reminder_service import reminder_service
             
             # Get all enabled parties
-            eligible_parties = await reminder_service.get_eligible_parties()
+            eligible_parties = await reminder_service.get_eligible_parties(company_id=company_id)
             enabled_parties = [p for p in eligible_parties if p.permanent_enabled]
             
             if not enabled_parties:
-                logger.warning("no_enabled_parties_for_manual_run")
+                logger.warning("no_enabled_parties_for_manual_run", company_id=company_id)
                 raise ValueError("No parties are enabled for reminders")
             
             party_codes = [p.code for p in enabled_parties]
-            template = reminder_config_service.get_active_template()
+            template = reminder_config_service.get_active_template(scope_key=company_id)
             
             # Send reminders
             batch_id = await reminder_service.send_reminders_to_parties(
                 party_codes=party_codes,
                 template_id=template.id,
-                sent_by="manual"
+                sent_by="manual",
+                company_id=company_id
             )
-            self._set_last_run_time(datetime.now())
+            self._set_last_run_time(datetime.now(), company_id)
             
             logger.info(
                 "manual_reminders_completed",
+                company_id=company_id,
                 batch_id=batch_id,
                 party_count=len(party_codes)
             )
@@ -266,20 +292,20 @@ class ReminderSchedulerService:
             )
             raise
     
-    def get_next_run_time(self) -> Optional[datetime]:
+    def get_next_run_time(self, company_id: str = "default") -> Optional[datetime]:
         """Get the next scheduled run time"""
         if self.scheduler and self.is_running:
-            job = self.scheduler.get_job(self.job_id)
+            job = self.scheduler.get_job(f"{self.job_prefix}{company_id}")
             if job:
                 return job.next_run_time
         return None
     
-    def get_status(self) -> dict:
+    def get_status(self, company_id: str = "default") -> dict:
         """Get current scheduler status"""
         return {
             "is_running": self.is_running,
-            "next_run": self.get_next_run_time(),
-            "job_id": self.job_id,
+            "next_run": self.get_next_run_time(company_id),
+            "job_id": f"{self.job_prefix}{company_id}",
         }
 
 

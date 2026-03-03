@@ -5,9 +5,9 @@ Handles read/write operations for reminder_config.json
 Ensures thread-safe access and data integrity.
 Supports multi-company isolation via database-scoped configurations.
 """
-import hashlib
 import json
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -30,15 +30,15 @@ from app.models.reminder_schemas import (
 logger = structlog.get_logger()
 
 
-def compute_scope_key(db_path: Optional[str]) -> str:
+def compute_scope_key(company_id: Optional[str]) -> str:
     """
-    Compute a stable scope key from database path.
-    Returns 'default' if no path provided.
+    Compute a stable scope key from company_id.
+    Returns 'default' if no company_id provided.
     """
-    if not db_path:
+    if not company_id:
         return "default"
-    normalized = os.path.normpath(os.path.abspath(db_path)).lower()
-    return hashlib.sha256(normalized.encode()).hexdigest()[:12]
+    # Clean the company ID to be safe for directory names
+    return "".join([c for c in company_id if c.isalnum() or c in ('-', '_')]).strip() or "default"
 
 
 class ReminderConfigService:
@@ -63,12 +63,12 @@ class ReminderConfigService:
         scope_dir.mkdir(parents=True, exist_ok=True)
         return scope_dir / CONFIG_FILE_NAME
 
-    def set_scope(self, db_path: Optional[str]) -> str:
+    def set_scope(self, company_id: Optional[str]) -> str:
         """
-        Set current scope based on database path.
+        Set current scope based on company ID.
         Returns the scope key.
         """
-        scope_key = compute_scope_key(db_path)
+        scope_key = compute_scope_key(company_id)
         if scope_key != self._current_scope:
             self._current_scope = scope_key
             logger.info("reminder_config_scope_changed", scope_key=scope_key)
@@ -82,9 +82,47 @@ class ReminderConfigService:
         """Ensure config file exists with defaults for given scope"""
         config_path = self._get_config_path(scope_key)
         if not config_path.exists():
-            logger.info("creating_default_config_file", path=str(config_path), scope=scope_key)
-            default_config = self._create_default_config()
-            self._save_config_to_file(default_config, config_path)
+            # Attempt to migrate from old paths if appropriate
+            migrated = self._attempt_migration(config_path, scope_key)
+            if not migrated:
+                logger.info("creating_default_config_file", path=str(config_path), scope=scope_key)
+                default_config = self._create_default_config()
+                self._save_config_to_file(default_config, config_path)
+
+    def _attempt_migration(self, target_path: Path, scope_key: str) -> bool:
+        """Attempt to migrate legacy config files to the new scoped path."""
+        # 1. Check root configuration (oldest format)
+        old_root_config = self._base_config_dir / CONFIG_FILE_NAME
+        
+        # We only migrate from root if it exists and we're looking at 'default' 
+        # OR if we know it's a legacy hashed folder.
+        
+        if scope_key == "default" and old_root_config.exists() and old_root_config != target_path:
+            try:
+                shutil.copy2(old_root_config, target_path)
+                logger.info("migrated_config_from_root", source=str(old_root_config), target=str(target_path))
+                return True
+            except Exception as e:
+                logger.error("migration_failed", error=str(e))
+                return False
+                
+        # 2. Try to find a legacy hashed folder if this is a newly defined company
+        # Since we don't have the bds_file_path here easily, we can just look for ANY single hashed dir 
+        # in 'scopes' if this is the ONLY company. This is a best-effort fallback.
+        scopes_dir = self._base_config_dir / "scopes"
+        if scopes_dir.exists():
+            subdirs = [d for d in scopes_dir.iterdir() if d.is_dir() and len(d.name) == 12] # heuristics for hash
+            if len(subdirs) == 1:
+                hashed_config = subdirs[0] / CONFIG_FILE_NAME
+                if hashed_config.exists():
+                    try:
+                        shutil.copy2(hashed_config, target_path)
+                        logger.info("migrated_config_from_hash", source=str(hashed_config), target=str(target_path))
+                        return True
+                    except Exception as e:
+                        logger.error("migration_failed", error=str(e))
+                        
+        return False
 
     def _create_default_config(self) -> ReminderConfig:
         """Create default configuration"""

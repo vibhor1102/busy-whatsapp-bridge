@@ -20,9 +20,10 @@ import {
   X,
   Loader2,
 } from 'lucide-react';
-import { api } from '../services/api';
+import { api, type CompanyInfo } from '../services/api';
 import { useRemindersStore } from '../stores/remindersStore';
 import { LoadingState } from '../components/ui/LoadingState';
+import { TemplateEditor } from '../components/reminders/TemplateEditor';
 import { getStatusDotColor } from '../utils/statusColors';
 import { formatCurrency, formatDateTime, formatDuration } from '../utils/formatters';
 import { REFETCH_INTERVALS, LIMITS, RETRY_DELAYS, POLLING } from '../constants';
@@ -201,6 +202,14 @@ export function Reminders() {
   const [filterBy, setFilterBy] = useState('all');
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionData, setSessionData] = useState<ReminderSession | null>(null);
+  const [isTemplateEditorOpen, setIsTemplateEditorOpen] = useState(false);
+  const [companies, setCompanies] = useState<CompanyInfo[]>([]);
+  const activeCompanyId = api.getCompanyId();
+
+  // Load available companies
+  useEffect(() => {
+    api.getCompanies().then(res => setCompanies(res.companies)).catch(console.error);
+  }, []);
 
   // Store - use individual selectors to prevent infinite re-renders
   const setConfig = useRemindersStore((state) => state.setConfig);
@@ -442,6 +451,22 @@ export function Reminders() {
               <> · Last refreshed {formatDateTime(snapshotStatus.last_refreshed_at || null)}</>
             )}
           </p>
+
+          {companies.length > 0 && (
+            <div className="mt-4 flex items-center gap-2 lg:hidden">
+              <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Active Company:</span>
+              <select
+                value={activeCompanyId}
+                onChange={(e) => { api.setCompanyId(e.target.value); window.location.reload(); }}
+                className="input py-1.5 px-3 text-sm font-medium w-auto border"
+                style={{ borderColor: 'var(--brand-accent)', color: 'var(--brand-accent)', background: 'var(--brand-soft)' }}
+              >
+                {companies.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
         <div className="text-right flex items-center gap-6">
           <div>
@@ -503,8 +528,8 @@ export function Reminders() {
             </h3>
           </div>
           <button
-            onClick={() => window.open('/api/v1/reminders/templates', '_blank')}
-            className="text-xs font-medium"
+            onClick={() => setIsTemplateEditorOpen(true)}
+            className="text-xs font-medium px-3 py-1.5 rounded-md transition-colors hover:bg-black/5 dark:hover:bg-white/5"
             style={{ color: 'var(--brand-accent)' }}
           >
             Manage Templates
@@ -908,7 +933,13 @@ export function Reminders() {
             </button>
           </div>
         </div>
-      </div >
-    </div >
+      </div>
+
+      <TemplateEditor
+        isOpen={isTemplateEditorOpen}
+        onClose={() => setIsTemplateEditorOpen(false)}
+        activeCompanyId={activeCompanyId}
+      />
+    </div>
   );
 }

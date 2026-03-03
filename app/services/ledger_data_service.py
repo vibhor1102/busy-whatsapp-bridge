@@ -47,8 +47,8 @@ class LedgerDataService:
     
     def __init__(self):
         self.db = db
-        self._financial_year_cache: Optional[FinancialYearInfo] = None
-        self._company_info_cache: Optional[CompanyInfo] = None
+        self._financial_year_cache: Dict[str, FinancialYearInfo] = {}
+        self._company_info_cache: Dict[str, CompanyInfo] = {}
     
     def _validate_party_code(self, party_code: str) -> int:
         """
@@ -131,14 +131,14 @@ class LedgerDataService:
             return str(start_date.year)
         return f"{start_date.year}-{str(end_date.year)[-2:]}"
     
-    def get_financial_year(self, force_refresh: bool = False) -> FinancialYearInfo:
+    def get_financial_year(self, force_refresh: bool = False, company_id: str = "default") -> FinancialYearInfo:
         """
         Fetch financial year from Config table.
         
         Returns configured FY dates or auto-detects from transaction dates.
         """
-        if self._financial_year_cache and not force_refresh:
-            return self._financial_year_cache
+        if company_id in self._financial_year_cache and not force_refresh:
+            return self._financial_year_cache[company_id]
         try:
             query = f"""
                 SELECT C1, C2, C3 
@@ -146,7 +146,7 @@ class LedgerDataService:
                 WHERE RecType = {ConfigRecType.FINANCIAL_YEAR}
             """
             
-            with self.db.get_cursor() as cursor:
+            with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute(query)
                 row = cursor.fetchone()
                 
@@ -167,34 +167,34 @@ class LedgerDataService:
                         end_date=end_date,
                         year_name=year_name
                     )
-                    self._financial_year_cache = info
+                    self._financial_year_cache[company_id] = info
                     return info
 
                 # Config(RecType=7) missing/empty - attempt dynamic Config scan.
-                dynamic_fy = self._detect_financial_year_from_config_rows()
+                dynamic_fy = self._detect_financial_year_from_config_rows(company_id=company_id)
                 if dynamic_fy:
-                    self._financial_year_cache = dynamic_fy
+                    self._financial_year_cache[company_id] = dynamic_fy
                     return dynamic_fy
 
                 # Final fallback: detect from transactions.
-                logger.info("financial_year_config_missing_auto_detecting", rec_type=ConfigRecType.FINANCIAL_YEAR)
-                info = self._auto_detect_financial_year()
-                self._financial_year_cache = info
+                logger.info("financial_year_config_missing_auto_detecting", company_id=company_id, rec_type=ConfigRecType.FINANCIAL_YEAR)
+                info = self._auto_detect_financial_year(company_id=company_id)
+                self._financial_year_cache[company_id] = info
                 return info
                 
         except Exception as e:
-            logger.error("get_financial_year_error", error=str(e))
-            info = self._auto_detect_financial_year()
-            self._financial_year_cache = info
+            logger.error("get_financial_year_error", company_id=company_id, error=str(e))
+            info = self._auto_detect_financial_year(company_id=company_id)
+            self._financial_year_cache[company_id] = info
             return info
 
-    def _detect_financial_year_from_config_rows(self) -> Optional[FinancialYearInfo]:
+    def _detect_financial_year_from_config_rows(self, company_id: str = "default") -> Optional[FinancialYearInfo]:
         """
         Try to discover financial year from any Config row that contains
         parseable date range in C1/C2 even when RecType mapping differs.
         """
         try:
-            with self.db.get_cursor() as cursor:
+            with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute("SELECT C1, C2, C3, RecType FROM Config")
                 candidates: List[Tuple[date, date, str, int]] = []
                 for row in cursor.fetchall():
@@ -231,17 +231,17 @@ class LedgerDataService:
                     year_name=year_name,
                 )
         except Exception as e:
-            logger.debug("financial_year_config_scan_failed", error=str(e))
+            logger.debug("financial_year_config_scan_failed", company_id=company_id, error=str(e))
             return None
     
-    def _auto_detect_financial_year(self) -> FinancialYearInfo:
+    def _auto_detect_financial_year(self, company_id: str = "default") -> FinancialYearInfo:
         """
         Auto-detect financial year from transaction dates in database.
         
         Looks for the earliest and latest transaction dates to determine FY.
         """
         try:
-            with self.db.get_cursor() as cursor:
+            with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute("""
                     SELECT MIN(Date) as min_date, MAX(Date) as max_date
                     FROM Tran1
@@ -305,7 +305,7 @@ class LedgerDataService:
             year_name=year_name
         )
     
-    def get_company_info(self, force_refresh: bool = False) -> CompanyInfo:
+    def get_company_info(self, force_refresh: bool = False, company_id: str = "default") -> CompanyInfo:
         """
         Fetch company info.
         
@@ -317,13 +317,13 @@ class LedgerDataService:
         
         Returns minimal info if all sources are empty.
         """
-        if self._company_info_cache and not force_refresh:
-            return self._company_info_cache
+        if company_id in self._company_info_cache and not force_refresh:
+            return self._company_info_cache[company_id]
         
         # First try: Reminder config (user-configured company name)
         try:
             from app.services.reminder_config_service import reminder_config_service
-            config = reminder_config_service.get_config()
+            config = reminder_config_service.get_config(scope_key=company_id)
             if config and config.company and config.company.name:
                 company_name = config.company.name.strip()
                 if company_name:
@@ -333,24 +333,24 @@ class LedgerDataService:
                         address_line1=config.company.address,
                         phone=config.company.contact_phone
                     )
-                    self._company_info_cache = info
+                    self._company_info_cache[company_id] = info
                     return info
         except Exception as e:
-            logger.debug("reminder_config_company_name_failed", error=str(e))
+            logger.debug("reminder_config_company_name_failed", company_id=company_id, error=str(e))
         
         # Second try: Locks.CompanyName from database
         try:
-            with self.db.get_cursor() as cursor:
+            with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute("SELECT TOP 1 CompanyName FROM Locks")
                 row = cursor.fetchone()
                 if row and row[0] and str(row[0]).strip():
                     company_name = str(row[0]).strip()
                     logger.debug("company_name_from_locks", company_name=company_name)
                     info = CompanyInfo(name=company_name)
-                    self._company_info_cache = info
+                    self._company_info_cache[company_id] = info
                     return info
         except Exception as e:
-            logger.debug("locks_company_name_failed", error=str(e))
+            logger.debug("locks_company_name_failed", company_id=company_id, error=str(e))
         
         # Third try: Config table
         try:
@@ -360,7 +360,7 @@ class LedgerDataService:
                 WHERE RecType = {ConfigRecType.COMPANY_INFO}
             """
             
-            with self.db.get_cursor() as cursor:
+            with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute(query)
                 row = cursor.fetchone()
                 
@@ -373,14 +373,14 @@ class LedgerDataService:
                         address_line4=row[4],
                         gst_no=row[5]
                     )
-                    self._company_info_cache = info
+                    self._company_info_cache[company_id] = info
                     return info
                     
         except Exception as e:
-            logger.debug("config_company_info_failed", error=str(e))
+            logger.debug("config_company_info_failed", company_id=company_id, error=str(e))
         
         # Fallback: Use database filename or generic name
-        fallback_name = self._detect_company_name_fallback()
+        fallback_name = self._detect_company_name_fallback(company_id=company_id)
         logger.info("company_info_using_fallback", fallback_name=fallback_name)
         info = CompanyInfo(name=fallback_name)
         self._company_info_cache = info
@@ -395,7 +395,7 @@ class LedgerDataService:
         3) Generic fallback
         """
         try:
-            with self.db.get_cursor() as cursor:
+            with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute("SELECT TOP 1 CompanyName FROM Locks")
                 row = cursor.fetchone()
                 if row and row[0] and str(row[0]).strip():
@@ -403,14 +403,21 @@ class LedgerDataService:
         except Exception:
             pass
 
-        db_path = getattr(self.db.settings, "BDS_FILE_PATH", "") or ""
+        # Use DatabaseSettings properties
+        if company_id in self.db.settings.database.companies:
+            db_path = self.db.settings.database.companies[company_id].bds_file_path
+        elif company_id == "default" and self.db.settings.database.bds_file_path:
+            db_path = self.db.settings.database.bds_file_path
+        else:
+            db_path = ""
+            
         if db_path:
             stem = Path(db_path).stem.strip()
             if stem:
                 return stem
         return "Company"
     
-    def get_customer_info(self, party_code: str) -> CustomerInfo:
+    def get_customer_info(self, party_code: str, company_id: str = "default") -> CustomerInfo:
         """
         Fetch customer details from Master1.
         
@@ -433,7 +440,7 @@ class LedgerDataService:
                 WHERE Code = {party_code_int} AND MasterType = {MasterType.PARTY}
             """
             
-            with self.db.get_cursor() as cursor:
+            with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute(master_query)
                 row = cursor.fetchone()
                 
@@ -479,10 +486,10 @@ class LedgerDataService:
         except PartyNotFoundError:
             raise
         except Exception as e:
-            logger.error("get_customer_info_error", party_code=party_code, error=str(e))
+            logger.error("get_customer_info_error", company_id=company_id, party_code=party_code, error=str(e))
             raise PartyNotFoundError(party_code, f"Database error: {str(e)}") from e
     
-    def get_opening_balance(self, party_code: str, as_of_date: date) -> Decimal:
+    def get_opening_balance(self, party_code: str, as_of_date: date, company_id: str = "default") -> Decimal:
         """
         Get opening balance for party as of specific date.
         
@@ -497,7 +504,7 @@ class LedgerDataService:
                 WHERE MasterCode = {party_code_int} AND MasterType = {MasterType.PARTY}
             """
             
-            with self.db.get_cursor() as cursor:
+            with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute(query)
                 row = cursor.fetchone()
                 
@@ -514,10 +521,10 @@ class LedgerDataService:
                     return Decimal('0')
                     
         except Exception as e:
-            logger.warning("get_opening_balance_failed", party_code=party_code, error=str(e))
+            logger.warning("get_opening_balance_failed", company_id=company_id, party_code=party_code, error=str(e))
             return Decimal('0')
     
-    def get_credit_days(self, party_code: str) -> Tuple[int, str]:
+    def get_credit_days(self, party_code: str, company_id: str = "default") -> Tuple[int, str]:
         """
         Get credit days for a party from Master1 table.
         
@@ -544,7 +551,7 @@ class LedgerDataService:
                 WHERE Code = {party_code_int} AND MasterType = {MasterType.PARTY}
             """
             
-            with self.db.get_cursor() as cursor:
+            with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute(query)
                 row = cursor.fetchone()
                 
@@ -567,6 +574,7 @@ class LedgerDataService:
         except Exception as e:
             logger.warning(
                 "get_credit_days_error",
+                company_id=company_id,
                 party_code=party_code,
                 error=str(e)
             )
@@ -799,7 +807,8 @@ class LedgerDataService:
         self,
         party_code: str,
         start_date: date,
-        end_date: date
+        end_date: date,
+        company_id: str = "default"
     ) -> List[LedgerEntry]:
         """
         Fetch all transactions for a party within date range.
@@ -818,7 +827,7 @@ class LedgerDataService:
         party_code_int = self._validate_party_code(party_code)
         
         try:
-            with self.db.get_cursor() as cursor:
+            with self.db.get_cursor(company_id=company_id) as cursor:
                 # Find all voucher codes where party appears
                 cursor.execute(f"""
                     SELECT DISTINCT VchCode 
@@ -921,7 +930,7 @@ class LedgerDataService:
         except NoTransactionsError:
             raise
         except Exception as e:
-            logger.error("get_transactions_error", party_code=party_code, error=str(e))
+            logger.error("get_transactions_error", company_id=company_id, party_code=party_code, error=str(e))
             raise NoTransactionsError(
                 party_code=party_code,
                 start_date=str(start_date),
@@ -970,7 +979,8 @@ class LedgerDataService:
     
     def generate_ledger_report(
         self,
-        party_code: str
+        party_code: str,
+        company_id: str = "default"
     ) -> LedgerReport:
         """
         Generate complete ledger report for a customer.
@@ -987,17 +997,18 @@ class LedgerDataService:
         """
         from datetime import datetime
         
-        logger.info("generating_ledger_report", party_code=party_code)
+        logger.info("generating_ledger_report", company_id=company_id, party_code=party_code)
         
-        fy_info = self.get_financial_year()
-        company = self.get_company_info()
-        customer = self.get_customer_info(party_code)
-        opening_balance = self.get_opening_balance(party_code, fy_info.start_date)
+        fy_info = self.get_financial_year(company_id=company_id)
+        company = self.get_company_info(company_id=company_id)
+        customer = self.get_customer_info(party_code, company_id=company_id)
+        opening_balance = self.get_opening_balance(party_code, fy_info.start_date, company_id=company_id)
         
         entries = self.get_transactions(
             party_code,
             fy_info.start_date,
-            fy_info.end_date
+            fy_info.end_date,
+            company_id=company_id
         )
         
         total_debits, total_credits = self.calculate_balances(opening_balance, entries)

@@ -244,6 +244,7 @@ class ReminderService:
         credit_days_override: Optional[int] = None,
         custom_template_id: Optional[str] = None,
         notes: Optional[str] = None,
+        company_id: str = "default",
     ) -> PartyReminderInfo:
         """
         Update party selection/configuration
@@ -367,6 +368,7 @@ class ReminderService:
         sent_by: str = "manual",
         schedule_delay: Optional[int] = None,
         party_templates: Optional[Dict[str, str]] = None,
+        company_id: str = "default"
     ) -> Dict[str, Any]:
         """
         Send reminders to selected parties with anti-spam measures
@@ -392,7 +394,9 @@ class ReminderService:
         )
 
         try:
-            template = self.config_service.get_template(template_id)
+            config = self.config_service.get_config(scope_key=company_id)
+            template = self.config_service.get_template(template_id) # needs scope update?
+            template = next((t for t in config.templates if t.id == template_id), None)
             if template is None:
                 raise ValueError(f"Template '{template_id}' not found")
 
@@ -435,7 +439,6 @@ class ReminderService:
             session.state = SessionState.ONLINE
 
             results = {}
-            config = self.config_service.get_config()
             templates_used: Dict[str, str] = {}
 
             for i, party_code in enumerate(party_codes):
@@ -456,14 +459,15 @@ class ReminderService:
                         party_code=party_code,
                         batch_template_id=template_id,
                         party_templates=party_templates,
+                        company_id=company_id
                     )
                     templates_used[party_code] = effective_template_id
 
-                    effective_template = self.config_service.get_template(effective_template_id)
+                    effective_template = next((t for t in config.templates if t.id == effective_template_id), None)
                     if effective_template is None:
                         raise ValueError(f"Template '{effective_template_id}' not found")
 
-                    calculation = await self.calculator.calculate_for_party(party_code)
+                    calculation = await self.calculator.calculate_for_party(party_code, company_id=company_id)
 
                     session.current_index = i
 
@@ -474,7 +478,7 @@ class ReminderService:
                         }
                         continue
 
-                    pdf_bytes = await self.generate_ledger_pdf(party_code)
+                    pdf_bytes = await self.generate_ledger_pdf(party_code, company_id=company_id)
 
                     if pdf_inflation_service._enabled:
                         pdf_path = str(self._ledger_dir / f"ledger_{party_code}_{batch_id}.pdf")
@@ -492,7 +496,7 @@ class ReminderService:
                         with open(pdf_path, 'wb') as f:
                             f.write(pdf_bytes)
 
-                    party_info = ledger_data_service.get_customer_info(party_code)
+                    party_info = ledger_data_service.get_customer_info(party_code, company_id=company_id)
 
                     variables = self.template_svc.get_template_variables(
                         party_code=party_code,
@@ -555,7 +559,7 @@ class ReminderService:
                         "error": str(ex)
                     }
 
-            self._persist_template_overrides(templates_used)
+            self._persist_template_overrides(templates_used, company_id=company_id)
 
             batch.status = REMINDER_STATUS_COMPLETED
             batch.results = results
@@ -629,6 +633,7 @@ class ReminderService:
         party_code: str,
         batch_template_id: str,
         party_templates: Optional[Dict[str, str]] = None,
+        company_id: str = "default"
     ) -> str:
         """
         Resolve effective template for a party with precedence:
@@ -639,25 +644,33 @@ class ReminderService:
         if party_templates and party_code in party_templates:
             return party_templates[party_code]
 
-        party_config = self.config_service.get_party_config(party_code)
+        config = self.config_service.get_config(scope_key=company_id)
+        party_config = config.parties.get(party_code)
         if party_config and party_config.custom_template_id:
             return party_config.custom_template_id
 
         return batch_template_id
 
-    def _persist_template_overrides(self, templates_used: Dict[str, str]) -> None:
+    def _persist_template_overrides(self, templates_used: Dict[str, str], company_id: str = "default") -> None:
         """
         Persist template overrides to party configs for parties where
         a non-default template was used in this batch.
         """
+        config = self.config_service.get_config(scope_key=company_id)
+        changed = False
+        
         for party_code, template_id in templates_used.items():
-            party_config = self.config_service.get_party_config(party_code)
+            party_config = config.parties.get(party_code)
             if party_config is None:
                 party_config = PartyConfig()
 
             if party_config.custom_template_id != template_id:
                 party_config.custom_template_id = template_id
-                self.config_service.update_party_config(party_code, party_config)
+                config.parties[party_code] = party_config
+                changed = True
+                
+        if changed:
+            self.config_service.save_config(config, scope_key=company_id)
 
     async def get_session_status(self, session_id: str) -> Optional[dict]:
         """Get status of a reminder session.

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query, Depends, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, HTTPException, Query, Depends, WebSocket, WebSocketDisconnect, Request, APIRouter
 from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -11,6 +11,7 @@ import structlog
 import sys
 import httpx
 import json
+import os
 import shutil
 import re
 import uuid
@@ -27,6 +28,7 @@ from app.database.message_queue import message_db
 from app.services.busy_handler import busy_handler
 from app.services.queue_service import queue_service
 from app.services.reminder_config_service import reminder_config_service
+from app.services.ledger_data_service import ledger_data_service
 from app.websocket import ws_manager, WebSocketMessage
 from app.dashboard.routes import router as dashboard_router
 from app.api.reminder_routes import router as reminder_router
@@ -261,6 +263,30 @@ app.include_router(reminder_router)
 async def root():
     """Root endpoint - redirect to dashboard."""
     return RedirectResponse(url="/dashboard/", status_code=302)
+
+
+@app.get("/api/v1/companies", tags=["System"])
+async def get_companies():
+    """Get list of configured companies and their database info."""
+    app_settings = get_settings()
+    companies = []
+    
+    for company_id, company_config in app_settings.database.companies.items():
+        try:
+            # Try to get company name from database if available, otherwise just use company_id
+            company_info = ledger_data_service.get_company_info(company_id=company_id)
+            company_name = company_info.name if company_info.name != "Unknown Company" else f"Company ({company_id})"
+        except Exception as e:
+            logger.warning("get_company_name_failed", company_id=company_id, error=str(e))
+            company_name = f"Company ({company_id})"
+            
+        companies.append({
+            "id": company_id,
+            "name": company_name,
+            "path": company_config.bds_file_path
+        })
+        
+    return {"companies": companies}
 
 
 @app.get("/api/v1/health", response_model=HealthResponse, tags=["Health"])
@@ -960,10 +986,46 @@ async def get_config_file():
             },
             "database": {
                 "bds_file_path": settings.BDS_FILE_PATH,
+                "companies": {
+                    k: v.model_dump() for k, v in settings.database.companies.items()
+                } if hasattr(settings.database, 'companies') else {}
             }
         },
         "config_meta": get_config_details(),
     }
+
+
+@app.get("/api/v1/system/browse-file", tags=["System"])
+async def browse_system_file():
+    """
+    Open a native OS file dialog to select a database file.
+    This bypasses browser security restrictions that hide actual paths.
+    """
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        
+        # Create hidden root window
+        root = tk.Tk()
+        root.withdraw()
+        # Ensure it appears on top
+        root.attributes('-topmost', True)
+        
+        file_path = filedialog.askopenfilename(
+            title="Select Busy Database (.bds)",
+            filetypes=[("Busy Database", "*.bds"), ("All Files", "*.*")]
+        )
+        
+        root.destroy()
+        
+        if file_path:
+            # Convert forward slashes to system-native slashes
+            path = os.path.normpath(file_path)
+            return {"path": path, "success": True}
+        return {"path": None, "success": False, "message": "No file selected"}
+    except Exception as e:
+        logger.error("file_browser_failed", error=str(e))
+        return {"path": None, "success": False, "message": str(e)}
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -975,6 +1037,7 @@ class ConfigUpdateRequest(BaseModel):
     baileys_enabled: Optional[bool] = None
     log_level: Optional[str] = Field(None, pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
     bds_file_path: Optional[str] = None
+    companies: Optional[dict] = None
     # REMOVED: meta_webhook_verify_token - Meta Cloud API removed
 
 
@@ -1005,7 +1068,17 @@ async def update_config_file(request: ConfigUpdateRequest):
         if 'log_level' in update_data:
             current_settings.logging.level = update_data['log_level']
         if 'bds_file_path' in update_data:
-            current_settings.database.bds_file_path = update_data['bds_file_path']
+            path = update_data['bds_file_path']
+            if path:
+                path = os.path.normpath(path)
+            current_settings.database.bds_file_path = path
+
+        if 'companies' in update_data:
+            companies_data = update_data['companies']
+            for cid, config in companies_data.items():
+                if config.get('bds_file_path'):
+                    config['bds_file_path'] = os.path.normpath(config['bds_file_path'])
+            current_settings.database.companies = companies_data
         
         # Create backup
         if config_path.exists():

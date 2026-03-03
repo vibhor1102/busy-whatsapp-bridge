@@ -8,32 +8,20 @@ from pydantic import BaseModel, Field
 
 from app.version import get_version
 
+logger = logging.getLogger(__name__)
+
 class ServerSettings(BaseModel):
+    """Server runtime configuration (user-configurable)."""
     debug: bool = False
     host: str = "0.0.0.0"
     port: int = 8000
 
 
-class CompanyDatabase(BaseModel):
-    """Specific company database configuration."""
-    bds_file_path: str = ""
-    bds_password: str = "ILoveMyINDIA"
-
-
 class DatabaseSettings(BaseModel):
     """Database configuration."""
-    # Legacy fields
     bds_file_path: str = ""
     bds_password: str = "ILoveMyINDIA"
-    
-    # Advanced fields
     odbc_driver: str = "Microsoft Access Driver (*.mdb, *.accdb)"
-    
-    # Multi-company mapping
-    companies: dict[str, CompanyDatabase] = Field(default_factory=dict)
-
-    class Config:
-        pass
 
 
 class WhatsAppSettings(BaseModel):
@@ -107,15 +95,10 @@ class Settings(BaseModel):
     
     @property
     def BDS_FILE_PATH(self) -> str:
-        # Backward compatibility property; getting the path for 'default' company if it exists
-        if "default" in self.database.companies:
-            return self.database.companies["default"].bds_file_path
         return self.database.bds_file_path
     
     @property
     def BDS_PASSWORD(self) -> str:
-        if "default" in self.database.companies:
-            return self.database.companies["default"].bds_password
         return self.database.bds_password
     
     @property
@@ -194,26 +177,16 @@ class Settings(BaseModel):
     def REMINDER_DELAY_BETWEEN_MESSAGES(self) -> int:
         return self.reminders.delay_between_messages
     
-    def get_database_connection_string(self, company_id: str = "default") -> str:
-        """Generate ODBC connection string for MS Access for a specific company."""
-        # 1. Look in companies dictionary
-        if company_id in self.database.companies:
-            path = self.database.companies[company_id].bds_file_path
-            pwd = self.database.companies[company_id].bds_password
-        # 2. Fallback to legacy config if "default" is requested
-        elif company_id == "default" and self.database.bds_file_path:
-            path = self.database.bds_file_path
-            pwd = self.database.bds_password
-        else:
-            raise ValueError(f"No configured database found for company '{company_id}'")
-            
-        if not path:
-            raise ValueError(f"Database path cannot be empty for company '{company_id}'")
+    @property
+    def database_connection_string(self) -> str:
+        """Generate ODBC connection string for MS Access."""
+        if not self.BDS_FILE_PATH:
+            raise ValueError("BDS_FILE_PATH must be set in configuration")
         
         return (
             f"DRIVER={{{self.ODBC_DRIVER}}};"
-            f"DBQ={path};"
-            f"PWD={pwd};"
+            f"DBQ={self.BDS_FILE_PATH};"
+            f"PWD={self.BDS_PASSWORD};"
             f"ExtendedAnsiSQL=1;"
         )
 
@@ -239,22 +212,26 @@ def get_config_details() -> dict:
         "config_exists": config_path.exists(),
     }
 
+
 def load_settings() -> Settings:
     """Load settings from conf.json."""
     config_path = get_config_path()
-    try:
+    
+    if config_path.exists():
         with open(config_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            return Settings(**data)
-    except Exception as e:
-        logger.warning("failed_loading_settings_falling_back_to_defaults", error=str(e))
-        return Settings()
+        return Settings(**data)
+    
+    # Return defaults if file doesn't exist
+    return Settings()
+
 
 def save_settings(settings: Settings) -> None:
     """Save settings to conf.json."""
     config_path = get_config_path()
     with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(settings.model_dump(), f, indent=2)
+
 
 @lru_cache()
 def get_settings() -> Settings:

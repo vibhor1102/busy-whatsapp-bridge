@@ -5,12 +5,12 @@ import {
   Save,
   Loader2,
   Smartphone,
-  Database,
   FileText,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { LoadingState } from '../components/ui/LoadingState';
 import { toast } from 'sonner';
+import { DatabaseSettingsManager } from '../components/settings/DatabaseSettingsManager';
 import type { Settings as SettingsConfig } from '../types';
 
 const DEFAULT_BAILEYS_URL = import.meta.env.VITE_BAILEYS_SERVER_URL || 'http://localhost:3001';
@@ -45,6 +45,7 @@ export function Settings() {
     baileys_enabled: true,
     log_level: DEFAULT_LOG_LEVEL,
     bds_file_path: '',
+    companies: {} as Record<string, { bds_file_path: string; bds_password?: string }>,
   });
 
   const { data: settings, isLoading } = useQuery({
@@ -62,14 +63,22 @@ export function Settings() {
         baileys_server_url?: string;
         baileys_enabled?: boolean;
         log_level?: string;
-        bds_file_path?: string;
+        database?: {
+          bds_file_path?: string;
+          companies?: Record<string, { bds_file_path: string; bds_password?: string }>;
+        };
       };
+
+      const dbBaseDir = content.database?.bds_file_path || '';
+      const initialCompanies = content.database?.companies || {};
+
       setFormData({
         whatsapp_provider: content.whatsapp_provider || DEFAULT_PROVIDER,
         baileys_server_url: content.baileys_server_url || DEFAULT_BAILEYS_URL,
         baileys_enabled: content.baileys_enabled ?? true,
         log_level: content.log_level || DEFAULT_LOG_LEVEL,
-        bds_file_path: content.bds_file_path || '',
+        bds_file_path: dbBaseDir,
+        companies: initialCompanies
       });
     }
   }, [settings]);
@@ -165,39 +174,11 @@ export function Settings() {
             </div>
           </div>
 
-          {/* Database Settings */}
-          <div
-            className="pb-6 border-b"
-            style={{ borderColor: 'var(--border-default)' }}
-          >
-            <div className="flex items-center gap-2.5 mb-4">
-              <div
-                className="p-2 rounded-lg"
-                style={{ background: 'var(--info-soft)', border: '1px solid var(--info-soft-border)' }}
-              >
-                <Database className="w-4 h-4" style={{ color: 'var(--info)' }} />
-              </div>
-              <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                Database Settings
-              </h3>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
-                Busy Database File Path
-              </label>
-              <input
-                type="text"
-                value={formData.bds_file_path}
-                onChange={(e) => setFormData({ ...formData, bds_file_path: e.target.value })}
-                placeholder="C:\\Path\\To\\Your\\Database.bds"
-                className="input"
-              />
-              <p className="text-xs mt-1.5" style={{ color: 'var(--text-tertiary)' }}>
-                Path to the Busy .bds database file
-              </p>
-            </div>
-          </div>
+          {/* Database Settings Managed Separately via Multi-Company Dynamic Component */}
+          <DatabaseSettingsManager
+            companies={formData.companies}
+            onChange={(newCompanies) => setFormData({ ...formData, companies: newCompanies })}
+          />
 
           {/* Logging Settings */}
           <div>

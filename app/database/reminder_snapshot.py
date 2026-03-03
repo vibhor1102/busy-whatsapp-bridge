@@ -15,9 +15,9 @@ from app.config import get_roaming_appdata_path
 logger = structlog.get_logger()
 
 
-def _get_default_snapshot_db_path() -> Path:
+def _get_snapshot_db_path(company_id: str) -> Path:
     appdata = get_roaming_appdata_path()
-    data_dir = appdata / "data"
+    data_dir = appdata / "data" / "scopes" / company_id
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir / "reminder_snapshot.db"
 
@@ -26,21 +26,30 @@ class ReminderSnapshotDB:
     """Stores reminder-party calculation snapshots for fast list queries."""
 
     def __init__(self, db_path: Optional[str] = None):
-        self.db_path = Path(db_path) if db_path else _get_default_snapshot_db_path()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+        self._instances: Dict[str, Path] = {}
+        if db_path:
+            self._instances["default"] = Path(db_path)
+            self._instances["default"].parent.mkdir(parents=True, exist_ok=True)
+            self._init_db("default")
+
+    def _get_db_path(self, company_id: str = "default") -> Path:
+        if company_id not in self._instances:
+            self._instances[company_id] = _get_snapshot_db_path(company_id)
+            self._init_db(company_id)
+        return self._instances[company_id]
 
     @contextmanager
-    def _get_connection(self):
-        conn = sqlite3.connect(str(self.db_path))
+    def _get_connection(self, company_id: str = "default"):
+        db_path = self._get_db_path(company_id)
+        conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
         try:
             yield conn
         finally:
             conn.close()
 
-    def _init_db(self):
-        with self._get_connection() as conn:
+    def _init_db(self, company_id: str = "default"):
+        with self._get_connection(company_id) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS reminder_party_snapshot (
@@ -90,7 +99,7 @@ class ReminderSnapshotDB:
             )
             conn.commit()
 
-            logger.info("reminder_snapshot_db_initialized", db_path=str(self.db_path))
+            logger.info("reminder_snapshot_db_initialized", db_path=str(self._get_db_path(company_id)))
 
     def replace_snapshot(
         self,
@@ -101,9 +110,10 @@ class ReminderSnapshotDB:
         nonzero_count: int,
         error_count: int,
         source_db_path_hash: str,
+        company_id: str = "default",
     ) -> None:
         now = datetime.now().isoformat()
-        with self._get_connection() as conn:
+        with self._get_connection(company_id) as conn:
             conn.execute("BEGIN")
             conn.execute("DELETE FROM reminder_party_snapshot")
             conn.executemany(
@@ -142,16 +152,16 @@ class ReminderSnapshotDB:
             )
             conn.commit()
 
-    def update_party_permanent_enabled(self, party_code: str, enabled: bool) -> None:
-        with self._get_connection() as conn:
+    def update_party_permanent_enabled(self, party_code: str, enabled: bool, company_id: str = "default") -> None:
+        with self._get_connection(company_id) as conn:
             conn.execute(
                 "UPDATE reminder_party_snapshot SET permanent_enabled = ? WHERE party_code = ?",
                 (1 if enabled else 0, party_code),
             )
             conn.commit()
 
-    def get_status(self) -> Dict[str, Any]:
-        with self._get_connection() as conn:
+    def get_status(self, company_id: str = "default") -> Dict[str, Any]:
+        with self._get_connection(company_id) as conn:
             row = conn.execute(
                 """
                 SELECT last_refreshed_at, duration_ms, row_count, nonzero_count, error_count, source_db_path_hash
@@ -190,6 +200,7 @@ class ReminderSnapshotDB:
         sort_order: str,
         offset: int,
         limit: int,
+        company_id: str = "default",
     ) -> Tuple[int, List[Dict[str, Any]]]:
         valid_sort_map = {
             "amount_due": "amount_due",
@@ -219,7 +230,7 @@ class ReminderSnapshotDB:
 
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
-        with self._get_connection() as conn:
+        with self._get_connection(company_id) as conn:
             total = conn.execute(
                 f"SELECT COUNT(*) AS c FROM reminder_party_snapshot {where_clause}",
                 params,

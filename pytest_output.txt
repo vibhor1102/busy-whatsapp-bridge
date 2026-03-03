@@ -1,0 +1,106 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.1, pytest-8.3.3, pluggy-1.6.0 -- C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Vibhor\Scripts\busy-whatsapp-bridge
+plugins: anyio-4.12.1, asyncio-0.24.0
+asyncio: mode=Mode.STRICT, default_loop_scope=None
+collecting ... collected 12 items
+
+tests/test_phone_delivery.py::test_indian_local_number_normalization PASSED [  8%]
+tests/test_phone_delivery.py::test_delivery_status_lifecycle_update PASSED [ 16%]
+tests/test_phone_delivery.py::test_baileys_delivery_and_history_time_filters PASSED [ 25%]
+tests/test_queue.py::test_queue_operations PASSED                        [ 33%]
+tests/test_reminder_snapshot_db.py::test_query_parties_default_hides_zero FAILED [ 41%]
+tests/test_reminder_snapshot_db.py::test_query_parties_include_zero_and_pagination FAILED [ 50%]
+tests/test_reminder_snapshot_db.py::test_query_parties_filter_enabled FAILED [ 58%]
+tests/test_webhook.py::test_health_endpoint PASSED                       [ 66%]
+tests/test_webhook.py::test_get_invoice_notification PASSED              [ 75%]
+tests/test_webhook.py::test_post_invoice_notification PASSED             [ 83%]
+tests/test_webhook.py::test_party_lookup PASSED                          [ 91%]
+tests/test_webhook.py::test_search_parties PASSED                        [100%]
+
+================================== FAILURES ===================================
+____________________ test_query_parties_default_hides_zero ____________________
+tests\test_reminder_snapshot_db.py:48: in test_query_parties_default_hides_zero
+    db = ReminderSnapshotDB(str(tmp_path / "snapshot.db"))
+E   TypeError: ReminderSnapshotDB.__init__() takes 1 positional argument but 2 were given
+_______________ test_query_parties_include_zero_and_pagination ________________
+tests\test_reminder_snapshot_db.py:74: in test_query_parties_include_zero_and_pagination
+    db = ReminderSnapshotDB(str(tmp_path / "snapshot.db"))
+E   TypeError: ReminderSnapshotDB.__init__() takes 1 positional argument but 2 were given
+______________________ test_query_parties_filter_enabled ______________________
+tests\test_reminder_snapshot_db.py:101: in test_query_parties_filter_enabled
+    db = ReminderSnapshotDB(str(tmp_path / "snapshot.db"))
+E   TypeError: ReminderSnapshotDB.__init__() takes 1 positional argument but 2 were given
+============================== warnings summary ===============================
+venv\Lib\site-packages\pydantic\_internal\_config.py:291
+  C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\venv\Lib\site-packages\pydantic\_internal\_config.py:291: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.9/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+tests/test_phone_delivery.py::test_delivery_status_lifecycle_update
+tests/test_phone_delivery.py::test_baileys_delivery_and_history_time_filters
+tests/test_queue.py::test_queue_operations
+tests/test_queue.py::test_queue_operations
+tests/test_queue.py::test_queue_operations
+  C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\app\database\message_queue.py:192: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    cursor = conn.execute(
+
+tests/test_phone_delivery.py: 8 warnings
+tests/test_queue.py: 4 warnings
+  C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\app\database\message_queue.py:248: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    conn.execute(
+
+tests/test_phone_delivery.py::test_baileys_delivery_and_history_time_filters
+tests/test_phone_delivery.py::test_baileys_delivery_and_history_time_filters
+  C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\app\database\message_queue.py:530: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    cursor = conn.execute(query, params)
+
+tests/test_queue.py::test_queue_operations
+tests/test_queue.py::test_queue_operations
+  C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\app\database\message_queue.py:214: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    cursor = conn.execute(
+
+tests/test_queue.py: 10 warnings
+  C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\app\database\message_queue.py:360: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    conn.execute(
+
+tests/test_queue.py::test_queue_operations
+tests/test_queue.py::test_queue_operations
+  C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\app\database\message_queue.py:748: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    cursor = conn.execute(
+
+tests/test_queue.py::test_queue_operations
+  C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\app\database\message_queue.py:325: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    conn.execute(
+
+tests/test_queue.py::test_queue_operations
+tests/test_queue.py::test_queue_operations
+  C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\app\database\message_queue.py:575: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    conn.execute(
+
+tests/test_webhook.py::test_health_endpoint
+  C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\venv\Lib\site-packages\_pytest\python.py:163: PytestReturnNotNoneWarning: Expected None, but tests/test_webhook.py::test_health_endpoint returned True, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+tests/test_webhook.py::test_get_invoice_notification
+  C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\venv\Lib\site-packages\_pytest\python.py:163: PytestReturnNotNoneWarning: Expected None, but tests/test_webhook.py::test_get_invoice_notification returned True, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+tests/test_webhook.py::test_post_invoice_notification
+  C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\venv\Lib\site-packages\_pytest\python.py:163: PytestReturnNotNoneWarning: Expected None, but tests/test_webhook.py::test_post_invoice_notification returned True, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+tests/test_webhook.py::test_party_lookup
+  C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\venv\Lib\site-packages\_pytest\python.py:163: PytestReturnNotNoneWarning: Expected None, but tests/test_webhook.py::test_party_lookup returned False, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+tests/test_webhook.py::test_search_parties
+  C:\Users\Vibhor\Scripts\busy-whatsapp-bridge\venv\Lib\site-packages\_pytest\python.py:163: PytestReturnNotNoneWarning: Expected None, but tests/test_webhook.py::test_search_parties returned True, which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_reminder_snapshot_db.py::test_query_parties_default_hides_zero
+FAILED tests/test_reminder_snapshot_db.py::test_query_parties_include_zero_and_pagination
+FAILED tests/test_reminder_snapshot_db.py::test_query_parties_filter_enabled
+================== 3 failed, 9 passed, 42 warnings in 16.85s ==================

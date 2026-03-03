@@ -53,10 +53,19 @@ export class ApiErrorException extends Error {
   }
 }
 
+export interface CompanyInfo {
+  id: string;
+  name: string;
+  path: string;
+}
+
 class ApiService {
   private client: AxiosInstance;
+  private companyId: string;
 
   constructor() {
+    this.companyId = localStorage.getItem('busy_whatsapp_bridge_company_id') || 'default';
+
     this.client = axios.create({
       baseURL: API_BASE,
       headers: {
@@ -68,6 +77,7 @@ class ApiService {
     // Request interceptor for error logging
     this.client.interceptors.request.use(
       (config: InternalAxiosRequestConfig) => {
+        config.headers['X-Company-Id'] = this.companyId;
         console.log(`[API Request] ${config.method?.toUpperCase()} ${config.url}`);
         return config;
       },
@@ -153,6 +163,20 @@ class ApiService {
     }
   }
 
+  // System/Company
+  public setCompanyId(id: string) {
+    this.companyId = id;
+    localStorage.setItem('busy_whatsapp_bridge_company_id', id);
+  }
+
+  public getCompanyId(): string {
+    return this.companyId;
+  }
+
+  async getCompanies(): Promise<{ companies: CompanyInfo[] }> {
+    return this.fetch('/companies');
+  }
+
   // Dashboard
   async getDashboardStats(): Promise<DashboardStats> {
     return this.fetch<DashboardStats>('/dashboard/stats');
@@ -180,7 +204,7 @@ class ApiService {
     if (params?.to_time) queryParams.append('to_time', params.to_time);
     if (params?.limit) queryParams.append('limit', params.limit.toString());
     if (params?.offset) queryParams.append('offset', params.offset.toString());
-    
+
     return this.fetch(`/queue/history?${queryParams.toString()}`);
   }
 
@@ -254,7 +278,7 @@ class ApiService {
     if (params?.level) queryParams.append('level', params.level);
     if (params?.limit) queryParams.append('limit', params.limit.toString());
     if (params?.source) queryParams.append('source', params.source);
-    
+
     return this.fetch(`/logs?${queryParams.toString()}`);
   }
 
@@ -277,6 +301,10 @@ class ApiService {
 
   async stopQueueWorker(): Promise<{ success: boolean; message: string; worker_running: boolean }> {
     return this.fetch('/system/queue/stop', { method: 'POST' });
+  }
+
+  async browseSystemFile(): Promise<{ path: string | null; success: boolean; message?: string }> {
+    return this.fetch('/system/browse-file');
   }
 
   // Settings
@@ -332,7 +360,7 @@ class ApiService {
     if (params?.offset !== undefined) queryParams.append('offset', params.offset.toString());
     if (params?.limit) queryParams.append('limit', params.limit.toString());
     if (params?.include_zero) queryParams.append('include_zero', 'true');
-    
+
     return this.fetch(`/reminders/parties?${queryParams.toString()}`);
   }
 
@@ -505,7 +533,7 @@ class ApiService {
     if (params?.to_time) queryParams.append('to_time', params.to_time);
     if (params?.limit) queryParams.append('limit', params.limit.toString());
     if (params?.offset) queryParams.append('offset', params.offset.toString());
-    
+
     return this.fetch(`/reminders/history?${queryParams.toString()}`);
   }
 

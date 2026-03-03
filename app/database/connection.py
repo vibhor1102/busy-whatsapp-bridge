@@ -14,14 +14,20 @@ class BusyDatabase:
     
     def __init__(self):
         self.settings = get_settings()
-        self._connection: Optional[pyodbc.Connection] = None
-        self._last_test_error: Optional[str] = None
+        self._connections: Dict[str, pyodbc.Connection] = {}
+        self._last_test_errors: Dict[str, Optional[str]] = {}
     
     def refresh_settings(self):
         """Refresh settings from config file."""
         get_settings.cache_clear()
         self.settings = get_settings()
-        self._connection = None  # Force reconnection on next use
+        # Force reconnection on next use for all companies
+        for conn in self._connections.values():
+            try:
+                conn.close()
+            except Exception:
+                pass
+        self._connections.clear()
         logger.info("database_settings_refreshed")
         
         # Update reminder config scope
@@ -32,52 +38,62 @@ class BusyDatabase:
         except Exception as e:
             logger.warning("reminder_config_scope_update_failed", error=str(e))
     
-    def connect(self) -> pyodbc.Connection:
+    def connect(self, company_id: str = "default") -> pyodbc.Connection:
         """Establish database connection."""
-        conn_str = self.settings.database_connection_string
+        conn_str = self.settings.get_database_connection_string(company_id=company_id)
         last_error: Optional[Exception] = None
         for attempt in range(1, 4):
             try:
-                self._connection = pyodbc.connect(conn_str, timeout=30)
-                logger.info("database_connected", path=self.settings.BDS_FILE_PATH, attempt=attempt)
-                return self._connection
+                connection = pyodbc.connect(conn_str, timeout=30)
+                self._connections[company_id] = connection
+                logger.info("database_connected", company_id=company_id, attempt=attempt)
+                return connection
             except pyodbc.Error as e:
                 last_error = e
                 error_text = str(e)
-                logger.error("database_connection_failed", error=error_text, attempt=attempt)
+                logger.error("database_connection_failed", company_id=company_id, error=error_text, attempt=attempt)
                 if "Too many client tasks" in error_text and attempt < 3:
                     time.sleep(0.4 * attempt)
                     continue
                 raise
         raise last_error  # pragma: no cover
     
-    def disconnect(self):
+    def disconnect(self, company_id: Optional[str] = None):
         """Close database connection."""
-        if self._connection:
-            try:
-                self._connection.close()
-            except pyodbc.ProgrammingError:
-                # Connection may already be closed by an earlier failure path.
-                logger.warning("database_already_closed")
-            except pyodbc.Error as e:
-                logger.warning("database_disconnect_failed", error=str(e))
-            self._connection = None
-            logger.info("database_disconnected")
+        if company_id:
+            connection = self._connections.pop(company_id, None)
+            if connection:
+                try:
+                    connection.close()
+                except pyodbc.ProgrammingError:
+                    # Connection may already be closed by an earlier failure path.
+                    logger.warning("database_already_closed", company_id=company_id)
+                except pyodbc.Error as e:
+                    logger.warning("database_disconnect_failed", company_id=company_id, error=str(e))
+                logger.info("database_disconnected", company_id=company_id)
+        else:
+            for c_id, connection in list(self._connections.items()):
+                try:
+                    connection.close()
+                except Exception as e:
+                    logger.warning("database_disconnect_failed", company_id=c_id, error=str(e))
+                logger.info("database_disconnected", company_id=c_id)
+            self._connections.clear()
     
     @contextmanager
-    def get_cursor(self):
+    def get_cursor(self, company_id: str = "default"):
         """Context manager for database cursor."""
         conn = None
         cursor = None
         try:
-            conn = self.connect()
+            conn = self.connect(company_id=company_id)
             cursor = conn.cursor()
             yield cursor
             conn.commit()
         except pyodbc.Error as e:
             if conn:
                 conn.rollback()
-            logger.error("database_error", error=str(e))
+            logger.error("database_error", company_id=company_id, error=str(e))
             raise
         except Exception:
             if conn:
@@ -94,39 +110,39 @@ class BusyDatabase:
                     conn.close()
                 except Exception:
                     pass
-                if self._connection is conn:
-                    self._connection = None
+                if self._connections.get(company_id) is conn:
+                    self._connections.pop(company_id, None)
     
-    def test_connection_with_error(self, retries: int = 2, delay_seconds: float = 0.35) -> Tuple[bool, Optional[str]]:
+    def test_connection_with_error(self, company_id: str = "default", retries: int = 2, delay_seconds: float = 0.35) -> Tuple[bool, Optional[str]]:
         """Test database connectivity with retry and return error context."""
         attempts = max(1, retries + 1)
         last_error: Optional[str] = None
 
         for attempt in range(1, attempts + 1):
             try:
-                with self.get_cursor() as cursor:
+                with self.get_cursor(company_id=company_id) as cursor:
                     cursor.execute("SELECT COUNT(*) FROM Master1")
                     result = cursor.fetchone()
-                    self._last_test_error = None
-                    logger.info("database_test_successful", master1_count=result[0], attempt=attempt)
+                    self._last_test_errors[company_id] = None
+                    logger.info("database_test_successful", company_id=company_id, master1_count=result[0], attempt=attempt)
                     return True, None
             except Exception as e:
                 last_error = str(e)
                 if attempt < attempts:
-                    logger.warning("database_test_retry", attempt=attempt, error=last_error)
+                    logger.warning("database_test_retry", company_id=company_id, attempt=attempt, error=last_error)
                     time.sleep(delay_seconds)
                 else:
-                    logger.error("database_test_failed", error=last_error, attempts=attempts)
+                    logger.error("database_test_failed", company_id=company_id, error=last_error, attempts=attempts)
 
-        self._last_test_error = last_error
+        self._last_test_errors[company_id] = last_error
         return False, last_error
 
-    def test_connection(self) -> bool:
+    def test_connection(self, company_id: str = "default") -> bool:
         """Backward-compatible boolean connectivity check."""
-        ok, _ = self.test_connection_with_error()
+        ok, _ = self.test_connection_with_error(company_id=company_id)
         return ok
     
-    def get_party_by_phone(self, phone: str) -> Optional[Dict[str, Any]]:
+    def get_party_by_phone(self, phone: str, company_id: str = "default") -> Optional[Dict[str, Any]]:
         """Fetch party details from Master1 by phone number."""
         try:
             # Clean phone number - remove spaces and common prefixes
@@ -136,7 +152,7 @@ class BusyDatabase:
             elif clean_phone.startswith("0"):
                 clean_phone = clean_phone[1:]
             
-            with self.get_cursor() as cursor:
+            with self.get_cursor(company_id=company_id) as cursor:
                 # Try exact match first
                 query = """
                     SELECT 
@@ -172,13 +188,13 @@ class BusyDatabase:
                     return None
                     
         except Exception as e:
-            logger.error("get_party_error", phone=phone, error=str(e))
+            logger.error("get_party_error", company_id=company_id, phone=phone, error=str(e))
             return None
     
-    def get_party_by_code(self, code: str) -> Optional[Dict[str, Any]]:
+    def get_party_by_code(self, code: str, company_id: str = "default") -> Optional[Dict[str, Any]]:
         """Fetch party details from Master1 by party code."""
         try:
-            with self.get_cursor() as cursor:
+            with self.get_cursor(company_id=company_id) as cursor:
                 query = """
                     SELECT 
                         Code,
@@ -203,19 +219,20 @@ class BusyDatabase:
                 return None
                 
         except Exception as e:
-            logger.error("get_party_by_code_error", code=code, error=str(e))
+            logger.error("get_party_by_code_error", company_id=company_id, code=code, error=str(e))
             return None
     
     def get_voucher_by_party(
         self, 
         party_code: str, 
         vch_type: Optional[str] = None,
-        limit: int = 10
+        limit: int = 10,
+        company_id: str = "default"
     ) -> List[Dict[str, Any]]:
         """Fetch recent vouchers for a party from Tran1."""
         try:
             limit = max(1, min(int(limit), 1000))
-            with self.get_cursor() as cursor:
+            with self.get_cursor(company_id=company_id) as cursor:
                 if vch_type:
                     query = """
                         SELECT 
@@ -256,14 +273,14 @@ class BusyDatabase:
                 return []
                 
         except Exception as e:
-            logger.error("get_voucher_error", party_code=party_code, error=str(e))
+            logger.error("get_voucher_error", company_id=company_id, party_code=party_code, error=str(e))
             return []
     
-    def search_parties(self, search_term: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def search_parties(self, search_term: str, limit: int = 20, company_id: str = "default") -> List[Dict[str, Any]]:
         """Search parties by name or code."""
         try:
             limit = max(1, min(int(limit), 1000))
-            with self.get_cursor() as cursor:
+            with self.get_cursor(company_id=company_id) as cursor:
                 query = """
                     SELECT 
                         TOP {limit}
@@ -287,7 +304,7 @@ class BusyDatabase:
                 return []
                 
         except Exception as e:
-            logger.error("search_parties_error", search_term=search_term, error=str(e))
+            logger.error("search_parties_error", company_id=company_id, search_term=search_term, error=str(e))
             return []
 
 

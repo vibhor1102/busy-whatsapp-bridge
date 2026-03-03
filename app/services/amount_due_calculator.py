@@ -32,7 +32,7 @@ class AmountDueCalculator:
         self.db = db
         self.config_service = reminder_config_service
         self.default_credit_days = DEFAULT_CREDIT_DAYS
-        self._debtor_group_codes_cache: Optional[List[int]] = None
+        self._debtor_group_codes_cache: Dict[str, List[int]] = {}
     
     def _validate_party_code(self, party_code: str) -> int:
         """Validate and convert party code to integer"""
@@ -45,7 +45,7 @@ class AmountDueCalculator:
             logger.error("invalid_party_code", party_code=party_code, error=str(e))
             raise ValueError(f"Invalid party code: {party_code}") from e
     
-    def get_credit_days(self, party_code: str, override: Optional[int] = None) -> Tuple[int, str]:
+    def get_credit_days(self, party_code: str, override: Optional[int] = None, company_id: str = "default") -> Tuple[int, str]:
         """
         Get credit days for a party from Master1.I2
         
@@ -67,7 +67,7 @@ class AmountDueCalculator:
                 WHERE Code = ? AND MasterType = 2
             """
             
-            with self.db.get_cursor() as cursor:
+            with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute(query, (party_code_int,))
                 row = cursor.fetchone()
                 
@@ -91,6 +91,7 @@ class AmountDueCalculator:
         except Exception as e:
             logger.error(
                 "error_fetching_credit_days",
+                company_id=company_id,
                 party_code=party_code,
                 error=str(e)
             )
@@ -100,7 +101,8 @@ class AmountDueCalculator:
         self,
         party_code: str,
         days: int,
-        as_of_date: Optional[date] = None
+        as_of_date: Optional[date] = None,
+        company_id: str = "default"
     ) -> Tuple[Decimal, int, date, date]:
         """
         Get total sales amount within the last N days
@@ -133,7 +135,7 @@ class AmountDueCalculator:
                 AND t1.Date <= ?
             """
             
-            with self.db.get_cursor() as cursor:
+            with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute(query, (party_code_int, start_date, as_of_date))
                 row = cursor.fetchone()
                 
@@ -165,7 +167,7 @@ class AmountDueCalculator:
             )
             return Decimal("0"), 0, start_date, as_of_date
 
-    def _get_debtor_group_codes(self, force_refresh: bool = False) -> List[int]:
+    def _get_debtor_group_codes(self, force_refresh: bool = False, company_id: str = "default") -> List[int]:
         """
         Resolve debtor account-group codes from Master1 hierarchy.
 
@@ -173,11 +175,11 @@ class AmountDueCalculator:
         with MasterType = 2. Debtor ledgers are expected under "Sundry Debtors"
         (or debtor-like group names), including all descendant groups.
         """
-        if self._debtor_group_codes_cache is not None and not force_refresh:
-            return self._debtor_group_codes_cache
+        if company_id in self._debtor_group_codes_cache and not force_refresh:
+            return self._debtor_group_codes_cache[company_id]
 
         groups: List[Tuple[int, str, int]] = []
-        with self.db.get_cursor() as cursor:
+        with self.db.get_cursor(company_id=company_id) as cursor:
             cursor.execute(
                 """
                 SELECT Code, Name, ParentGrp
@@ -210,11 +212,10 @@ class AmountDueCalculator:
             cur = stack.pop()
             if cur in all_group_codes:
                 continue
-            all_group_codes.add(cur)
             stack.extend(by_parent.get(cur, []))
 
         resolved = sorted(all_group_codes)
-        self._debtor_group_codes_cache = resolved
+        self._debtor_group_codes_cache[company_id] = resolved
         logger.info(
             "debtor_groups_resolved",
             seed_count=len(seeds),
@@ -223,13 +224,13 @@ class AmountDueCalculator:
         )
         return resolved
 
-    def get_debtor_party_count(self) -> int:
+    def get_debtor_party_count(self, company_id: str = "default") -> int:
         """Count ledger masters that fall under debtor group hierarchy."""
-        debtor_groups = self._get_debtor_group_codes()
+        debtor_groups = self._get_debtor_group_codes(company_id=company_id)
         if not debtor_groups:
             return 0
         in_clause = ",".join(str(c) for c in debtor_groups)
-        with self.db.get_cursor() as cursor:
+        with self.db.get_cursor(company_id=company_id) as cursor:
             cursor.execute(
                 f"""
                 SELECT COUNT(*)
@@ -244,7 +245,8 @@ class AmountDueCalculator:
         self,
         party_code: str,
         credit_days: Optional[int] = None,
-        as_of_date: Optional[date] = None
+        as_of_date: Optional[date] = None,
+        company_id: str = "default"
     ) -> AmountDueCalculation:
         """
         Calculate amount due for a single party
@@ -259,22 +261,22 @@ class AmountDueCalculator:
         Returns:
             AmountDueCalculation with full details
         """
-        logger.info("calculating_amount_due", party_code=party_code)
+        logger.info("calculating_amount_due", company_id=company_id, party_code=party_code)
         
         try:
             # Get party info
-            customer_info = ledger_data_service.get_customer_info(party_code)
+            customer_info = ledger_data_service.get_customer_info(party_code, company_id=company_id)
             
             # Get credit days
-            credit_days_used, credit_days_source = self.get_credit_days(party_code, credit_days)
+            credit_days_used, credit_days_source = self.get_credit_days(party_code, credit_days, company_id=company_id)
             
             # Get ledger for closing balance
-            ledger = ledger_data_service.generate_ledger_report(party_code)
+            ledger = ledger_data_service.generate_ledger_report(party_code, company_id=company_id)
             closing_balance = ledger.closing_balance
             
             # Get recent sales
             recent_sales, sales_count, start_date, end_date = self.get_recent_sales(
-                party_code, credit_days_used, as_of_date
+                party_code, credit_days_used, as_of_date, company_id=company_id
             )
             
             # Calculate amount due
@@ -282,6 +284,7 @@ class AmountDueCalculator:
             
             logger.info(
                 "amount_due_calculated",
+                company_id=company_id,
                 party_code=party_code,
                 closing_balance=closing_balance,
                 credit_days=credit_days_used,
@@ -322,7 +325,8 @@ class AmountDueCalculator:
         self,
         min_amount_due: Decimal = Decimal("0.01"),
         as_of_date: Optional[date] = None,
-        max_parties: Optional[int] = None
+        max_parties: Optional[int] = None,
+        company_id: str = "default"
     ) -> List[PartyReminderInfo]:
         """
         Calculate amount due for all parties with positive balance
@@ -341,7 +345,7 @@ class AmountDueCalculator:
         try:
             # Use a single roster query for list view to avoid per-party deep scans
             # that can overwhelm MS Access ODBC and trigger intermittent auth errors.
-            debtor_groups = self._get_debtor_group_codes()
+            debtor_groups = self._get_debtor_group_codes(company_id=company_id)
             if not debtor_groups:
                 logger.warning("no_debtor_group_found")
                 return []
@@ -381,11 +385,11 @@ class AmountDueCalculator:
                 ORDER BY m.Code
             """
 
-            with self.db.get_cursor() as cursor:
+            with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute(query)
                 parties = cursor.fetchall()
 
-            config = self.config_service.get_config()
+            config = self.config_service.get_config(scope_key=company_id)
             currency = config.currency_symbol
 
             for row in parties:
@@ -448,9 +452,9 @@ class AmountDueCalculator:
             )
             raise
     
-    def format_amount(self, amount: Decimal) -> str:
+    def format_amount(self, amount: Decimal, company_id: str = "default") -> str:
         """Format amount with currency symbol"""
-        config = self.config_service.get_config()
+        config = self.config_service.get_config(scope_key=company_id)
         return f"{config.currency_symbol}{amount:,.2f}"
 
 

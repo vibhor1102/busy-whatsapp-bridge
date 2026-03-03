@@ -14,7 +14,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query, Depends, BackgroundTasks, Header
 from pydantic import BaseModel, Field
 
 import structlog
@@ -44,15 +44,19 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/api/v1/reminders", tags=["Payment Reminders"])
 
 
+def get_company_id(x_company_id: str = Header("default")) -> str:
+    """Dependency to extract company ID from headers."""
+    return x_company_id
+
 # ============================================
 # Configuration Endpoints
 # ============================================
 
 @router.get("/config", response_model=ReminderConfig)
-async def get_reminder_config():
+async def get_reminder_config(company_id: str = Depends(get_company_id)):
     """Get full reminder configuration"""
     try:
-        config = reminder_config_service.get_config()
+        config = reminder_config_service.get_config(scope_key=company_id)
         return config
     except Exception as e:
         logger.error("get_config_error", error=str(e))
@@ -60,10 +64,10 @@ async def get_reminder_config():
 
 
 @router.put("/config")
-async def update_reminder_config(config: ReminderConfig):
+async def update_reminder_config(config: ReminderConfig, company_id: str = Depends(get_company_id)):
     """Update reminder configuration"""
     try:
-        reminder_config_service.save_config(config)
+        reminder_config_service.save_config(config, scope_key=company_id)
         logger.info("config_updated")
         return {"status": "success", "message": "Configuration updated"}
     except Exception as e:
@@ -86,6 +90,7 @@ async def list_eligible_parties(
     include_zero: bool = Query(False, description="Include zero/negative due rows"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
     limit: int = Query(100, ge=1, le=5000, description="Page size"),
+    company_id: str = Depends(get_company_id),
 ):
     """Get debtor parties for reminders, with optional minimum amount filter."""
     try:
@@ -106,6 +111,7 @@ async def list_eligible_parties(
             sort_order=sort_order,
             offset=offset,
             limit=limit,
+            company_id=company_id,
         )
         return PaginatedPartyReminderResponse(**page)
         
@@ -115,20 +121,20 @@ async def list_eligible_parties(
 
 
 @router.get("/snapshot/status", response_model=ReminderSnapshotStatus)
-async def get_snapshot_status():
+async def get_snapshot_status(company_id: str = Depends(get_company_id)):
     """Return current reminder snapshot freshness and row counts."""
     try:
-        return ReminderSnapshotStatus(**reminder_service.get_snapshot_status())
+        return ReminderSnapshotStatus(**reminder_service.get_snapshot_status(company_id=company_id))
     except Exception as e:
         logger.error("get_snapshot_status_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/snapshot/refresh", response_model=ReminderSnapshotStatus)
-async def refresh_snapshot():
+async def refresh_snapshot(company_id: str = Depends(get_company_id)):
     """Recompute exact amount-due snapshot for all debtor parties."""
     try:
-        status = reminder_service.refresh_snapshot()
+        status = reminder_service.refresh_snapshot(company_id=company_id)
         return ReminderSnapshotStatus(**status)
     except Exception as e:
         logger.error("refresh_snapshot_error", error=str(e), exc_info=True)
@@ -136,10 +142,10 @@ async def refresh_snapshot():
 
 
 @router.get("/parties/{party_code}", response_model=PartyReminderInfo)
-async def get_party_details(party_code: str):
+async def get_party_details(party_code: str, company_id: str = Depends(get_company_id)):
     """Get detailed information for a specific party"""
     try:
-        return await reminder_service.get_party_info(party_code)
+        return await reminder_service.get_party_info(party_code, company_id=company_id)
         
     except HTTPException:
         raise
@@ -151,10 +157,10 @@ async def get_party_details(party_code: str):
 
 
 @router.get("/parties/{party_code}/ledger")
-async def get_party_ledger_pdf(party_code: str):
+async def get_party_ledger_pdf(party_code: str, company_id: str = Depends(get_company_id)):
     """Generate and download ledger PDF for a party"""
     try:
-        pdf_bytes = await reminder_service.generate_ledger_pdf(party_code)
+        pdf_bytes = await reminder_service.generate_ledger_pdf(party_code, company_id=company_id)
         
         from fastapi.responses import Response
         return Response(
@@ -172,7 +178,7 @@ async def get_party_ledger_pdf(party_code: str):
 
 @router.put("/parties/{party_code}")
 async def update_party_config(
-    party_code: str, request: UpdatePartyRequest
+    party_code: str, request: UpdatePartyRequest, company_id: str = Depends(get_company_id)
 ):
     """Update party configuration (permanent settings)"""
     try:
@@ -182,6 +188,7 @@ async def update_party_config(
             credit_days_override=request.credit_days_override,
             custom_template_id=request.custom_template_id,
             notes=request.notes,
+            company_id=company_id,
         )
 
         return {
@@ -200,13 +207,15 @@ async def update_party_config(
 @router.post("/parties/{party_code}/calculate", response_model=AmountDueCalculation)
 async def calculate_amount_due(
     party_code: str,
-    credit_days_override: Optional[int] = None
+    credit_days_override: Optional[int] = None,
+    company_id: str = Depends(get_company_id)
 ):
     """Calculate amount due for a specific party with optional credit days override"""
     try:
         calculation = await amount_due_calculator.calculate_for_party(
             party_code=party_code,
-            credit_days=credit_days_override
+            credit_days=credit_days_override,
+            company_id=company_id
         )
         return calculation
         
@@ -220,7 +229,7 @@ async def calculate_amount_due(
 # ============================================
 
 @router.post("/batch")
-async def send_reminders_batch(request: CreateBatchRequest):
+async def send_reminders_batch(request: CreateBatchRequest, company_id: str = Depends(get_company_id)):
     """Send reminders to selected parties immediately"""
     try:
         result = await reminder_service.send_reminders_to_parties(
@@ -228,6 +237,7 @@ async def send_reminders_batch(request: CreateBatchRequest):
             template_id=request.template_id,
             sent_by="manual",
             party_templates=getattr(request, 'party_templates', None),
+            company_id=company_id,
         )
 
         batch_id = result.get("batch_id") if isinstance(result, dict) else result
@@ -248,7 +258,7 @@ async def send_reminders_batch(request: CreateBatchRequest):
 
 
 @router.post("/schedule")
-async def schedule_reminders(request: CreateBatchRequest):
+async def schedule_reminders(request: CreateBatchRequest, company_id: str = Depends(get_company_id)):
     """Schedule reminders for later delivery"""
     try:
         if not request.schedule_for:
@@ -268,7 +278,8 @@ async def schedule_reminders(request: CreateBatchRequest):
                 await reminder_service.send_reminders_to_parties(
                     party_codes=request.party_codes,
                     template_id=request.template_id,
-                    sent_by="scheduled"
+                    sent_by="scheduled",
+                    company_id=company_id
                 )
             except Exception as e:
                 logger.error("scheduled_batch_execution_failed", batch_id=batch_id, error=str(e), exc_info=True)
@@ -301,10 +312,10 @@ async def cancel_batch(batch_id: str):
 # ============================================
 
 @router.get("/templates", response_model=List[MessageTemplate])
-async def list_templates():
+async def list_templates(company_id: str = Depends(get_company_id)):
     """Get all message templates"""
     try:
-        templates = reminder_config_service.get_all_templates()
+        templates = reminder_config_service.get_all_templates(scope_key=company_id)
         return templates
         
     except Exception as e:
@@ -313,10 +324,10 @@ async def list_templates():
 
 
 @router.get("/templates/{template_id}", response_model=MessageTemplate)
-async def get_template(template_id: str):
+async def get_template(template_id: str, company_id: str = Depends(get_company_id)):
     """Get a specific template by ID"""
     try:
-        template = reminder_config_service.get_template(template_id)
+        template = reminder_config_service.get_template(template_id, scope_key=company_id)
         if not template:
             raise HTTPException(status_code=404, detail=f"Template {template_id} not found")
         return template
@@ -329,10 +340,10 @@ async def get_template(template_id: str):
 
 
 @router.post("/templates")
-async def create_template(template: MessageTemplate):
+async def create_template(template: MessageTemplate, company_id: str = Depends(get_company_id)):
     """Create a new message template"""
     try:
-        reminder_config_service.add_template(template)
+        reminder_config_service.add_template(template, scope_key=company_id)
         return {
             "status": "success",
             "template": template,
@@ -347,10 +358,10 @@ async def create_template(template: MessageTemplate):
 
 
 @router.put("/templates/{template_id}")
-async def update_template(template_id: str, template: MessageTemplate):
+async def update_template(template_id: str, template: MessageTemplate, company_id: str = Depends(get_company_id)):
     """Update an existing template"""
     try:
-        reminder_config_service.update_template(template_id, template)
+        reminder_config_service.update_template(template_id, template, scope_key=company_id)
         return {
             "status": "success",
             "template": template,
@@ -365,10 +376,10 @@ async def update_template(template_id: str, template: MessageTemplate):
 
 
 @router.delete("/templates/{template_id}")
-async def delete_template(template_id: str):
+async def delete_template(template_id: str, company_id: str = Depends(get_company_id)):
     """Delete a template"""
     try:
-        reminder_config_service.delete_template(template_id)
+        reminder_config_service.delete_template(template_id, scope_key=company_id)
         return {
             "status": "success",
             "message": f"Template {template_id} deleted"
@@ -382,10 +393,10 @@ async def delete_template(template_id: str):
 
 
 @router.post("/templates/{template_id}/default")
-async def set_default_template(template_id: str):
+async def set_default_template(template_id: str, company_id: str = Depends(get_company_id)):
     """Set a template as the default template"""
     try:
-        reminder_config_service.set_active_template(template_id)
+        reminder_config_service.set_active_template(template_id, scope_key=company_id)
         return {
             "status": "success",
             "message": f"Template {template_id} set as default"
@@ -401,14 +412,15 @@ async def set_default_template(template_id: str):
 @router.post("/templates/{template_id}/preview")
 async def preview_template(
     template_id: str,
-    request: PreviewTemplateRequest
+    request: PreviewTemplateRequest,
+    company_id: str = Depends(get_company_id)
 ):
     """Preview a template with sample data"""
     try:
         # Use provided variables or defaults
         variables = request.variables or template_service.get_default_variables()
         
-        template = reminder_config_service.get_template(template_id)
+        template = reminder_config_service.get_template(template_id, scope_key=company_id)
         if not template:
             raise HTTPException(status_code=404, detail=f"Template {template_id} not found")
         
@@ -430,10 +442,10 @@ async def preview_template(
 
 
 @router.post("/templates/{template_id}/active")
-async def set_active_template(template_id: str):
+async def set_active_template(template_id: str, company_id: str = Depends(get_company_id)):
     """Set a template as the active (default) template"""
     try:
-        reminder_config_service.set_active_template(template_id)
+        reminder_config_service.set_active_template(template_id, scope_key=company_id)
         return {
             "status": "success",
             "message": f"Template {template_id} is now active"
@@ -451,10 +463,10 @@ async def set_active_template(template_id: str):
 # ============================================
 
 @router.get("/config/company")
-async def get_company_settings():
+async def get_company_settings(company_id: str = Depends(get_company_id)):
     """Get company settings (name, contact phone, etc.)"""
     try:
-        config = reminder_config_service.get_config()
+        config = reminder_config_service.get_config(scope_key=company_id)
         return {
             "name": config.company.name,
             "contact_phone": config.company.contact_phone,
@@ -466,18 +478,18 @@ async def get_company_settings():
 
 
 @router.put("/config/company")
-async def update_company_settings(settings: dict):
+async def update_company_settings(settings: dict, company_id: str = Depends(get_company_id)):
     """Update company settings"""
     try:
         from app.models.reminder_schemas import CompanySettings
         
-        config = reminder_config_service.get_config()
+        config = reminder_config_service.get_config(scope_key=company_id)
         config.company = CompanySettings(
             name=settings.get("name", config.company.name),
             contact_phone=settings.get("contact_phone", config.company.contact_phone),
             address=settings.get("address", config.company.address)
         )
-        reminder_config_service.save_config(config)
+        reminder_config_service.save_config(config, scope_key=company_id)
         
         logger.info("company_settings_updated", name=config.company.name)
         return {
@@ -495,10 +507,10 @@ async def update_company_settings(settings: dict):
 
 
 @router.get("/config/currency")
-async def get_currency_settings():
+async def get_currency_settings(company_id: str = Depends(get_company_id)):
     """Get currency settings"""
     try:
-        config = reminder_config_service.get_config()
+        config = reminder_config_service.get_config(scope_key=company_id)
         return {
             "currency_symbol": config.currency_symbol
         }
@@ -508,13 +520,13 @@ async def get_currency_settings():
 
 
 @router.put("/config/currency")
-async def update_currency_settings(settings: dict):
+async def update_currency_settings(settings: dict, company_id: str = Depends(get_company_id)):
     """Update currency settings"""
     try:
-        config = reminder_config_service.get_config()
+        config = reminder_config_service.get_config(scope_key=company_id)
         if "currency_symbol" in settings:
             config.currency_symbol = settings["currency_symbol"]
-        reminder_config_service.save_config(config)
+        reminder_config_service.save_config(config, scope_key=company_id)
         
         logger.info("currency_settings_updated", symbol=config.currency_symbol)
         return {
@@ -654,10 +666,10 @@ async def get_active_sessions():
 # ============================================
 
 @router.get("/stats", response_model=ReminderStats)
-async def get_reminder_stats():
+async def get_reminder_stats(company_id: str = Depends(get_company_id)):
     """Get reminder system statistics"""
     try:
-        stats = await reminder_service.get_stats()
+        stats = await reminder_service.get_stats(company_id=company_id)
         return stats
         
     except Exception as e:
