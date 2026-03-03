@@ -159,15 +159,11 @@ class BusyDatabase:
                         Code,
                         Name,
                         PrintName,
-                        Phone,
-                        Email,
-                        Address1,
-                        Address2,
-                        Address3,
-                        Address4,
-                        GSTNo
+                        C3 as Phone,
+                        C1 as Address1,
+                        C2 as GSTNo
                     FROM Master1
-                    WHERE Phone LIKE ?
+                    WHERE C3 LIKE ?
                 """
                 cursor.execute(query, (f"%{clean_phone}%",))
                 row = cursor.fetchone()
@@ -200,17 +196,13 @@ class BusyDatabase:
                         Code,
                         Name,
                         PrintName,
-                        Phone,
-                        Email,
-                        Address1,
-                        Address2,
-                        Address3,
-                        Address4,
-                        GSTNo
+                        C3 as Phone,
+                        C1 as Address1,
+                        C2 as GSTNo
                     FROM Master1
                     WHERE Code = ?
                 """
-                cursor.execute(query, (code,))
+                cursor.execute(query, (int(code),))
                 row = cursor.fetchone()
                 
                 if row:

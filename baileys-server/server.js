@@ -1,3 +1,5 @@
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 const express = require('express');
 const QRCode = require('qrcode');
 const path = require('path');
@@ -426,7 +428,7 @@ app.get('/qr/page', (req, res) => {
     </script>
 </body>
 </html>`;
-    
+
     res.setHeader('Content-Type', 'text/html');
     res.send(html);
 });
@@ -435,14 +437,14 @@ app.post('/send', async (req, res) => {
     try {
         const { to, message, phone } = req.body;
         const recipient = to || phone;
-        
+
         if (!recipient) {
             return res.status(400).json({
                 success: false,
                 error: 'Recipient phone number is required (to or phone field)'
             });
         }
-        
+
         if (!message) {
             return res.status(400).json({
                 success: false,
@@ -451,7 +453,7 @@ app.post('/send', async (req, res) => {
         }
 
         const result = await client.sendMessage(recipient, message);
-        
+
         res.json({
             success: true,
             data: result
@@ -469,14 +471,14 @@ app.post('/send-media', async (req, res) => {
     try {
         const { to, phone, mediaUrl, caption, mimetype, fileName } = req.body;
         const recipient = to || phone;
-        
+
         if (!recipient) {
             return res.status(400).json({
                 success: false,
                 error: 'Recipient phone number is required (to or phone field)'
             });
         }
-        
+
         if (!mediaUrl) {
             return res.status(400).json({
                 success: false,
@@ -488,7 +490,7 @@ app.post('/send-media', async (req, res) => {
             mimetype: mimetype,
             fileName: fileName
         });
-        
+
         res.json({
             success: true,
             data: result
@@ -505,7 +507,7 @@ app.post('/send-media', async (req, res) => {
 app.post('/restart', async (req, res) => {
     try {
         await client.restart();
-        
+
         res.json({
             success: true,
             message: 'Baileys client restarted successfully'
@@ -539,9 +541,9 @@ app.post('/logout', async (req, res) => {
 app.post('/presence', async (req, res) => {
     try {
         const { online = true } = req.body;
-        
+
         const success = await client.setPresence(online);
-        
+
         res.json({
             success,
             online,
@@ -561,19 +563,19 @@ app.post('/typing', async (req, res) => {
     try {
         const { to, phone, duration = 5000 } = req.body;
         const recipient = to || phone;
-        
+
         if (!recipient) {
             return res.status(400).json({
                 success: false,
                 error: 'Recipient phone number is required (to or phone field)'
             });
         }
-        
+
         // Validate duration
         const typingDuration = Math.min(Math.max(parseInt(duration) || 5000, 1000), 30000);
-        
+
         const success = await client.sendTypingIndicator(recipient, typingDuration);
-        
+
         res.json({
             success,
             recipient,
@@ -592,7 +594,7 @@ app.post('/typing', async (req, res) => {
 app.get('/health', (req, res) => {
     const status = client.getStatus();
     const isHealthy = ['connected', 'qr_ready'].includes(status.state);
-    
+
     res.status(isHealthy ? 200 : 503).json({
         success: isHealthy,
         status: status.state,
@@ -606,11 +608,11 @@ app.get('/qr/stream', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Access-Control-Allow-Origin', '*');
-    
+
     // Send initial status
     const status = client.getStatus();
     const qrData = client.getQRCode();
-    
+
     // Generate QR image if available
     let initData = { type: 'init', status };
     if (qrData && qrData.qr && !qrData.isExpired) {
@@ -622,12 +624,12 @@ app.get('/qr/stream', async (req, res) => {
             console.error('[ERROR] Failed to generate init QR image:', err.message);
         }
     }
-    
+
     res.write(`data: ${JSON.stringify(initData)}\n\n`);
-    
+
     // Add client to broadcast list
     sseClients.add(res);
-    
+
     // Remove client on disconnect
     req.on('close', () => {
         sseClients.delete(res);
@@ -638,9 +640,9 @@ async function startServer() {
     try {
         console.log('[INFO] Starting Baileys WhatsApp server...');
         console.log('[INFO] Auth directory:', AUTH_DIR);
-        
+
         await client.initialize();
-        
+
         app.listen(PORT, 'localhost', () => {
             console.log(`[INFO] Baileys server running on http://localhost:${PORT}`);
             console.log(`[INFO] QR Code page: http://localhost:${PORT}/qr/page`);

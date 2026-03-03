@@ -1,0 +1,323 @@
+diff --git a/app/services/reminder_config_service.py b/app/services/reminder_config_service.py
+index 3f6b5ef..ba76950 100644
+--- a/app/services/reminder_config_service.py
++++ b/app/services/reminder_config_service.py
+@@ -368,34 +368,34 @@ class ReminderConfigService:
+         self.save_config(config, scope_key)
+         logger.info("schedule_config_updated", scope=scope_key or self.get_current_scope())
+     
+-    def get_party_config(self, party_code: str) -> Optional[PartyConfig]:
++    def get_party_config(self, party_code: str, scope_key: Optional[str] = None) -> Optional[PartyConfig]:
+         """Get configuration for a specific party"""
+-        config = self.get_config()
++        config = self.get_config(scope_key)
+         return config.parties.get(party_code)
+     
+-    def update_party_config(self, party_code: str, party_config: PartyConfig):
++    def update_party_config(self, party_code: str, party_config: PartyConfig, scope_key: Optional[str] = None):
+         """Update configuration for a specific party"""
+-        config = self.get_config()
++        config = self.get_config(scope_key)
+         config.parties[party_code] = party_config
+-        self.save_config(config)
++        self.save_config(config, scope_key)
+         logger.info("party_config_updated", party_code=party_code, enabled=party_config.enabled)
+     
+-    def get_template(self, template_id: str) -> Optional[MessageTemplate]:
++    def get_template(self, template_id: str, scope_key: Optional[str] = None) -> Optional[MessageTemplate]:
+         """Get a specific template by ID"""
+-        config = self.get_config()
++        config = self.get_config(scope_key)
+         for template in config.templates:
+             if template.id == template_id:
+                 return template
+         return None
+     
+-    def get_all_templates(self) -> List[MessageTemplate]:
++    def get_all_templates(self, scope_key: Optional[str] = None) -> List[MessageTemplate]:
+         """Get all templates"""
+-        config = self.get_config()
++        config = self.get_config(scope_key)
+         return config.templates
+     
+-    def add_template(self, template: MessageTemplate):
++    def add_template(self, template: MessageTemplate, scope_key: Optional[str] = None):
+         """Add a new template"""
+-        config = self.get_config()
++        config = self.get_config(scope_key)
+         
+         # Check for duplicate ID
+         if any(t.id == template.id for t in config.templates):
+@@ -407,28 +407,28 @@ class ReminderConfigService:
+             raise ValueError(f"Maximum number of templates ({max_templates}) reached")
+         
+         config.templates.append(template)
+-        self.save_config(config)
++        self.save_config(config, scope_key)
+         logger.info("template_added", template_id=template.id, name=template.name)
+     
+-    def update_template(self, template_id: str, template: MessageTemplate):
++    def update_template(self, template_id: str, template: MessageTemplate, scope_key: Optional[str] = None):
+         """Update an existing template"""
+-        config = self.get_config()
++        config = self.get_config(scope_key)
+         
+         for i, existing in enumerate(config.templates):
+             if existing.id == template_id:
+                 config.templates[i] = template
+-                self.save_config(config)
++                self.save_config(config, scope_key)
+                 logger.info("template_updated", template_id=template_id)
+                 return
+         
+         raise ValueError(f"Template with ID '{template_id}' not found")
+     
+-    def delete_template(self, template_id: str):
++    def delete_template(self, template_id: str, scope_key: Optional[str] = None):
+         """Delete a template"""
+-        config = self.get_config()
++        config = self.get_config(scope_key)
+         
+         # Don't allow deleting the default template
+-        template = self.get_template(template_id)
++        template = self.get_template(template_id, scope_key)
+         if template and template.is_default:
+             raise ValueError("Cannot delete the default template")
+         
+@@ -438,34 +438,34 @@ class ReminderConfigService:
+         if config.active_template_id == template_id:
+             config.active_template_id = DEFAULT_TEMPLATE_ID
+         
+-        self.save_config(config)
++        self.save_config(config, scope_key)
+         logger.info("template_deleted", template_id=template_id)
+     
+-    def set_active_template(self, template_id: str):
++    def set_active_template(self, template_id: str, scope_key: Optional[str] = None):
+         """Set the active template"""
+-        config = self.get_config()
++        config = self.get_config(scope_key)
+         
+         if not any(t.id == template_id for t in config.templates):
+             raise ValueError(f"Template with ID '{template_id}' not found")
+         
+         config.active_template_id = template_id
+-        self.save_config(config)
++        self.save_config(config, scope_key)
+         logger.info("active_template_set", template_id=template_id)
+     
+-    def get_active_template(self) -> MessageTemplate:
++    def get_active_template(self, scope_key: Optional[str] = None) -> MessageTemplate:
+         """Get the currently active template"""
+-        config = self.get_config()
+-        template = self.get_template(config.active_template_id)
++        config = self.get_config(scope_key)
++        template = self.get_template(config.active_template_id, scope_key)
+         
+         if template is None:
+             # Fallback to default if active template not found
+-            template = self.get_template(DEFAULT_TEMPLATE_ID)
++            template = self.get_template(DEFAULT_TEMPLATE_ID, scope_key)
+         
+         return template
+     
+-    def set_default_template(self, template_id: str):
++    def set_default_template(self, template_id: str, scope_key: Optional[str] = None):
+         """Set a template as the default"""
+-        config = self.get_config()
++        config = self.get_config(scope_key)
+         
+         # Unset current default
+         for t in config.templates:
+@@ -479,7 +479,7 @@ class ReminderConfigService:
+         else:
+             raise ValueError(f"Template with ID '{template_id}' not found")
+         
+-        self.save_config(config)
++        self.save_config(config, scope_key)
+         logger.info("default_template_set", template_id=template_id)
+ 
+ 
+diff --git a/app/services/reminder_service.py b/app/services/reminder_service.py
+index 1485069..fa81c70 100644
+--- a/app/services/reminder_service.py
++++ b/app/services/reminder_service.py
+@@ -84,13 +84,13 @@ class ReminderService:
+         
+         return provider
+ 
+-    def get_snapshot_status(self) -> Dict[str, Any]:
++    def get_snapshot_status(self, company_id: str = "default") -> Dict[str, Any]:
+         """Return current snapshot metadata."""
+-        return self.snapshot_db.get_status()
++        return self.snapshot_db.get_status(company_id=company_id)
+ 
+-    def refresh_snapshot(self) -> Dict[str, Any]:
++    def refresh_snapshot(self, company_id: str = "default") -> Dict[str, Any]:
+         """Recompute and persist reminder snapshot on demand."""
+-        return self.snapshot_service.refresh_snapshot()
++        return self.snapshot_service.refresh_snapshot(company_id=company_id)
+ 
+     def get_eligible_parties_page(
+         self,
+@@ -103,9 +103,10 @@ class ReminderService:
+         sort_order: str = "desc",
+         offset: int = 0,
+         limit: int = 100,
++        company_id: str = "default",
+     ) -> Dict[str, Any]:
+         """Get paginated parties from snapshot with server-side filters/sorting."""
+-        snap_status = self.snapshot_db.get_status()
++        snap_status = self.snapshot_db.get_status(company_id=company_id)
+         current_hash = hashlib.sha256(
+             ((self.calculator.db.settings.BDS_FILE_PATH or "").encode("utf-8"))
+         ).hexdigest()
+@@ -135,8 +136,9 @@ class ReminderService:
+             sort_order=sort_order,
+             offset=max(0, int(offset)),
+             limit=max(1, int(limit)),
++            company_id=company_id,
+         )
+-        config = self.config_service.get_config()
++        config = self.config_service.get_config(scope_key=company_id)
+         currency = config.currency_symbol
+ 
+         items: List[PartyReminderInfo] = []
+@@ -171,7 +173,8 @@ class ReminderService:
+         min_amount_due: Decimal = Decimal("0.01"),
+         search: Optional[str] = None,
+         filter_by: str = "all",
+-        limit: int = 50
++        limit: int = 50,
++        company_id: str = "default",
+     ) -> List[PartyReminderInfo]:
+         """
+         Get all parties eligible for reminders (amount_due > 0)
+@@ -199,6 +202,7 @@ class ReminderService:
+             sort_order="desc",
+             offset=0,
+             limit=limit,
++            company_id=company_id,
+         )
+         parties = page["items"]
+         
+@@ -211,12 +215,12 @@ class ReminderService:
+         
+         return parties
+ 
+-    async def get_party_info(self, party_code: str) -> PartyReminderInfo:
++    async def get_party_info(self, party_code: str, company_id: str = "default") -> PartyReminderInfo:
+         """Get a single party reminder info payload by party code."""
+-        calculation = await self.calculator.calculate_for_party(party_code)
+-        customer = ledger_data_service.get_customer_info(party_code)
++        calculation = await self.calculator.calculate_for_party(party_code, company_id=company_id)
++        customer = ledger_data_service.get_customer_info(party_code, company_id=company_id)
+ 
+-        config = self.config_service.get_config()
++        config = self.config_service.get_config(scope_key=company_id)
+         currency = config.currency_symbol
+         party_config = config.parties.get(party_code)
+ 
+@@ -275,7 +279,7 @@ class ReminderService:
+         )
+ 
+         if needs_config_update:
+-            party_config = self.config_service.get_party_config(party_code)
++            party_config = self.config_service.get_party_config(party_code, scope_key=company_id)
+ 
+             if party_config is None:
+                 party_config = PartyConfig()
+@@ -292,10 +296,10 @@ class ReminderService:
+             if notes is not None:
+                 party_config.notes = notes
+ 
+-            self.config_service.update_party_config(party_code, party_config)
++            self.config_service.update_party_config(party_code, party_config, scope_key=company_id)
+         
+         if permanent_enabled is not None:
+-            self.snapshot_db.update_party_permanent_enabled(party_code, permanent_enabled)
++            self.snapshot_db.update_party_permanent_enabled(party_code, permanent_enabled, company_id=company_id)
+ 
+         # Re-fetch directly by code from snapshot first.
+         page = self.get_eligible_parties_page(
+@@ -307,12 +311,13 @@ class ReminderService:
+             sort_order="asc",
+             offset=0,
+             limit=5,
++            company_id=company_id,
+         )
+         party = next((p for p in page["items"] if p.code == party_code), None)
+         
+         if party is None:
+             # Fallback to direct per-party calculation if snapshot does not have it.
+-            party = await self.get_party_info(party_code)
++            party = await self.get_party_info(party_code, company_id=company_id)
+         
+         # Update temp selection if provided
+         if temp_enabled is not None:
+@@ -320,21 +325,22 @@ class ReminderService:
+         
+         return party
+     
+-    async def generate_ledger_pdf(self, party_code: str) -> bytes:
++    async def generate_ledger_pdf(self, party_code: str, company_id: str = "default") -> bytes:
+         """
+         Generate ledger PDF for a party
+         
+         Args:
+             party_code: Party code
++            company_id: Company ID
+             
+         Returns:
+             PDF bytes
+         """
+-        logger.info("generating_ledger_pdf", party_code=party_code)
++        logger.info("generating_ledger_pdf", party_code=party_code, company_id=company_id)
+         
+         try:
+             # Generate ledger report
+-            report = ledger_data_service.generate_ledger_report(party_code)
++            report = ledger_data_service.generate_ledger_report(party_code, company_id=company_id)
+             
+             # Generate PDF to disk, then read bytes for API response.
+             pdf_path = self._ledger_dir / f"ledger_{party_code}_preview.pdf"
+@@ -395,7 +401,7 @@ class ReminderService:
+ 
+         try:
+             config = self.config_service.get_config(scope_key=company_id)
+-            template = self.config_service.get_template(template_id) # needs scope update?
++            template = self.config_service.get_template(template_id, scope_key=company_id) # needs scope update?
+             template = next((t for t in config.templates if t.id == template_id), None)
+             if template is None:
+                 raise ValueError(f"Template '{template_id}' not found")
+@@ -758,15 +764,16 @@ class ReminderService:
+                 error=str(e)
+             )
+     
+-    async def get_stats(self) -> ReminderStats:
++    async def get_stats(self, company_id: str = "default") -> ReminderStats:
+         """Get reminder system statistics"""
+-        snap = self.snapshot_db.get_status()
++        snap = self.snapshot_db.get_status(company_id=company_id)
+         page = self.get_eligible_parties_page(
+             min_amount_due=Decimal("0.01"),
+             include_zero=False,
+             filter_by="all",
+             offset=0,
+             limit=100000,
++            company_id=company_id,
+         )
+         eligible_parties = page["items"]
+         enabled_count = sum(1 for p in eligible_parties if p.permanent_enabled)
+diff --git a/app/services/scheduler_service.py b/app/services/scheduler_service.py
+index a02c15b..a45c388 100644
+--- a/app/services/scheduler_service.py
++++ b/app/services/scheduler_service.py
+@@ -5,6 +5,7 @@ Manages scheduled reminder jobs using APScheduler.
+ """
+ import os
+ from datetime import datetime, timedelta
++from pathlib import Path
+ from typing import Optional
+ 
+ import structlog

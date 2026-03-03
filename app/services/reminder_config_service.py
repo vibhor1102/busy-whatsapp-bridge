@@ -368,34 +368,34 @@ class ReminderConfigService:
         self.save_config(config, scope_key)
         logger.info("schedule_config_updated", scope=scope_key or self.get_current_scope())
     
-    def get_party_config(self, party_code: str) -> Optional[PartyConfig]:
+    def get_party_config(self, party_code: str, scope_key: Optional[str] = None) -> Optional[PartyConfig]:
         """Get configuration for a specific party"""
-        config = self.get_config()
+        config = self.get_config(scope_key)
         return config.parties.get(party_code)
     
-    def update_party_config(self, party_code: str, party_config: PartyConfig):
+    def update_party_config(self, party_code: str, party_config: PartyConfig, scope_key: Optional[str] = None):
         """Update configuration for a specific party"""
-        config = self.get_config()
+        config = self.get_config(scope_key)
         config.parties[party_code] = party_config
-        self.save_config(config)
+        self.save_config(config, scope_key)
         logger.info("party_config_updated", party_code=party_code, enabled=party_config.enabled)
     
-    def get_template(self, template_id: str) -> Optional[MessageTemplate]:
+    def get_template(self, template_id: str, scope_key: Optional[str] = None) -> Optional[MessageTemplate]:
         """Get a specific template by ID"""
-        config = self.get_config()
+        config = self.get_config(scope_key)
         for template in config.templates:
             if template.id == template_id:
                 return template
         return None
     
-    def get_all_templates(self) -> List[MessageTemplate]:
+    def get_all_templates(self, scope_key: Optional[str] = None) -> List[MessageTemplate]:
         """Get all templates"""
-        config = self.get_config()
+        config = self.get_config(scope_key)
         return config.templates
     
-    def add_template(self, template: MessageTemplate):
+    def add_template(self, template: MessageTemplate, scope_key: Optional[str] = None):
         """Add a new template"""
-        config = self.get_config()
+        config = self.get_config(scope_key)
         
         # Check for duplicate ID
         if any(t.id == template.id for t in config.templates):
@@ -407,28 +407,28 @@ class ReminderConfigService:
             raise ValueError(f"Maximum number of templates ({max_templates}) reached")
         
         config.templates.append(template)
-        self.save_config(config)
+        self.save_config(config, scope_key)
         logger.info("template_added", template_id=template.id, name=template.name)
     
-    def update_template(self, template_id: str, template: MessageTemplate):
+    def update_template(self, template_id: str, template: MessageTemplate, scope_key: Optional[str] = None):
         """Update an existing template"""
-        config = self.get_config()
+        config = self.get_config(scope_key)
         
         for i, existing in enumerate(config.templates):
             if existing.id == template_id:
                 config.templates[i] = template
-                self.save_config(config)
+                self.save_config(config, scope_key)
                 logger.info("template_updated", template_id=template_id)
                 return
         
         raise ValueError(f"Template with ID '{template_id}' not found")
     
-    def delete_template(self, template_id: str):
+    def delete_template(self, template_id: str, scope_key: Optional[str] = None):
         """Delete a template"""
-        config = self.get_config()
+        config = self.get_config(scope_key)
         
         # Don't allow deleting the default template
-        template = self.get_template(template_id)
+        template = self.get_template(template_id, scope_key)
         if template and template.is_default:
             raise ValueError("Cannot delete the default template")
         
@@ -438,34 +438,34 @@ class ReminderConfigService:
         if config.active_template_id == template_id:
             config.active_template_id = DEFAULT_TEMPLATE_ID
         
-        self.save_config(config)
+        self.save_config(config, scope_key)
         logger.info("template_deleted", template_id=template_id)
     
-    def set_active_template(self, template_id: str):
+    def set_active_template(self, template_id: str, scope_key: Optional[str] = None):
         """Set the active template"""
-        config = self.get_config()
+        config = self.get_config(scope_key)
         
         if not any(t.id == template_id for t in config.templates):
             raise ValueError(f"Template with ID '{template_id}' not found")
         
         config.active_template_id = template_id
-        self.save_config(config)
+        self.save_config(config, scope_key)
         logger.info("active_template_set", template_id=template_id)
     
-    def get_active_template(self) -> MessageTemplate:
+    def get_active_template(self, scope_key: Optional[str] = None) -> MessageTemplate:
         """Get the currently active template"""
-        config = self.get_config()
-        template = self.get_template(config.active_template_id)
+        config = self.get_config(scope_key)
+        template = self.get_template(config.active_template_id, scope_key)
         
         if template is None:
             # Fallback to default if active template not found
-            template = self.get_template(DEFAULT_TEMPLATE_ID)
+            template = self.get_template(DEFAULT_TEMPLATE_ID, scope_key)
         
         return template
     
-    def set_default_template(self, template_id: str):
+    def set_default_template(self, template_id: str, scope_key: Optional[str] = None):
         """Set a template as the default"""
-        config = self.get_config()
+        config = self.get_config(scope_key)
         
         # Unset current default
         for t in config.templates:
@@ -479,7 +479,7 @@ class ReminderConfigService:
         else:
             raise ValueError(f"Template with ID '{template_id}' not found")
         
-        self.save_config(config)
+        self.save_config(config, scope_key)
         logger.info("default_template_set", template_id=template_id)
 
 

@@ -84,13 +84,13 @@ class ReminderService:
         
         return provider
 
-    def get_snapshot_status(self) -> Dict[str, Any]:
+    def get_snapshot_status(self, company_id: str = "default") -> Dict[str, Any]:
         """Return current snapshot metadata."""
-        return self.snapshot_db.get_status()
+        return self.snapshot_db.get_status(company_id=company_id)
 
-    def refresh_snapshot(self) -> Dict[str, Any]:
+    def refresh_snapshot(self, company_id: str = "default") -> Dict[str, Any]:
         """Recompute and persist reminder snapshot on demand."""
-        return self.snapshot_service.refresh_snapshot()
+        return self.snapshot_service.refresh_snapshot(company_id=company_id)
 
     def get_eligible_parties_page(
         self,
@@ -103,9 +103,10 @@ class ReminderService:
         sort_order: str = "desc",
         offset: int = 0,
         limit: int = 100,
+        company_id: str = "default",
     ) -> Dict[str, Any]:
         """Get paginated parties from snapshot with server-side filters/sorting."""
-        snap_status = self.snapshot_db.get_status()
+        snap_status = self.snapshot_db.get_status(company_id=company_id)
         current_hash = hashlib.sha256(
             ((self.calculator.db.settings.BDS_FILE_PATH or "").encode("utf-8"))
         ).hexdigest()
@@ -135,8 +136,9 @@ class ReminderService:
             sort_order=sort_order,
             offset=max(0, int(offset)),
             limit=max(1, int(limit)),
+            company_id=company_id,
         )
-        config = self.config_service.get_config()
+        config = self.config_service.get_config(scope_key=company_id)
         currency = config.currency_symbol
 
         items: List[PartyReminderInfo] = []
@@ -171,7 +173,8 @@ class ReminderService:
         min_amount_due: Decimal = Decimal("0.01"),
         search: Optional[str] = None,
         filter_by: str = "all",
-        limit: int = 50
+        limit: int = 50,
+        company_id: str = "default",
     ) -> List[PartyReminderInfo]:
         """
         Get all parties eligible for reminders (amount_due > 0)
@@ -199,6 +202,7 @@ class ReminderService:
             sort_order="desc",
             offset=0,
             limit=limit,
+            company_id=company_id,
         )
         parties = page["items"]
         
@@ -211,12 +215,12 @@ class ReminderService:
         
         return parties
 
-    async def get_party_info(self, party_code: str) -> PartyReminderInfo:
+    async def get_party_info(self, party_code: str, company_id: str = "default") -> PartyReminderInfo:
         """Get a single party reminder info payload by party code."""
-        calculation = await self.calculator.calculate_for_party(party_code)
-        customer = ledger_data_service.get_customer_info(party_code)
+        calculation = await self.calculator.calculate_for_party(party_code, company_id=company_id)
+        customer = ledger_data_service.get_customer_info(party_code, company_id=company_id)
 
-        config = self.config_service.get_config()
+        config = self.config_service.get_config(scope_key=company_id)
         currency = config.currency_symbol
         party_config = config.parties.get(party_code)
 
@@ -275,7 +279,7 @@ class ReminderService:
         )
 
         if needs_config_update:
-            party_config = self.config_service.get_party_config(party_code)
+            party_config = self.config_service.get_party_config(party_code, scope_key=company_id)
 
             if party_config is None:
                 party_config = PartyConfig()
@@ -292,10 +296,10 @@ class ReminderService:
             if notes is not None:
                 party_config.notes = notes
 
-            self.config_service.update_party_config(party_code, party_config)
+            self.config_service.update_party_config(party_code, party_config, scope_key=company_id)
         
         if permanent_enabled is not None:
-            self.snapshot_db.update_party_permanent_enabled(party_code, permanent_enabled)
+            self.snapshot_db.update_party_permanent_enabled(party_code, permanent_enabled, company_id=company_id)
 
         # Re-fetch directly by code from snapshot first.
         page = self.get_eligible_parties_page(
@@ -307,12 +311,13 @@ class ReminderService:
             sort_order="asc",
             offset=0,
             limit=5,
+            company_id=company_id,
         )
         party = next((p for p in page["items"] if p.code == party_code), None)
         
         if party is None:
             # Fallback to direct per-party calculation if snapshot does not have it.
-            party = await self.get_party_info(party_code)
+            party = await self.get_party_info(party_code, company_id=company_id)
         
         # Update temp selection if provided
         if temp_enabled is not None:
@@ -320,21 +325,22 @@ class ReminderService:
         
         return party
     
-    async def generate_ledger_pdf(self, party_code: str) -> bytes:
+    async def generate_ledger_pdf(self, party_code: str, company_id: str = "default") -> bytes:
         """
         Generate ledger PDF for a party
         
         Args:
             party_code: Party code
+            company_id: Company ID
             
         Returns:
             PDF bytes
         """
-        logger.info("generating_ledger_pdf", party_code=party_code)
+        logger.info("generating_ledger_pdf", party_code=party_code, company_id=company_id)
         
         try:
             # Generate ledger report
-            report = ledger_data_service.generate_ledger_report(party_code)
+            report = ledger_data_service.generate_ledger_report(party_code, company_id=company_id)
             
             # Generate PDF to disk, then read bytes for API response.
             pdf_path = self._ledger_dir / f"ledger_{party_code}_preview.pdf"
@@ -395,7 +401,7 @@ class ReminderService:
 
         try:
             config = self.config_service.get_config(scope_key=company_id)
-            template = self.config_service.get_template(template_id) # needs scope update?
+            template = self.config_service.get_template(template_id, scope_key=company_id) # needs scope update?
             template = next((t for t in config.templates if t.id == template_id), None)
             if template is None:
                 raise ValueError(f"Template '{template_id}' not found")
@@ -758,15 +764,16 @@ class ReminderService:
                 error=str(e)
             )
     
-    async def get_stats(self) -> ReminderStats:
+    async def get_stats(self, company_id: str = "default") -> ReminderStats:
         """Get reminder system statistics"""
-        snap = self.snapshot_db.get_status()
+        snap = self.snapshot_db.get_status(company_id=company_id)
         page = self.get_eligible_parties_page(
             min_amount_due=Decimal("0.01"),
             include_zero=False,
             filter_by="all",
             offset=0,
             limit=100000,
+            company_id=company_id,
         )
         eligible_parties = page["items"]
         enabled_count = sum(1 for p in eligible_parties if p.permanent_enabled)

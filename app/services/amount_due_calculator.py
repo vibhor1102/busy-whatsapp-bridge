@@ -210,8 +210,7 @@ class AmountDueCalculator:
         stack = list(seeds)
         while stack:
             cur = stack.pop()
-            if cur in all_group_codes:
-                continue
+            all_group_codes.add(cur)
             stack.extend(by_parent.get(cur, []))
 
         resolved = sorted(all_group_codes)
