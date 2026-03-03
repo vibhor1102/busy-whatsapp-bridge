@@ -18,6 +18,7 @@ class CompanyDatabase(BaseModel):
     """Specific company database configuration."""
     bds_file_path: str = ""
     bds_password: str = "ILoveMyINDIA"
+    company_name: Optional[str] = None
 
 
 class DatabaseSettings(BaseModel):

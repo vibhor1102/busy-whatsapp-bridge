@@ -271,10 +271,9 @@ app/
 ## Configuration
 
 Configuration stored in `%APPDATA%\BusyWhatsappBridge\conf.json`:
-- `database.bds_file_path` - Path to Busy .bds database file
-- `database.bds_password` - Database password
-- `whatsapp.provider` - Provider: baileys (default), meta, webhook, evolution
-- `whatsapp.meta_*` - Meta Business API credentials
+- **[NEW]** `database.companies` - Dictionary mapping sequential IDs (e.g. `database_1`, `database_2`) to `{ bds_file_path, bds_password, company_name }`.
+- `X-Company-Id` HTTP header is **required** on backend API requests to route to the correct DB.
+- `whatsapp.provider` - Provider: baileys (default)
 - `baileys.server_url` - Baileys Node.js server URL (default: http://localhost:3001)
 - `baileys.enabled` - Enable Baileys integration (true/false)
 - `server.debug` - Enable debug mode (true/false)

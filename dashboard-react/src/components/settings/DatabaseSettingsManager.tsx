@@ -7,7 +7,8 @@ import {
     FolderSearch,
     AlertCircle,
     Building2,
-    KeyRound
+    KeyRound,
+    Wand2
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { toast } from 'sonner';
@@ -15,6 +16,7 @@ import { toast } from 'sonner';
 interface CompanyConfig {
     bds_file_path: string;
     bds_password?: string;
+    company_name?: string;
 }
 
 interface DatabaseSettingsManagerProps {
@@ -23,9 +25,8 @@ interface DatabaseSettingsManagerProps {
 }
 
 export function DatabaseSettingsManager({ companies, onChange }: DatabaseSettingsManagerProps) {
-    const [newCompanyId, setNewCompanyId] = useState('');
-    const [isAdding, setIsAdding] = useState(false);
     const [isBrowsingFile, setIsBrowsingFile] = useState<string | null>(null);
+    const [isAutoDetecting, setIsAutoDetecting] = useState(false);
 
     const handleUpdateCompany = (id: string, field: keyof CompanyConfig, value: string) => {
         onChange({
@@ -38,13 +39,11 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
     };
 
     const handleRemoveCompany = (id: string) => {
-        // Prevent removing the last company
         if (Object.keys(companies).length <= 1) {
             toast.error('You must have at least one database configuration');
             return;
         }
 
-        // Warn if removing the active company
         if (id === api.getCompanyId()) {
             toast.warning('You are removing your currently active database connection');
         }
@@ -54,29 +53,63 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
         onChange(newCompanies);
     };
 
-    const handleAddCompany = () => {
-        const id = newCompanyId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    const getNextDatabaseId = () => {
+        let maxId = 0;
+        Object.keys(companies).forEach(id => {
+            const match = id.match(/^database_(\d+)$/);
+            if (match) {
+                maxId = Math.max(maxId, parseInt(match[1], 10));
+            }
+        });
+        return `database_${maxId + 1}`;
+    };
 
-        if (!id) {
-            toast.error('Company ID cannot be empty');
-            return;
+    const handleAutoDetect = async () => {
+        setIsAutoDetecting(true);
+        try {
+            const response = await api.browseSystemFile();
+            if (response.success && response.path) {
+                const toastId = toast.loading('Identifying database and extracting financial year...');
+                const identify = await api.identifyDatabase(response.path, 'ILoveMyINDIA');
+
+                if (identify.success) {
+                    const newId = getNextDatabaseId();
+
+                    onChange({
+                        ...companies,
+                        [newId]: {
+                            bds_file_path: response.path,
+                            bds_password: 'ILoveMyINDIA',
+                            company_name: identify.company_name || ''
+                        }
+                    });
+                    let successMsg = `Successfully configured database: ${identify.company_name || 'Database'}`;
+                    if (identify.financial_year) successMsg += ` (${identify.financial_year})`;
+                    toast.success(successMsg, { id: toastId });
+                } else {
+                    toast.error(`Auto-detect failed: ${identify.message}. Adding manually.`, { id: toastId });
+                    handleAddBlank(response.path);
+                }
+            } else if (response.message !== "No file selected") {
+                toast.error(`File browser failed: ${response.message}`);
+            }
+        } catch (err: any) {
+            toast.error(err.message || 'Error configuring database');
+        } finally {
+            setIsAutoDetecting(false);
         }
+    };
 
-        if (companies[id]) {
-            toast.error('A company with this ID already exists');
-            return;
-        }
-
+    const handleAddBlank = (defaultPath: string = '') => {
+        const id = getNextDatabaseId();
         onChange({
             ...companies,
             [id]: {
-                bds_file_path: '',
-                bds_password: 'ILoveMyINDIA'
+                bds_file_path: defaultPath,
+                bds_password: 'ILoveMyINDIA',
+                company_name: ''
             }
         });
-
-        setNewCompanyId('');
-        setIsAdding(false);
     };
 
     const handleBrowseFile = async (id: string) => {
@@ -85,13 +118,12 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
             const response = await api.browseSystemFile();
             if (response.success && response.path) {
                 handleUpdateCompany(id, 'bds_file_path', response.path);
-                toast.success(`Selected file for ${id}`);
+                toast.success(`Selected file path updated`);
             } else if (response.message !== "No file selected") {
                 toast.error(`Failed to open file browser: ${response.message}`);
             }
         } catch (err: any) {
             toast.error(`Error opening file browser: ${err.message || 'Unknown error'}`);
-            console.error(err);
         } finally {
             setIsBrowsingFile(null);
         }
@@ -114,63 +146,31 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
                     </div>
                 </div>
 
-                <button
-                    onClick={() => setIsAdding(!isAdding)}
-                    className="btn-secondary text-xs py-1.5 px-3"
-                    type="button"
-                >
-                    <Plus className="w-3.5 h-3.5 mr-1" />
-                    Add Connection
-                </button>
-            </div>
-
-            <AnimatePresence>
-                {isAdding && (
-                    <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="mb-4 p-4 rounded-xl border border-dashed"
-                        style={{ borderColor: 'var(--border-default)', background: 'var(--bg-input)' }}
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => handleAddBlank()}
+                        className="btn-secondary text-xs py-1.5 px-3"
+                        type="button"
+                        disabled={isAutoDetecting}
                     >
-                        <div className="flex gap-3">
-                            <div className="flex-1">
-                                <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
-                                    New Company ID
-                                </label>
-                                <input
-                                    type="text"
-                                    value={newCompanyId}
-                                    onChange={(e) => setNewCompanyId(e.target.value)}
-                                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddCompany())}
-                                    placeholder="e.g. branch1"
-                                    className="input text-sm"
-                                    autoFocus
-                                />
-                                <p className="text-[10px] mt-1.5" style={{ color: 'var(--text-tertiary)' }}>
-                                    Alphanumeric characters, hyphens, and underscores only. No spaces.
-                                </p>
-                            </div>
-                            <div className="flex items-end gap-2">
-                                <button
-                                    onClick={() => setIsAdding(false)}
-                                    className="btn text-sm py-2 px-4"
-                                    type="button"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onClick={handleAddCompany}
-                                    className="btn-primary text-sm py-2 px-4"
-                                    type="button"
-                                >
-                                    Add Config
-                                </button>
-                            </div>
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+                        <Plus className="w-3.5 h-3.5 mr-1" />
+                        Manual Setup
+                    </button>
+                    <button
+                        onClick={handleAutoDetect}
+                        className="btn-primary text-xs py-1.5 px-3"
+                        type="button"
+                        disabled={isAutoDetecting}
+                    >
+                        {isAutoDetecting ? (
+                            <div className="w-3.5 h-3.5 mr-1 border-2 border-t-transparent border-current rounded-full animate-spin" />
+                        ) : (
+                            <Wand2 className="w-3.5 h-3.5 mr-1" />
+                        )}
+                        Auto Detect DB
+                    </button>
+                </div>
+            </div>
 
             <div className="space-y-4">
                 <AnimatePresence>
@@ -201,7 +201,14 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
                                     <div className="p-1.5 rounded-md" style={{ background: 'var(--bg-input)' }}>
                                         <Building2 className="w-4 h-4" style={{ color: 'var(--text-secondary)' }} />
                                     </div>
-                                    <h4 className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{id}</h4>
+                                    <h4 className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
+                                        {config.company_name || id}
+                                    </h4>
+                                    {config.company_name && (
+                                        <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-500 font-mono hidden sm:inline-block">
+                                            ID: {id}
+                                        </span>
+                                    )}
                                 </div>
 
                                 <button
@@ -215,6 +222,18 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                                <div className="md:col-span-4">
+                                    <label className="block text-xs font-medium mt-1 mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                                        Display Name (Optional)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={config.company_name || ''}
+                                        onChange={(e) => handleUpdateCompany(id, 'company_name', e.target.value)}
+                                        placeholder={id}
+                                        className="input text-sm"
+                                    />
+                                </div>
                                 <div className="md:col-span-8">
                                     <label className="block text-xs font-medium mt-1 mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                                         Busy Database File Path (.bds)
@@ -224,7 +243,7 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
                                             type="text"
                                             value={config.bds_file_path || ''}
                                             onChange={(e) => handleUpdateCompany(id, 'bds_file_path', e.target.value)}
-                                            placeholder="e.g. C:\Path\To\Your\Database.bds or \\Server\Folder\Database.bds"
+                                            placeholder="e.g. C:\Path\To\Your\Database.bds"
                                             className="input font-mono text-sm"
                                         />
                                         <button
@@ -259,7 +278,7 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
                                             value={config.bds_password || ''}
                                             onChange={(e) => handleUpdateCompany(id, 'bds_password', e.target.value)}
                                             placeholder="ILoveMyINDIA"
-                                            className="input pl-8"
+                                            className="input pl-8 text-sm"
                                         />
                                         <KeyRound className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                                     </div>
@@ -268,16 +287,17 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
                         </motion.div>
                     ))}
 
-                    {Object.keys(companies).length === 0 && !isAdding && (
+                    {Object.keys(companies).length === 0 && (
                         <div className="text-center py-8" style={{ color: 'var(--text-tertiary)' }}>
                             <Database className="w-8 h-8 mx-auto mb-2 opacity-30" />
                             <p className="text-sm">No database connections configured</p>
                             <button
                                 type="button"
-                                onClick={() => setIsAdding(true)}
+                                onClick={handleAutoDetect}
                                 className="btn-primary mt-4 py-1.5 px-4 text-xs mx-auto"
                             >
-                                Add One Now
+                                <Wand2 className="w-3.5 h-3.5 mr-1" />
+                                Auto Detect Now
                             </button>
                         </div>
                     )}

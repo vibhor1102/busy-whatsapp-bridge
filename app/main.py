@@ -272,13 +272,16 @@ async def get_companies():
     companies = []
     
     for company_id, company_config in app_settings.database.companies.items():
-        try:
-            # Try to get company name from database if available, otherwise just use company_id
-            company_info = ledger_data_service.get_company_info(company_id=company_id)
-            company_name = company_info.name if company_info.name != "Unknown Company" else f"Company ({company_id})"
-        except Exception as e:
-            logger.warning("get_company_name_failed", company_id=company_id, error=str(e))
-            company_name = f"Company ({company_id})"
+        company_name = getattr(company_config, 'company_name', None)
+        
+        if not company_name:
+            try:
+                # Try to get company name from database if available, otherwise just use company_id
+                company_info = ledger_data_service.get_company_info(company_id=company_id)
+                company_name = company_info.name if company_info.name != "Unknown Company" else f"Company ({company_id})"
+            except Exception as e:
+                logger.warning("get_company_name_failed", company_id=company_id, error=str(e))
+                company_name = f"Company ({company_id})"
             
         companies.append({
             "id": company_id,
@@ -970,25 +973,26 @@ async def get_config_file():
     """
     Get editable configuration values (safe fields only, no secrets).
     """
+    current_settings = get_settings()
     return {
         "content": {
             "whatsapp": {
-                "provider": settings.WHATSAPP_PROVIDER,
-                "default_country_code": settings.WHATSAPP_DEFAULT_COUNTRY_CODE,
+                "provider": current_settings.WHATSAPP_PROVIDER,
+                "default_country_code": current_settings.WHATSAPP_DEFAULT_COUNTRY_CODE,
                 # REMOVED: meta_webhook_configured - Meta Cloud API removed
             },
             "baileys": {
-                "server_url": settings.BAILEYS_SERVER_URL,
-                "enabled": settings.BAILEYS_ENABLED,
+                "server_url": current_settings.BAILEYS_SERVER_URL,
+                "enabled": current_settings.BAILEYS_ENABLED,
             },
             "logging": {
-                "level": settings.LOG_LEVEL,
+                "level": current_settings.LOG_LEVEL,
             },
             "database": {
-                "bds_file_path": settings.BDS_FILE_PATH,
+                "bds_file_path": current_settings.BDS_FILE_PATH,
                 "companies": {
-                    k: v.model_dump() for k, v in settings.database.companies.items()
-                } if hasattr(settings.database, 'companies') else {}
+                    k: v.model_dump() for k, v in current_settings.database.companies.items()
+                } if hasattr(current_settings.database, 'companies') else {}
             }
         },
         "config_meta": get_config_details(),
@@ -999,33 +1003,112 @@ async def get_config_file():
 async def browse_system_file():
     """
     Open a native OS file dialog to select a database file.
-    This bypasses browser security restrictions that hide actual paths.
+    Uses PowerShell to open the dialog, bypassing tkinter dependencies.
     """
     try:
-        import tkinter as tk
-        from tkinter import filedialog
+        import subprocess
         
-        # Create hidden root window
-        root = tk.Tk()
-        root.withdraw()
-        # Ensure it appears on top
-        root.attributes('-topmost', True)
+        ps_script = '''
+Function Get-FileName($initialDirectory)
+{
+    [System.Reflection.Assembly]::LoadWithPartialName("System.windows.forms") | Out-Null
+    $OpenFileDialog = New-Object System.Windows.Forms.OpenFileDialog
+    $OpenFileDialog.initialDirectory = $initialDirectory
+    $OpenFileDialog.filter = "Busy Database (*.bds)|*.bds|All Files (*.*)|*.*"
+    $OpenFileDialog.ShowDialog() | Out-Null
+    $OpenFileDialog.filename
+}
+Get-FileName -initialDirectory "C:\\"
+'''
         
-        file_path = filedialog.askopenfilename(
-            title="Select Busy Database (.bds)",
-            filetypes=[("Busy Database", "*.bds"), ("All Files", "*.*")]
+        result = subprocess.run(
+            ["powershell", "-Command", ps_script], 
+            capture_output=True, 
+            text=True, 
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         )
         
-        root.destroy()
+        file_path = result.stdout.strip()
         
         if file_path:
-            # Convert forward slashes to system-native slashes
             path = os.path.normpath(file_path)
             return {"path": path, "success": True}
+            
         return {"path": None, "success": False, "message": "No file selected"}
+        
     except Exception as e:
         logger.error("file_browser_failed", error=str(e))
-        return {"path": None, "success": False, "message": str(e)}
+        return {"path": None, "success": False, "message": f"Failed to open file browser: {str(e)}"}
+
+
+class DatabaseIdentifyRequest(BaseModel):
+    bds_file_path: str
+    bds_password: str = "ILoveMyINDIA"
+
+@app.post("/api/v1/system/identify-database", tags=["System"])
+async def identify_database(req: DatabaseIdentifyRequest):
+    """
+    Connect to a specified .bds file and extract the Company Name and Financial Year.
+    Generates a safe internal company_id based on this data.
+    """
+    try:
+        import pyodbc
+        import re
+        from datetime import datetime
+        
+        path = os.path.normpath(req.bds_file_path)
+        if not os.path.exists(path):
+            return {"success": False, "message": "File does not exist at specified path."}
+            
+        conn_str = (
+            f"DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};"
+            f"DBQ={path};"
+            f"PWD={req.bds_password};"
+            f"ExtendedAnsiSQL=1;"
+        )
+        
+        company_name = ""
+        fy_name = ""
+        
+        try:
+            # Short timeout so it doesn't hang forever on bad network paths
+            connection = pyodbc.connect(conn_str, timeout=10)
+            cursor = connection.cursor()
+            
+            # 1. Get Company Name
+            cursor.execute("SELECT C1 FROM Config WHERE RecType = 1")
+            row = cursor.fetchone()
+            if row and row[0]:
+                company_name = str(row[0]).strip()
+                
+            # 2. Get Financial Year
+            cursor.execute("SELECT C1, C2 FROM Config WHERE RecType = 2")
+            row = cursor.fetchone()
+            if row and row[0] and row[1]:
+                start_date = row[0]
+                end_date = row[1]
+                if hasattr(start_date, 'year') and hasattr(end_date, 'year'):
+                    if start_date.year == end_date.year:
+                        fy_name = str(start_date.year)
+                    else:
+                        fy_name = f"{start_date.year}-{str(end_date.year)[-2:]}"
+                else:
+                    fy_name = str(start_date)[:4]
+            
+            connection.close()
+            
+        except pyodbc.Error as e:
+            return {"success": False, "message": f"Database connection failed: {str(e)}"}
+            
+        return {
+            "success": True, 
+            "company_name": company_name,
+            "financial_year": fy_name
+        }
+        
+    except Exception as e:
+        logger.error("identify_database_failed", error=str(e))
+        return {"success": False, "message": str(e)}
 
 
 class ConfigUpdateRequest(BaseModel):

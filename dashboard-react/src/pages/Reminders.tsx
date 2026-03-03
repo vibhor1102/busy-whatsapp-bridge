@@ -440,33 +440,61 @@ export function Reminders() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
-            Payment Reminders
+      {/* Massive Company Context Selector */}
+      <div className="bg-white dark:bg-black w-full rounded-2xl border-2 shadow-sm overflow-hidden mb-8" style={{ borderColor: 'var(--brand-accent)' }}>
+        <div className="p-4 sm:p-6 text-center" style={{ background: 'var(--brand-soft)' }}>
+          <h2 className="text-xs sm:text-sm font-bold uppercase tracking-widest mb-3 sm:mb-4" style={{ color: 'var(--brand-accent)' }}>
+            Selected Company Database
           </h2>
-          <p className="text-sm mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
-            Send reminders with attached ledgers
-            {snapshotStatus?.has_snapshot && (
-              <> · Last refreshed {formatDateTime(snapshotStatus.last_refreshed_at || null)}</>
-            )}
-          </p>
 
-          {companies.length > 0 && (
-            <div className="mt-4 flex items-center gap-2 lg:hidden">
-              <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Active Company:</span>
+          {companies.length > 0 ? (
+            <div className="relative max-w-2xl mx-auto">
               <select
                 value={activeCompanyId}
                 onChange={(e) => { api.setCompanyId(e.target.value); window.location.reload(); }}
-                className="input py-1.5 px-3 text-sm font-medium w-auto border"
-                style={{ borderColor: 'var(--brand-accent)', color: 'var(--brand-accent)', background: 'var(--brand-soft)' }}
+                className="w-full appearance-none bg-white dark:bg-black text-xl sm:text-2xl md:text-3xl font-black py-4 sm:py-6 pl-6 sm:pl-8 pr-12 rounded-xl shadow-inner cursor-pointer hover:ring-2 hover:ring-opacity-50 transition-all focus:outline-none focus:ring-4 text-center"
+                style={{
+                  color: 'var(--text-primary)',
+                  border: '2px solid var(--border-default)',
+                  '--tw-ring-color': 'var(--brand-accent)'
+                } as any}
+                title="Switch Active Company"
               >
                 {companies.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
+                  <option key={c.id} value={c.id} className="text-lg py-2 font-medium">{c.name}</option>
                 ))}
               </select>
+              <div className="absolute right-4 sm:right-6 top-1/2 -translate-y-1/2 pointer-events-none">
+                <svg className="w-6 h-6 sm:w-8 sm:h-8 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </div>
+          ) : (
+            <div className="py-6 px-6 bg-white dark:bg-black w-full max-w-2xl mx-auto rounded-xl border-2 border-dashed" style={{ borderColor: 'var(--border-default)' }}>
+              <span className="text-lg sm:text-xl font-bold" style={{ color: 'var(--text-tertiary)' }}>No Companies Configured</span>
+              <p className="text-sm mt-2" style={{ color: 'var(--text-tertiary)' }}>Please add a company database in Settings.</p>
             </div>
           )}
+
+          <p className="text-xs sm:text-sm max-w-xl mx-auto mt-4 sm:mt-5 font-medium opacity-80" style={{ color: 'var(--text-secondary)' }}>
+            All templates, customers, and reminders below are securely isolated to the selected company. Switching will reload the configuration context.
+          </p>
+        </div>
+      </div>
+
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl sm:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+            Payment Reminders
+          </h2>
+          <p className="text-xs sm:text-sm mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+            Send reminders with attached ledgers
+            {snapshotStatus?.has_snapshot && (
+              <span className="hidden sm:inline"> · Last refreshed {formatDateTime(snapshotStatus.last_refreshed_at || null)}</span>
+            )}
+          </p>
         </div>
         <div className="text-right flex items-center gap-6">
           <div>

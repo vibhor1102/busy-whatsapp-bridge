@@ -307,6 +307,19 @@ class ApiService {
     return this.fetch('/system/browse-file');
   }
 
+  async identifyDatabase(bds_file_path: string, bds_password?: string): Promise<{
+    success: boolean;
+    company_id?: string;
+    company_name?: string;
+    financial_year?: string;
+    message?: string;
+  }> {
+    return this.fetch('/system/identify-database', {
+      method: 'POST',
+      body: { bds_file_path, bds_password: bds_password || 'ILoveMyINDIA' },
+    });
+  }
+
   // Settings
   async getSettings(): Promise<Settings> {
     return this.fetch('/settings');

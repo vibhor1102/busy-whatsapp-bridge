@@ -1,0 +1,29 @@
+2026-03-03 12:17:22 [info     ] message_queue_db_initialized   db_path=C:\Users\Vibhor\AppData\Roaming\BusyWhatsappBridge\data\messages.db
+{
+  "content": {
+    "whatsapp": {
+      "provider": "baileys",
+      "default_country_code": "91"
+    },
+    "baileys": {
+      "server_url": "http://localhost:3001",
+      "enabled": true
+    },
+    "logging": {
+      "level": "INFO"
+    },
+    "database": {
+      "bds_file_path": "C:\\Users\\Vibhor\\Desktop\\DATA\\COMP0012\\db12025.bds",
+      "companies": {
+        "ahf": {
+          "bds_file_path": "C:\\Users\\Vibhor\\Desktop\\DATA\\COMP0012\\db12025.bds",
+          "bds_password": "ILoveMyINDIA"
+        }
+      }
+    }
+  },
+  "config_meta": {
+    "effective_path": "C:\\Users\\Vibhor\\AppData\\Roaming\\BusyWhatsappBridge\\conf.json",
+    "config_exists": true
+  }
+}
