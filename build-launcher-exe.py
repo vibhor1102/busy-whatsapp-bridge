@@ -28,6 +28,9 @@ def main():
     print("This creates BusyWhatsappBridge.exe that users can double-click")
     print()
     
+    # Check for icon file
+    icon_file = script_dir / "app.ico"
+    
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--onefile",                    # Single EXE file
@@ -37,8 +40,12 @@ def main():
         "--workpath", "build-exe",
         "--specpath", "build-exe",
         "--clean",
-        str(script_dir / "Start-Gateway.py")
     ]
+    
+    if icon_file.exists():
+        cmd.extend(["--icon", str(icon_file)])
+    
+    cmd.append(str(script_dir / "Start-Gateway.py"))
     
     result = subprocess.run(cmd)
     

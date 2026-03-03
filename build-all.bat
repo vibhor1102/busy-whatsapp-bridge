@@ -22,7 +22,13 @@ SET "SCRIPT_DIR=%~dp0"
 cd /d "%SCRIPT_DIR%"
 
 REM Get version
-FOR /F "tokens=*" %%a IN ('python -c "from app.version import get_version; print(get_version())" 2^>nul') DO (
+SET "VENV_PYTHON=%SCRIPT_DIR%venv\Scripts\python.exe"
+IF NOT EXIST "%VENV_PYTHON%" (
+    echo [ERROR] Virtual environment not found! Run setup-bundled.bat first.
+    pause
+    exit /b 1
+)
+FOR /F "tokens=*" %%a IN ('"%VENV_PYTHON%" -c "from app.version import get_version; print(get_version())" 2^>nul') DO (
     SET "VERSION=%%a"
 )
 
@@ -90,7 +96,7 @@ IF NOT EXIST "build-launcher-exe.py" (
 )
 
 echo Running PyInstaller...
-python build-launcher-exe.py
+"%VENV_PYTHON%" build-launcher-exe.py
 
 IF NOT EXIST "BusyWhatsappBridge.exe" (
     echo.
@@ -172,4 +178,4 @@ IF EXIST "%INSTALLER_FILE%" (
 
 ENDLOCAL
 echo.
-pause
+pause

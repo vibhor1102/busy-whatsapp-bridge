@@ -94,3 +94,20 @@ baileys-server/node_modules/
 baileys-server/auth/
 baileys-server/*.log
 baileys-server/package-lock.json
+
+# Dashboard build artifacts (not the dist output)
+dashboard-react/node_modules/
+dashboard-react/build_errors.txt
+dashboard-react/build_output.txt
+dashboard-react/errors.txt
+dashboard-react/ts_errors.log
+
+# Temp/debug files
+config_tmp.txt
+out.json
+temp.patch
+pytest_output.txt
+test.pdf
+test_inflated.pdf
+verify_anti_detection.py
+Debug-Servers.py

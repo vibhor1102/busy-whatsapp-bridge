@@ -12,17 +12,6 @@
   "whatsapp": {
     "provider": "baileys",
     "default_country_code": "91"
-    // =============================================================================
-    // REMOVED: Meta, Evolution, and Webhook provider configurations
-    // Only Baileys is now available. These settings are kept for reference only.
-    // TODO: Re-add via Baileys integration when needed
-    // =============================================================================
-    // "meta_api_version": "v18.0",
-    // "meta_phone_number_id": null,
-    // "meta_access_token": null,
-    // "meta_business_id": null,
-    // "webhook_url": null,
-    // "webhook_auth_token": null
   },
   "baileys": {
     "server_url": "http://localhost:3001",

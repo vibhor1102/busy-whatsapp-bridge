@@ -40,12 +40,14 @@ echo.
 REM Verify required directories exist
 echo Checking prerequisites...
 
+SET "VENV_PYTHON=%SCRIPT_DIR%venv\Scripts\python.exe"
+
 IF NOT EXIST "app\" (
     echo [ERROR] app\ directory not found!
     exit /b 1
 )
 
-IF NOT EXIST "venv\Scripts\python.exe" (
+IF NOT EXIST "%VENV_PYTHON%" (
     echo [ERROR] Virtual environment not found!
     echo Please run setup-bundled.bat first.
     exit /b 1
@@ -54,6 +56,18 @@ IF NOT EXIST "venv\Scripts\python.exe" (
 IF NOT EXIST "python\python.exe" (
     echo [ERROR] Bundled Python not found!
     exit /b 1
+)
+
+IF NOT EXIST "baileys-server\node_modules" (
+    echo [INFO] Installing Baileys server dependencies...
+    cd baileys-server
+    call npm install
+    IF ERRORLEVEL 1 (
+        echo [ERROR] Failed to install Baileys dependencies!
+        exit /b 1
+    )
+    cd ..
+    echo [OK] Baileys dependencies installed
 )
 
 IF NOT EXIST "LICENSE" (
@@ -77,7 +91,7 @@ echo.
 
 REM Get version from app/version.py
 echo Detecting version...
-FOR /F "tokens=*" %%a IN ('python -c "from app.version import get_version; print(get_version())" 2^>nul') DO (
+FOR /F "tokens=*" %%a IN ('"%VENV_PYTHON%" -c "from app.version import get_version; print(get_version())" 2^>nul') DO (
     SET "VERSION=%%a"
 )
 
@@ -94,7 +108,7 @@ echo Building installer...
 echo This may take a few minutes...
 echo.
 
-"%ISCC%" "installer.iss"
+"%ISCC%" /DMyAppVersion=%VERSION% "installer.iss"
 
 IF ERRORLEVEL 1 (
     echo.

@@ -35,7 +35,7 @@ def stop_running_processes():
     # Stop Task Scheduler task
     try:
         subprocess.run(
-            ["schtasks", "/end", "/tn", "BusyWhatsappBridge"],
+            ["schtasks", "/end", "/tn", "BusyWhatsappBridge_AutoStart"],
             capture_output=True,
             timeout=5
         )
@@ -58,7 +58,7 @@ def remove_task_scheduler_entry():
     print("Removing Task Scheduler entry...")
     try:
         result = subprocess.run(
-            ["schtasks", "/delete", "/tn", "BusyWhatsappBridge", "/f"],
+            ["schtasks", "/delete", "/tn", "BusyWhatsappBridge_AutoStart", "/f"],
             capture_output=True,
             text=True,
             timeout=10
