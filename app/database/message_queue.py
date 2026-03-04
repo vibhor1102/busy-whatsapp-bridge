@@ -782,6 +782,29 @@ class MessageQueueDB:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    def prune_history(self, days: int = 90) -> int:
+        """Remove message history records older than specified days.
+        
+        Args:
+            days: Number of days to keep history for.
+            
+        Returns:
+            Number of records removed.
+        """
+        cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
+        
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM message_history WHERE completed_at < ?",
+                (cutoff_date,)
+            )
+            count = cursor.rowcount
+            conn.commit()
+            
+            if count > 0:
+                logger.info("history_pruned", records_removed=count, days_kept=days, cutoff=cutoff_date)
+            return count
+
 
 # Global instance
 message_db = MessageQueueDB()

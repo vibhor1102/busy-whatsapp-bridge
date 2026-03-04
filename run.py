@@ -150,11 +150,28 @@ def check_prerequisites() -> bool:
     baileys_dir = Path(__file__).parent / 'baileys-server'
     if not (baileys_dir / 'node_modules').exists():
         log('SYSTEM', 'Installing Baileys dependencies...', 'yellow')
-        result = subprocess.run(['npm', 'install'], cwd=baileys_dir, capture_output=True, text=True, timeout=120)
-        if result.returncode != 0:
-            log('SYSTEM', f'Failed to install Baileys deps: {result.stderr}', 'red')
+        try:
+            # Increase timeout to 5 minutes (300s) as npm install can be slow
+            result = subprocess.run(['npm', 'install'], cwd=baileys_dir, capture_output=True, text=True, timeout=300)
+            if result.returncode != 0:
+                error_msg = f"Failed to install Baileys dependencies.\n\nError: {result.stderr or result.stdout}\n\nPlease check your internet connection."
+                log('SYSTEM', f'ERROR: {error_msg}', 'red')
+                if sys.platform == 'win32':
+                    ctypes.windll.user32.MessageBoxW(0, error_msg, "Dependency Installation Error", 0x10) # 0x10 = MB_ICONERROR
+                return False
+            log('SYSTEM', 'Baileys dependencies installed', 'green')
+        except subprocess.TimeoutExpired:
+            error_msg = "Installation timed out. Please check your internet connection or run 'npm install' manually in 'baileys-server' folder."
+            log('SYSTEM', f'ERROR: {error_msg}', 'red')
+            if sys.platform == 'win32':
+                ctypes.windll.user32.MessageBoxW(0, error_msg, "Installation Timeout", 0x10)
             return False
-        log('SYSTEM', 'Baileys dependencies installed', 'green')
+        except Exception as e:
+            error_msg = f"Unexpected error during installation: {str(e)}"
+            log('SYSTEM', f'ERROR: {error_msg}', 'red')
+            if sys.platform == 'win32':
+                ctypes.windll.user32.MessageBoxW(0, error_msg, "Installation Error", 0x10)
+            return False
     
     # Check for conf.json in AppData without importing full app config in startup thread.
     config_file = get_config_file_path()

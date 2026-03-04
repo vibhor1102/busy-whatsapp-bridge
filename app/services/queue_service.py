@@ -25,6 +25,7 @@ class MessageQueueService:
     def __init__(self):
         self._processing = False
         self._worker_task: Optional[asyncio.Task] = None
+        self._last_prune_date: Optional[str] = None
 
     @staticmethod
     def _is_local_file_path(value: Optional[str]) -> bool:
@@ -278,7 +279,10 @@ class MessageQueueService:
         
         while self._processing:
             try:
-                # Process batch of messages
+                # 1. Prune history once a day
+                await self._check_prune_history()
+
+                # 2. Process batch of messages
                 processed = await self.process_queue_batch(batch_size=10)
                 
                 if processed == 0:
@@ -293,6 +297,21 @@ class MessageQueueService:
                 await asyncio.sleep(5)
         
         logger.info("message_queue_worker_stopped")
+
+    async def _check_prune_history(self):
+        """Check and run message history pruning once a day."""
+        today = datetime.now().strftime('%Y-%m-%d')
+        if self._last_prune_date == today:
+            return
+
+        try:
+            logger.info("scheduled_history_prune_start")
+            removed_count = message_db.prune_history(days=90)
+            self._last_prune_date = today
+            if removed_count > 0:
+                logger.info("scheduled_history_prune_complete", records_removed=removed_count)
+        except Exception as e:
+            logger.error("scheduled_history_prune_failed", error=str(e), exc_info=True)
     
     def start_worker(self):
         """Start the background worker."""
