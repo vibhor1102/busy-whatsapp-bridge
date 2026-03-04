@@ -114,3 +114,16 @@ test.pdf
 test_inflated.pdf
 verify_anti_detection.py
 Debug-Servers.py
+BusyWhatsappBridge.spec
+
+# Audit logs
+all_files.txt
+tracked_files.txt
+untracked_not_ignored.txt
+ignored_files.txt
+
+# Generic patterns for temp files
+*.tmp
+*.temp
+/test-*.pdf
+/invoice-*.pdf
