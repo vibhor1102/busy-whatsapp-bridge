@@ -36,6 +36,12 @@ Configuration stored in `%APPDATA%\BusyWhatsappBridge\conf.json`:
 - `baileys.enabled` - Enable Baileys integration (true/false)
 - `server.debug` - Enable debug mode (true/false)
 
+## Version Management
+
+- **Source of Truth:** `version.json` (root).
+- **Access:** `app/version.py` reads it dynamically.
+- **Builds:** Scripts use `app.version.get_version()`.
+
 ## Baileys (WhatsApp Web)
 
 Node.js bridge service (`baileys-server/`) provides WhatsApp Web integration via Baileys library.

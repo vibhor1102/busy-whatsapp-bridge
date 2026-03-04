@@ -35,8 +35,9 @@ project-root/
 ├── build-launcher-exe.py          ← PyInstaller build script
 ├── installer.iss                  ← Inno Setup installer config
 ├── app.ico                        ← Application icon
+├── version.json                   ← Single source of truth for version
 ├── app/                           ← Python backend (FastAPI)
-│   └── version.py                 ← Single source of truth for version
+│   └── version.py                 ← Dynamic version loader
 ├── dashboard-react/               ← React + TypeScript frontend
 │   ├── src/                       ← Source files (.tsx)
 │   └── dist/                      ← Built dashboard (production)
@@ -94,10 +95,11 @@ BusyWhatsappBridge-vX.X.X-Setup.exe  (~50-100 MB)
 ```
 
 ### Version Management
-- Single source of truth: `app/version.py`
-- `build-all.bat` & `build-installer.bat` read version dynamically
+- Single source of truth: `version.json` (root)
+- Loaded by: `app/version.py` (which other scripts import)
+- `build-all.bat` & `build-installer.bat` read version dynamically via `app.version.get_version()`
 - Version is passed to Inno Setup via `/DMyAppVersion=X.X.X`
-- To bump version: edit `app/version.py`, then rebuild
+- To bump version: edit `version.json`, then rebuild
 
 ---
 
@@ -151,7 +153,7 @@ If users see a "Smart App Control" block, they must perform a one-time trust:
 - `venv/` — Virtual environment with all pip packages
 - `run.py`, `Start-Gateway.py` — Launchers
 - `setup.py`, `uninstall.py` — Setup/cleanup scripts
-- Documentation: README, USER-GUIDE, INSTALL, CHANGELOG, LICENSE
+- Documentation: README, USER-GUIDE, INSTALL, LICENSE
 
 ---
 
@@ -169,9 +171,8 @@ If users see a "Smart App Control" block, they must perform a one-time trust:
 
 ## Release Process
 
-1. Update version in `app/version.py`
-2. Update `CHANGELOG.md`
-3. Run `.\build-all.bat`
+1. Update version in `version.json`
+2. Run `.\build-all.bat`
 4. Test installer on a clean machine
 5. Commit and tag: `git tag vX.X.X`
 6. Push: `git push origin main --tags`

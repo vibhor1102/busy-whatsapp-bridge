@@ -9,6 +9,8 @@ FastAPI-based middleware integrating Busy Accounting Software with WhatsApp prov
 
 **Stack:** Python 3.9+, FastAPI, Pydantic, pyodbc, structlog, pytest, Node.js 18+ (for Baileys), APScheduler (for reminders)
 
+**Documentation:** Detailed guides in `docs/` can be read anytime for full context.
+
 ---
 
 ## Environment Setup
@@ -71,7 +73,7 @@ source venv/Scripts/activate  # Git Bash
 
 ## Build System Guide
 
-Reference: `docs/BUILD_SYSTEM_GUIDE.md` - Complete Windows application build instructions.
+Reference: `docs/BUILD_SYSTEM_GUIDE.md` - Complete Windows application build instructions. Detailed technical docs are available in the `docs/` folder for reference.
 
 **Dashboard:** React 19 + TypeScript in `dashboard-react/` (not `dashboard/`)
 
@@ -277,6 +279,12 @@ Configuration stored in `%APPDATA%\BusyWhatsappBridge\conf.json`:
 - `baileys.server_url` - Baileys Node.js server URL (default: http://localhost:3001)
 - `baileys.enabled` - Enable Baileys integration (true/false)
 - `server.debug` - Enable debug mode (true/false)
+
+## Version Management
+
+- **Source of Truth:** `version.json` (root).
+- **Access:** `app/version.py` reads it dynamically.
+- **Builds:** Scripts use `app.version.get_version()`.
 
 ## Baileys (WhatsApp Web)
 
