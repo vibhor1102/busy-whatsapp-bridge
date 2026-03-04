@@ -11,7 +11,7 @@
   ; Read version from app/version.py if not passed via /D flag
   #define VersionFile FileOpen("app\version.py")
   #define VersionLine ""
-  #define MyAppVersion "1.0.0"
+  #define MyAppVersion "0.0.0-fallback"
   #if VersionFile
     #define VersionContent FileRead(VersionFile)
     ; Fallback: version will be set by build-installer.bat via /D flag

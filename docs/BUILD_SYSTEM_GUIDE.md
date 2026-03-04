@@ -81,15 +81,16 @@ copy Run-Dev.bat "%USERPROFILE%\Desktop\"
 .\build-all.bat
 ```
 
-### What It Does (4 Steps)
+### What It Does (5 Steps)
 1. **Builds dashboard** — `npm install` + `npm run build` in `dashboard-react/`
 2. **Builds EXE** — PyInstaller creates `BusyWhatsappBridge.exe` with app icon
-3. **Builds installer** — Passes version to Inno Setup, compiles `installer.iss`
-4. **Verifies output** — Confirms installer file exists and reports size
+3. **Signs EXE** — PowerShell script applies developer signature to the launcher
+4. **Builds installer** — Passes version to Inno Setup, compiles `installer.iss`
+5. **Signs installer** — Applies signature to the final setup EXE
 
 ### Output
 ```
-BusyWhatsappBridge-v1.0.0-Setup.exe  (~50-100 MB)
+BusyWhatsappBridge-vX.X.X-Setup.exe  (~50-100 MB)
 ```
 
 ### Version Management
@@ -97,6 +98,36 @@ BusyWhatsappBridge-v1.0.0-Setup.exe  (~50-100 MB)
 - `build-all.bat` & `build-installer.bat` read version dynamically
 - Version is passed to Inno Setup via `/DMyAppVersion=X.X.X`
 - To bump version: edit `app/version.py`, then rebuild
+
+---
+
+## Code Signing
+
+To bypass Microsoft Smart App Control and Windows Defender "Unknown Publisher" warnings, executables are self-signed with a developer certificate.
+
+### For Developers: Managing Certificates
+
+The build scripts handle signing automatically. To manage certificates manually:
+
+1.  **Generate Certificate**: Creates `vibhor1102-dev.pfx` (private) and `vibhor1102-dev.cer` (public).
+    ```powershell
+    powershell.exe -ExecutionPolicy Bypass -File scripts/manage-signing.ps1 -Action generate
+    ```
+2.  **Sign Files Manually**:
+    ```powershell
+    powershell.exe -ExecutionPolicy Bypass -File scripts/manage-signing.ps1 -Action sign -File "path/to/your.exe"
+    ```
+
+> [!CAUTION]
+> The `vibhor1102-dev.pfx` file contains your private key. **Do not share this file** or commit it to public repositories.
+
+### For Users: Trusting the Application
+
+If users see a "Smart App Control" block, they must perform a one-time trust:
+
+1.  Open the installer folder.
+2.  Right-click `scripts/trust-certificate.bat` and select **Run as Administrator**.
+3.  Once installed, run the setup EXE again.
 
 ---
 
@@ -142,6 +173,9 @@ BusyWhatsappBridge-v1.0.0-Setup.exe  (~50-100 MB)
 2. Update `CHANGELOG.md`
 3. Run `.\build-all.bat`
 4. Test installer on a clean machine
-5. Commit and tag: `git tag v1.0.0`
+5. Commit and tag: `git tag vX.X.X`
 6. Push: `git push origin main --tags`
-7. Create GitHub Release, attach the setup EXE
+7. Create GitHub Release, attach:
+    - `BusyWhatsappBridge-vX.X.X-Setup.exe` (The installer)
+    - `scripts/trust-certificate.bat` (For users to trust the app)
+    - `vibhor1102-dev.cer` (The public certificate required by the script)

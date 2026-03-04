@@ -33,8 +33,8 @@ FOR /F "tokens=*" %%a IN ('"%VENV_PYTHON%" -c "from app.version import get_versi
 )
 
 IF NOT DEFINED VERSION (
-    echo [WARNING] Could not detect version, using 0.0.1
-    SET "VERSION=0.0.1"
+    echo [WARNING] Could not detect version, using 0.0.0-fallback
+    SET "VERSION=0.0.0-fallback"
 )
 
 echo Building version: %VERSION%
@@ -170,6 +170,7 @@ IF EXIST "%INSTALLER_FILE%" (
     echo   [x] System tray icon
     echo   [x] Start Menu entry
     echo   [x] Uninstaller
+    echo   [x] Signed with developer certificate
     echo.
 ) ELSE (
     echo [ERROR] Output file not found!

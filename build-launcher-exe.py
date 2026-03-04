@@ -63,6 +63,19 @@ def main():
             print("  - Added to Desktop")
             print("  - Set to auto-start on login")
             print("\nNo Python installation required on user machine!")
+            
+            # Sign the EXE
+            print("\nSigning EXE...")
+            try:
+                subprocess.run([
+                    "powershell.exe", "-ExecutionPolicy", "Bypass", 
+                    "-File", str(script_dir / "scripts" / "manage-signing.ps1"), 
+                    "-Action", "sign", 
+                    "-File", str(exe_path)
+                ], check=True)
+            except subprocess.CalledProcessError:
+                print("Warning: Signing failed, but EXE was built successfully.")
+                
             return 0
     
     print("\nBuild failed!")

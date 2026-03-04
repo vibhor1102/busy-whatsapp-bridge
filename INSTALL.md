@@ -20,7 +20,7 @@
 
 ### Option 1: Installer (Recommended)
 
-1. Download `BusyWhatsappBridge-v1.0.0-Setup.exe` from [GitHub Releases](https://github.com/vibhor1102/busy-whatsapp-bridge/releases)
+1. Download `BusyWhatsappBridge-vX.X.X-Setup.exe` from [GitHub Releases](https://github.com/vibhor1102/busy-whatsapp-bridge/releases)
 2. Run the installer
 3. Choose installation options:
    - ☑ Create desktop shortcut (default: yes)

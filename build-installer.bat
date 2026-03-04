@@ -96,8 +96,8 @@ FOR /F "tokens=*" %%a IN ('"%VENV_PYTHON%" -c "from app.version import get_versi
 )
 
 IF NOT DEFINED VERSION (
-    echo [WARNING] Could not detect version, using 0.0.1
-    SET "VERSION=0.0.1"
+    echo [WARNING] Could not detect version, using 0.0.0-fallback
+    SET "VERSION=0.0.0-fallback"
 )
 
 echo [OK] Version: %VERSION%
@@ -148,6 +148,14 @@ IF EXIST "%INSTALLER_EXE%" (
     echo   2. Run it
     echo   3. Follow the installation wizard
     echo   4. Launch from Start Menu
+    echo.
+    
+    REM Sign the installer
+    echo Signing installer...
+    powershell.exe -ExecutionPolicy Bypass -File "scripts\manage-signing.ps1" -Action sign -File "%INSTALLER_EXE%"
+    IF ERRORLEVEL 1 (
+        echo [WARNING] Failed to sign installer, but it was created successfully.
+    )
     echo.
 ) ELSE (
     echo.

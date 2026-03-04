@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useSystemStore, selectIsBaileysConnected } from '../../stores/systemStore';
 import { useQueueStore } from '../../stores/queueStore';
+import { useDashboardStore } from '../../stores/dashboardStore';
 
 interface SidebarProps {
   collapsed: boolean;
@@ -170,7 +171,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
       {/* Footer Status */}
       <div
-        className="p-4 border-t"
+        className="p-4 border-t flex flex-col gap-3"
         style={{ borderColor: 'var(--border-default)' }}
       >
         <div className="flex items-center gap-2">
@@ -193,6 +194,15 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             )}
           </AnimatePresence>
         </div>
+
+        {/* Version Info */}
+        {!collapsed && (
+          <div className="px-1">
+            <p className="text-[10px] font-medium tracking-tight" style={{ color: 'var(--text-tertiary)', opacity: 0.6 }}>
+              VERSION {useDashboardStore.getState().stats?.system.version || '0.0.0'}
+            </p>
+          </div>
+        )}
       </div>
     </motion.aside>
   );

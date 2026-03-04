@@ -14,6 +14,7 @@ import {
   Activity,
 } from 'lucide-react';
 import { api } from '../services/api';
+import { useDashboardStore } from '../stores/dashboardStore';
 import { LoadingState } from '../components/ui/LoadingState';
 import { formatBytes } from '../utils/formatters';
 import { REFETCH_INTERVALS } from '../constants';
@@ -38,6 +39,7 @@ function getBarColor(percent: number): string {
 export function SystemControl() {
   const queryClient = useQueryClient();
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const version = useDashboardStore(state => state.stats?.system.version) || '0.0.0';
 
   const { data: resources, isLoading } = useQuery({
     queryKey: ['system-resources'],
@@ -133,7 +135,7 @@ export function SystemControl() {
             System
           </h2>
           <p className="text-sm mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
-            Monitor resources and control services
+            Monitor resources and control services — v{version}
           </p>
         </div>
         <button

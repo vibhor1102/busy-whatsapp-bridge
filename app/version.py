@@ -1,12 +1,51 @@
-"""
-Version Management
+import json
+import os
+from pathlib import Path
 
-Single source of truth for application version.
-Used by setup.py, Inno Setup, and throughout the application.
-"""
+def _find_version_file():
+    """Find version.json in the project root."""
+    # Start from current file and go up
+    current = Path(__file__).resolve()
+    # Check parent (app/), grandparent (root/)
+    # Or just look for version.json in the current working directory or relative to this script
+    
+    # Strategy 1: Relative to this file (app/version.py -> ../version.json)
+    root_path = current.parent.parent
+    ver_file = root_path / "version.json"
+    if ver_file.exists():
+        return ver_file
+        
+    # Strategy 2: Check CWD
+    ver_file = Path("version.json")
+    if ver_file.exists():
+        return ver_file
+        
+    return None
 
-__version__ = "1.0.0"
-__version_info__ = (1, 0, 0)
+def _load_version_data():
+    """Load version data from JSON."""
+    ver_file = _find_version_file()
+    if ver_file:
+        try:
+            with open(ver_file, 'r') as f:
+                return json.load(f)
+        except:
+            pass
+    return {"version": "0.0.0-fallback"} # Fallback
+
+_data = _load_version_data()
+
+__version__ = _data.get("version", "0.0.0-fallback")
+
+def parse_version(version_str):
+    """Parse version string to tuple."""
+    try:
+        parts = version_str.split('.')
+        return tuple(int(p) for p in parts)
+    except:
+        return (0, 0, 0)
+
+__version_info__ = parse_version(__version__)
 
 # Compatibility aliases
 VERSION = __version__
@@ -21,12 +60,6 @@ def get_version():
 def get_version_info():
     """Get version tuple (major, minor, patch)."""
     return __version_info__
-
-
-def parse_version(version_str):
-    """Parse version string to tuple."""
-    parts = version_str.split('.')
-    return tuple(int(p) for p in parts)
 
 
 def compare_versions(v1, v2):

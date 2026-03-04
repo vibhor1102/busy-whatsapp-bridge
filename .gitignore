@@ -78,6 +78,9 @@ htmlcov/
 # Distribution / packaging
 *.manifest
 *.spec
+build-exe/
+*.pfx
+*.cer
 
 # Windows
 Thumbs.db
