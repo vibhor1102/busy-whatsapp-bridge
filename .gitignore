@@ -79,6 +79,7 @@ htmlcov/
 *.manifest
 *.spec
 build-exe/
+release_dist/
 *.pfx
 *.cer
 

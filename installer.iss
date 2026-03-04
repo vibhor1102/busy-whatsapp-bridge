@@ -1,22 +1,11 @@
 ; Inno Setup Script for Busy Whatsapp Bridge
 ; This script creates a professional Windows installer
-; 
-; To compile:
-;   Option 1: Install Inno Setup, right-click this file → Compile
-;   Option 2: "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 ;
-; For versioned builds, pass /DMyAppVersion=X.X.X to ISCC
+; This file is called by build-all.bat which passes /DMyAppVersion=X.X.X
+; Do NOT compile this file directly — always use build-all.bat
 
 #ifndef MyAppVersion
-  ; Read version from app/version.py if not passed via /D flag
-  #define VersionFile FileOpen("app\version.py")
-  #define VersionLine ""
-  #define MyAppVersion "0.0.0-fallback"
-  #if VersionFile
-    #define VersionContent FileRead(VersionFile)
-    ; Fallback: version will be set by build-installer.bat via /D flag
-    #expr FileClose(VersionFile)
-  #endif
+  #define MyAppVersion "0.0.0"
 #endif
 
 #define MyAppName "Busy Whatsapp Bridge"
@@ -37,10 +26,10 @@ AppUpdatesURL={#MyAppURL}/releases
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=no
-LicenseFile=LICENSE
+LicenseFile=release_dist\LICENSE
 OutputDir=.
 OutputBaseFilename=BusyWhatsappBridge-v{#MyAppVersion}-Setup
-SetupIconFile=app.ico
+SetupIconFile=release_dist\app.ico
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -68,53 +57,9 @@ Name: "autostart"; Description: "Start automatically on Windows login"; GroupDes
 Name: "{app}"; Permissions: users-modify; Check: not IsAdminInstallMode
 
 [Files]
-; NOTE: Don't use "Flags: ignoreversion" on any shared system files
-
-; Main executable launcher
-Source: "BusyWhatsappBridge.exe"; DestDir: "{app}"; Flags: ignoreversion
-
-; Application source code
-Source: "app\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "__pycache__,*.pyc"
-
-; Production launcher and entry point
-Source: "run.py"; DestDir: "{app}"; Flags: ignoreversion
-Source: "Start-Gateway.py"; DestDir: "{app}"; Flags: ignoreversion
-
-; Baileys server (Node.js) - exclude auth dir and logs
-Source: "baileys-server\server.js"; DestDir: "{app}\baileys-server"; Flags: ignoreversion
-Source: "baileys-server\baileys-client.js"; DestDir: "{app}\baileys-server"; Flags: ignoreversion
-Source: "baileys-server\package.json"; DestDir: "{app}\baileys-server"; Flags: ignoreversion
-Source: "baileys-server\package-lock.json"; DestDir: "{app}\baileys-server"; Flags: ignoreversion
-Source: "baileys-server\node_modules\*"; DestDir: "{app}\baileys-server\node_modules"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-; Bundled Python runtime
-Source: "python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-; Virtual environment with all dependencies
-Source: "venv\*"; DestDir: "{app}\venv"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
-
-; Pre-built dashboard (dist only - not source code)
-Source: "dashboard-react\dist\*"; DestDir: "{app}\dashboard-react\dist"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-; Setup and management scripts
-Source: "setup.py"; DestDir: "{app}"; Flags: ignoreversion
-Source: "uninstall.py"; DestDir: "{app}"; Flags: ignoreversion
-Source: "manage-task.bat"; DestDir: "{app}"; Flags: ignoreversion
-Source: "configure-firewall.bat"; DestDir: "{app}"; Flags: ignoreversion
-
-; Application icon
-Source: "app.ico"; DestDir: "{app}"; Flags: ignoreversion
-
-; Configuration templates
-Source: "conf.json.example"; DestDir: "{app}"; Flags: ignoreversion
-Source: "requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
-
-; Documentation
-Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
-Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "USER-GUIDE.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "INSTALL.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
+; Use the staging directory prepared by build-all.bat
+; This automatically includes all files/folders gathered in Step 2.5
+Source: "release_dist\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 ; Start Menu shortcuts

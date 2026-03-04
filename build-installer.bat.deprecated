@@ -91,13 +91,13 @@ echo.
 
 REM Get version from app/version.py
 echo Detecting version...
-FOR /F "tokens=*" %%a IN ('"%VENV_PYTHON%" -c "from app.version import get_version; print(get_version())" 2^>nul') DO (
-    SET "VERSION=%%a"
-)
+"%VENV_PYTHON%" -c "from app.version import get_version; print(get_version())" > "%TEMP%\busy_version.txt"
+SET /P VERSION=<"%TEMP%\busy_version.txt"
+DEL "%TEMP%\busy_version.txt"
 
 IF NOT DEFINED VERSION (
-    echo [WARNING] Could not detect version, using 0.0.0-fallback
-    SET "VERSION=0.0.0-fallback"
+    echo [WARNING] Could not detect version, using 0.0.0.0
+    SET "VERSION=0.0.0.0"
 )
 
 echo [OK] Version: %VERSION%

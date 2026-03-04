@@ -70,6 +70,9 @@ function Sign-File {
 
     Write-Host "Signing $File ..." -ForegroundColor Cyan
     
+    # Ensure necessary module is loaded
+    Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue
+    
     # Check if PFX exists
     if (-not (Test-Path $CertFile)) {
         Write-Host "PFX file not found. Generating first..." -ForegroundColor Yellow

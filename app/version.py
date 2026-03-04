@@ -31,11 +31,11 @@ def _load_version_data():
                 return json.load(f)
         except:
             pass
-    return {"version": "0.0.0-fallback"} # Fallback
+    return {"version": "0.0.0.0"} # Fallback for Inno Setup compatibility
 
 _data = _load_version_data()
 
-__version__ = _data.get("version", "0.0.0-fallback")
+__version__ = _data.get("version", "0.0.0.0")
 
 def parse_version(version_str):
     """Parse version string to tuple."""
