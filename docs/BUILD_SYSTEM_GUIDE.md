@@ -111,7 +111,7 @@ To bypass Microsoft Smart App Control and Windows Defender "Unknown Publisher" w
 
 The build scripts handle signing automatically. To manage certificates manually:
 
-1.  **Generate Certificate**: Creates `vibhor1102-dev.pfx` (private) and `vibhor1102-dev.cer` (public).
+1.  **Generate Certificate**: Creates `vibhor1102-dev.pfx` (private) and `vibhor1102-dev.cer` (public source used by the trust script).
     ```powershell
     powershell.exe -ExecutionPolicy Bypass -File scripts/manage-signing.ps1 -Action generate
     ```
@@ -180,5 +180,4 @@ Everything in `release_dist/`, which includes:
 6. Push: `git push origin main --tags`
 7. Create GitHub Release, attach:
     - `BusyWhatsappBridge-vX.X.X-Setup.exe` (The installer)
-    - `scripts/trust-certificate.bat` (For users to trust the app)
-    - `vibhor1102-dev.cer` (The public certificate required by the script)
+    - `scripts/trust-certificate.bat` (For users to trust the app; certificate is embedded)
