@@ -1173,6 +1173,8 @@ async def update_config_file(request: ConfigUpdateRequest):
     try:
         # Load current settings
         current_settings = load_settings()
+        existing_company_ids = set(current_settings.database.companies.keys())
+        newly_added_company_ids = set()
         
         # Update fields
         update_data = request.model_dump(exclude_unset=True)
@@ -1199,6 +1201,7 @@ async def update_config_file(request: ConfigUpdateRequest):
             for cid, config in companies_data.items():
                 if config.get('bds_file_path'):
                     config['bds_file_path'] = os.path.normpath(config['bds_file_path'])
+            newly_added_company_ids = set(companies_data.keys()) - existing_company_ids
             current_settings.database.companies = companies_data
         
         # Create backup
@@ -1211,6 +1214,11 @@ async def update_config_file(request: ConfigUpdateRequest):
         # Clear settings cache and refresh database connection
         get_settings.cache_clear()
         db.refresh_settings()
+
+        # Eagerly initialize reminder scopes for newly added companies.
+        # This guarantees starter templates are available immediately.
+        for company_id in newly_added_company_ids:
+            reminder_config_service.ensure_scope_initialized(company_id)
         
         return {"success": True, "message": "Settings saved and applied successfully."}
     except Exception as e:

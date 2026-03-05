@@ -89,6 +89,14 @@ class ReminderConfigService:
                 default_config = self._create_default_config()
                 self._save_config_to_file(default_config, config_path)
 
+    def ensure_scope_initialized(self, company_id: Optional[str]) -> str:
+        """
+        Ensure config exists for a company scope and return normalized scope key.
+        """
+        scope_key = compute_scope_key(company_id)
+        self._ensure_config_file(scope_key)
+        return scope_key
+
     def _attempt_migration(self, target_path: Path, scope_key: str) -> bool:
         """Attempt to migrate legacy config files to the new scoped path."""
         # 1. Check root configuration (oldest format)
@@ -137,41 +145,26 @@ class ReminderConfigService:
             DEFAULT_DELAY_BETWEEN_MESSAGES,
         )
         
-        # Templates now use {contact_phone} variable instead of hardcoded number
         default_templates = [
             MessageTemplate(
                 id="standard",
                 name="Standard Reminder",
-                description="Professional and courteous - for regular reminders",
-                content="Payment Reminder from {company_name}:\n\nDear {customer_name}, your outstanding balance is {currency_symbol}{amount_due}.\n\nPlease find your ledger statement attached for reference.\n\nFor any queries regarding this statement, please call or message us at {contact_phone}.\n\nThank you for your business.",
+                description="Professional and balanced reminder",
+                content="Dear {customer_name},\n\nThis is a reminder from {company_name} that your outstanding balance is {currency_symbol}{amount_due}.\n\nPlease arrange payment at your earliest convenience.\n\nThank you.",
                 is_default=True
             ),
             MessageTemplate(
-                id="gentle",
-                name="Gentle Nudge",
-                description="Soft and friendly - for first reminders",
-                content="This is a gentle reminder from {company_name}.\n\nHello {customer_name}, your pending payment of {currency_symbol}{amount_due} is awaiting settlement.\n\nYour complete account ledger is attached with this message.\n\nFor questions or clarifications, please contact us at {contact_phone}.\n\nWe appreciate your continued partnership.",
+                id="polite",
+                name="Polite Reminder",
+                description="Warm and friendly reminder",
+                content="Hello {customer_name} 😊\n\nGreetings from {company_name}.\n\nThis is a friendly reminder that {currency_symbol}{amount_due} is currently pending on your account.\n\nWe truly appreciate your support in clearing it when convenient.",
                 is_default=False
             ),
             MessageTemplate(
-                id="urgent",
-                name="Urgent Notice",
-                description="Direct and urgent - for overdue accounts",
-                content="Urgent Payment Notice from {company_name}:\n\nDear {customer_name}, please note that an amount of {currency_symbol}{amount_due} remains outstanding on your account.\n\nYour ledger statement is attached for your immediate review.\n\nPlease contact us at {contact_phone} for any queries regarding this matter.\n\nImmediate attention requested.",
-                is_default=False
-            ),
-            MessageTemplate(
-                id="first",
-                name="First Reminder",
-                description="Friendly first contact - for initial reminders",
-                content="Friendly reminder from {company_name}:\n\nHello {customer_name}, this is to inform you that your current outstanding balance is {currency_symbol}{amount_due}.\n\nPlease find your detailed ledger attached for your records.\n\nFor further enquiries, please call or message us at {contact_phone}.\n\nLooking forward to your prompt response.",
-                is_default=False
-            ),
-            MessageTemplate(
-                id="final",
-                name="Final Notice",
-                description="Firm final notice - for persistent delays",
-                content="Final Payment Notice from {company_name}:\n\nDear {customer_name}, this is a final reminder regarding your outstanding amount of {currency_symbol}{amount_due}.\n\nYour account ledger is attached for immediate review and action.\n\nPlease contact us urgently at {contact_phone} to discuss this matter.\n\nImmediate settlement required.",
+                id="firm",
+                name="Firm Reminder",
+                description="Firm reminder for overdue amounts",
+                content="Dear {customer_name},\n\nThis is an important payment reminder from {company_name}. ⚠️\n\nYour pending amount of {currency_symbol}{amount_due} is overdue.\n\nPlease prioritize settlement to avoid further follow-up.\n\nThank you for your prompt attention.",
                 is_default=False
             ),
         ]
@@ -566,4 +559,3 @@ class ReminderConfigService:
 
 # Global instance
 reminder_config_service = ReminderConfigService()
-
