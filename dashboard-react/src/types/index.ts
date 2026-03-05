@@ -225,16 +225,69 @@ export interface PaginatedPartyReminderResponse {
 export interface ReminderSession {
   session_id: string;
   state: string;
+  batch_id?: string;
   progress: {
     current: number;
     total: number;
+    sent?: number;
+    failed?: number;
     percentage: number;
   };
+  failure_breakdown?: Record<string, number>;
   metrics?: {
     duration_seconds: number;
     avg_delay_seconds?: number;
     typing_time_total?: number;
   };
+}
+
+export interface ReminderBatchSummary {
+  batch_id: string;
+  session_id?: string;
+  company_id: string;
+  template_id?: string;
+  sent_by?: string;
+  total_parties: number;
+  status: string;
+  queue_success_count: number;
+  queue_failed_count: number;
+  skipped_count: number;
+  delivery_accepted_count: number;
+  delivery_sent_count: number;
+  delivery_delivered_count: number;
+  delivery_read_count: number;
+  delivery_failed_count: number;
+  in_flight_count: number;
+  created_at?: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export interface ReminderBatchRecipient {
+  id: number;
+  batch_id: string;
+  party_code: string;
+  recipient_name?: string;
+  phone?: string;
+  queue_id?: number;
+  message_id?: string;
+  status: string;
+  queue_status: string;
+  delivery_status: string;
+  failure_stage?: string;
+  failure_code?: string;
+  failure_message?: string;
+  retry_count: number;
+  is_dead_letter: number;
+  amount_due?: string;
+  media_attached: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ReminderBatchReport {
+  batch: ReminderBatchSummary;
+  recipients: ReminderBatchRecipient[];
 }
 
 export interface AntiSpamConfig {

@@ -20,6 +20,8 @@ import type {
   SchedulerStatus,
   AntiSpamConfig,
   ReminderSession,
+  ReminderBatchReport,
+  ReminderBatchSummary,
   MetaWebhookStatus,
   BaileysUserInfo,
 } from '../types';
@@ -473,6 +475,25 @@ class ApiService {
 
   async stopSession(sessionId: string): Promise<void> {
     return this.fetch(`/reminders/sessions/${sessionId}/stop`, { method: 'POST' });
+  }
+
+  async getBatchReport(batchId: string): Promise<ReminderBatchReport> {
+    return this.fetch(`/reminders/batches/${batchId}/report`);
+  }
+
+  async getBatchFailures(
+    batchId: string,
+    params?: { failure_stage?: string; failure_code?: string }
+  ): Promise<{ items: any[]; total: number }> {
+    const queryParams = new URLSearchParams();
+    if (params?.failure_stage) queryParams.append('failure_stage', params.failure_stage);
+    if (params?.failure_code) queryParams.append('failure_code', params.failure_code);
+    const query = queryParams.toString();
+    return this.fetch(`/reminders/batches/${batchId}/failures${query ? `?${query}` : ''}`);
+  }
+
+  async listRecentBatches(limit: number = 20): Promise<{ items: ReminderBatchSummary[]; total: number; limit: number }> {
+    return this.fetch(`/reminders/batches/recent?limit=${limit}`);
   }
 
   // Payment Reminders - Templates

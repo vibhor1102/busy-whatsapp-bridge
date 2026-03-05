@@ -428,6 +428,51 @@ async def cancel_batch(batch_id: str):
     raise HTTPException(status_code=501, detail="Batch cancellation not yet implemented")
 
 
+@router.get("/batches/recent")
+async def list_recent_batches(limit: int = Query(20, ge=1, le=200)):
+    """List recent reminder batch reports."""
+    try:
+        batches = await reminder_service.list_recent_batches(limit=limit)
+        return {"items": batches, "total": len(batches), "limit": limit}
+    except Exception as e:
+        logger.error("list_recent_batches_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/batches/{batch_id}/report")
+async def get_batch_report(batch_id: str):
+    """Get reminder batch report summary with recipient details."""
+    try:
+        report = await reminder_service.get_batch_report(batch_id)
+        if not report:
+            raise HTTPException(status_code=404, detail="Batch report not found")
+        return report
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("get_batch_report_error", batch_id=batch_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/batches/{batch_id}/failures")
+async def get_batch_failures(
+    batch_id: str,
+    failure_stage: Optional[str] = Query(None),
+    failure_code: Optional[str] = Query(None),
+):
+    """Get failed recipients for a batch with optional filters."""
+    try:
+        rows = await reminder_service.get_batch_failures(
+            batch_id=batch_id,
+            failure_stage=failure_stage,
+            failure_code=failure_code,
+        )
+        return {"items": rows, "total": len(rows)}
+    except Exception as e:
+        logger.error("get_batch_failures_error", batch_id=batch_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================
 # Template Management Endpoints
 # ============================================
@@ -816,11 +861,18 @@ async def get_reminder_history(
         limit=limit,
         offset=offset,
     )
+    total = message_db.count_message_history(
+        source="payment_reminder",
+        status=status,
+        delivery_status=delivery_status,
+        from_time=from_time,
+        to_time=to_time,
+    )
     totals = message_db.get_message_counts_by_source(source="payment_reminder")
 
     return {
         "items": items,
-        "total": len(items),
+        "total": total,
         "limit": limit,
         "offset": offset,
         "counts": totals,

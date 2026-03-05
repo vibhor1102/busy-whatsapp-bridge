@@ -63,6 +63,19 @@ class ReminderService:
         self._ledger_dir.mkdir(parents=True, exist_ok=True)
         self._settings = get_settings()
 
+    @staticmethod
+    def _normalize_failure(reason: str) -> Dict[str, str]:
+        """Normalize arbitrary failure text to stable codes for reporting."""
+        text = (reason or "").strip()
+        key = text.lower().replace(" ", "_")
+        if "template" in key and "not_found" in key:
+            return {"failure_code": "template_not_found", "failure_message": text}
+        if "phone" in key and "no_" in key:
+            return {"failure_code": "no_phone_number", "failure_message": text}
+        if "ledger" in key or "pdf" in key:
+            return {"failure_code": "ledger_generation_failed", "failure_message": text}
+        return {"failure_code": "send_exception", "failure_message": text or "Unknown send exception"}
+
     def _resolve_delivery_provider(self, configured_provider: Optional[str]) -> str:
         """
         Resolve effective provider for reminder dispatch.
@@ -426,6 +439,8 @@ class ReminderService:
             
             if not session.metrics.start_time:
                 session.metrics.start_time = datetime.now()
+            session.metrics.total_messages = len(party_codes)
+            session.current_index = 0
 
             batch = ReminderBatch(
                 batch_id=batch_id,
@@ -433,6 +448,14 @@ class ReminderService:
                 party_count=len(party_codes),
                 parties=party_codes,
                 status=REMINDER_STATUS_SENDING
+            )
+            message_db.create_reminder_batch(
+                batch_id=batch_id,
+                session_id=session.session_id,
+                company_id=company_id,
+                template_id=template_id,
+                sent_by=sent_by,
+                total_parties=len(party_codes),
             )
 
             startup_delay_mins = anti_spam_service.calculate_startup_delay()
@@ -487,17 +510,49 @@ class ReminderService:
                         raise ValueError(f"Template '{effective_template_id}' not found")
 
                     calculation = await self.calculator.calculate_for_party(party_code, company_id=company_id)
-
-                    session.current_index = i
+                    message_db.upsert_reminder_batch_recipient(
+                        batch_id=batch_id,
+                        party_code=party_code,
+                        status="processing",
+                        queue_status="pending",
+                        delivery_status="unknown",
+                        amount_due=str(calculation.amount_due),
+                    )
 
                     if calculation.amount_due <= 0:
                         results[party_code] = {
                             "status": "skipped",
                             "reason": "amount_due_not_positive"
                         }
+                        message_db.upsert_reminder_batch_recipient(
+                            batch_id=batch_id,
+                            party_code=party_code,
+                            status="skipped",
+                            queue_status="skipped",
+                            failure_stage="validation",
+                            failure_code="amount_due_not_positive",
+                            failure_message="Amount due is not positive",
+                        )
+                        session.current_index = i + 1
                         continue
 
-                    pdf_bytes = await self.generate_ledger_pdf(party_code, company_id=company_id)
+                    try:
+                        pdf_bytes = await self.generate_ledger_pdf(party_code, company_id=company_id)
+                    except Exception as pdf_err:
+                        reason = self._normalize_failure(str(pdf_err))
+                        results[party_code] = {"status": "failed", "error": reason["failure_message"]}
+                        session.metrics.failed_count += 1
+                        session.current_index = i + 1
+                        message_db.upsert_reminder_batch_recipient(
+                            batch_id=batch_id,
+                            party_code=party_code,
+                            status="failed",
+                            queue_status="failed",
+                            failure_stage="ledger_pdf",
+                            failure_code=reason["failure_code"],
+                            failure_message=reason["failure_message"],
+                        )
+                        continue
 
                     if pdf_inflation_service._enabled:
                         pdf_path = str(self._ledger_dir / f"ledger_{party_code}_{batch_id}.pdf")
@@ -544,13 +599,15 @@ class ReminderService:
                                 party_code=party_code,
                             )
 
-                        message_db.enqueue_message(
+                        queue_id = message_db.enqueue_message(
                             phone=party_info.phone,
                             message=message,
                             pdf_url=media_ref,
                             file_name=file_name,
                             provider=provider_name,
-                            source="payment_reminder"
+                            source="payment_reminder",
+                            batch_id=batch_id,
+                            party_code=party_code,
                         )
 
                         results[party_code] = {
@@ -565,11 +622,37 @@ class ReminderService:
                             party_code=party_code,
                             batch_id=batch_id
                         )
+                        session.metrics.sent_count += 1
+                        message_db.upsert_reminder_batch_recipient(
+                            batch_id=batch_id,
+                            party_code=party_code,
+                            recipient_name=(getattr(party_info, "name", None)),
+                            phone=party_info.phone,
+                            queue_id=queue_id,
+                            status="queued",
+                            queue_status="queued",
+                            delivery_status="unknown",
+                            amount_due=str(calculation.amount_due),
+                            media_attached=bool(media_ref),
+                        )
                     else:
                         results[party_code] = {
                             "status": "failed",
                             "reason": "no_phone_number"
                         }
+                        session.metrics.failed_count += 1
+                        message_db.upsert_reminder_batch_recipient(
+                            batch_id=batch_id,
+                            party_code=party_code,
+                            recipient_name=(getattr(party_info, "name", None)),
+                            status="failed",
+                            queue_status="failed",
+                            failure_stage="validation",
+                            failure_code="no_phone_number",
+                            failure_message="Party has no phone number",
+                            amount_due=str(calculation.amount_due),
+                        )
+                    session.current_index = i + 1
 
                     if i < len(party_codes) - 1:
                         await asyncio.sleep(config.schedule.delay_between_messages)
@@ -585,6 +668,18 @@ class ReminderService:
                         "status": "failed",
                         "error": str(ex)
                     }
+                    session.metrics.failed_count += 1
+                    session.current_index = i + 1
+                    reason = self._normalize_failure(str(ex))
+                    message_db.upsert_reminder_batch_recipient(
+                        batch_id=batch_id,
+                        party_code=party_code,
+                        status="failed",
+                        queue_status="failed",
+                        failure_stage="render",
+                        failure_code=reason["failure_code"],
+                        failure_message=reason["failure_message"],
+                    )
 
             batch.status = REMINDER_STATUS_COMPLETED
             batch.results = results
@@ -592,6 +687,7 @@ class ReminderService:
 
             session.metrics.end_time = datetime.now()
             session.state = SessionState.COMPLETED
+            message_db.set_reminder_batch_status(batch_id, "completed")
 
             logger.info(
                 "reminders_batch_completed",
@@ -604,7 +700,7 @@ class ReminderService:
             )
 
             if anti_spam_service.get_config().send_session_reports:
-                await self._send_session_report(session)
+                await self._send_session_report(session, batch_id=batch_id)
 
             return {
                 "batch_id": batch_id,
@@ -612,6 +708,10 @@ class ReminderService:
             }
 
         except Exception as e:
+            if session:
+                session.state = SessionState.ERROR
+                session.metrics.end_time = datetime.now()
+            message_db.set_reminder_batch_status(batch_id, "failed")
             logger.error(
                 "send_reminders_failed",
                 batch_id=batch_id,
@@ -759,7 +859,46 @@ class ReminderService:
         Returns:
             Session status dict or None
         """
-        return anti_spam_service.get_session_summary(session_id)
+        summary = anti_spam_service.get_session_summary(session_id)
+        if not summary:
+            return None
+        batch_id = message_db.get_batch_id_for_session(session_id)
+        if not batch_id:
+            return summary
+        report = message_db.get_reminder_batch_report(batch_id)
+        if not report:
+            summary["batch_id"] = batch_id
+            return summary
+        reason_counts: Dict[str, int] = {}
+        for row in report["recipients"]:
+            if row.get("status") != "failed":
+                continue
+            key = row.get("failure_code") or row.get("failure_stage") or "unknown_failure"
+            reason_counts[key] = reason_counts.get(key, 0) + 1
+        summary["batch_id"] = batch_id
+        summary["failure_breakdown"] = reason_counts
+        return summary
+
+    async def get_batch_report(self, batch_id: str) -> Optional[Dict[str, Any]]:
+        """Get persisted batch report by batch ID."""
+        return message_db.get_reminder_batch_report(batch_id)
+
+    async def get_batch_failures(
+        self,
+        batch_id: str,
+        failure_stage: Optional[str] = None,
+        failure_code: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get failed recipients for a batch."""
+        return message_db.get_reminder_batch_failures(
+            batch_id=batch_id,
+            failure_stage=failure_stage,
+            failure_code=failure_code,
+        )
+
+    async def list_recent_batches(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """List recent reminder batches."""
+        return message_db.list_recent_reminder_batches(limit=limit)
     
     async def get_active_sessions(self) -> List[dict]:
         """Get all active reminder sessions.
@@ -771,7 +910,7 @@ class ReminderService:
         summaries = [anti_spam_service.get_session_summary(s.session_id) for s in sessions]
         return [s for s in summaries if s is not None]
     
-    async def _send_session_report(self, session: ReminderSession):
+    async def _send_session_report(self, session: ReminderSession, batch_id: Optional[str] = None):
         """Send session completion report to admin.
         
         Args:
@@ -785,6 +924,24 @@ class ReminderService:
                 logger.warning("session_report_no_admin_phone", session_id=session.session_id)
                 return
             
+            batch_report = message_db.get_reminder_batch_report(batch_id) if batch_id else None
+            queue_success = int(batch_report["batch"]["queue_success_count"]) if batch_report else session.metrics.sent_count
+            queue_failed = int(batch_report["batch"]["queue_failed_count"]) if batch_report else session.metrics.failed_count
+            delivered = int(batch_report["batch"]["delivery_delivered_count"]) if batch_report else 0
+            read_count = int(batch_report["batch"]["delivery_read_count"]) if batch_report else 0
+            failed_delivery = int(batch_report["batch"]["delivery_failed_count"]) if batch_report else 0
+            inflight = int(batch_report["batch"]["in_flight_count"]) if batch_report else 0
+
+            top_failure_reasons = []
+            if batch_report:
+                reason_counts: Dict[str, int] = {}
+                for row in batch_report["recipients"]:
+                    if row.get("status") != "failed":
+                        continue
+                    reason = row.get("failure_code") or row.get("failure_stage") or "unknown_failure"
+                    reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                top_failure_reasons = sorted(reason_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+
             # Format report message
             duration_mins = int(session.metrics.duration_seconds / 60)
             duration_secs = int(session.metrics.duration_seconds % 60)
@@ -793,14 +950,24 @@ class ReminderService:
 ━━━━━━━━━━━━━━━━━━━━━
 ⏱️ Duration: {duration_mins}m {duration_secs}s
 👥 Total: {session.metrics.total_messages} parties
-✅ Sent: {session.metrics.sent_count}
-❌ Failed: {session.metrics.failed_count}
+✅ Queued: {queue_success}
+❌ Queue Failed: {queue_failed}
+📬 Delivered: {delivered}
+👀 Read: {read_count}
+🚫 Delivery Failed: {failed_delivery}
+⏳ In Flight: {inflight}
 
 ⏱️ Anti-Spam Metrics:
 • Avg delay: {round(session.metrics.avg_delay_seconds, 1)}s
 • Typing simulation: {'ON' if config.typing_simulation else 'OFF'}
 • Total typing time: {int(session.metrics.typing_time_total)}s
 • Total reading time: {int(session.metrics.reading_time_total)}s"""
+            if top_failure_reasons:
+                report += "\n\n⚠️ Top Failure Reasons:"
+                for reason, count in top_failure_reasons:
+                    report += f"\n• {reason}: {count}"
+            if inflight > 0:
+                report += "\n\nℹ️ Note: Some messages are still in-flight; delivery updates may arrive later."
             
             # Add unsaved contacts info if any
             if session.metrics.unsaved_contacts:

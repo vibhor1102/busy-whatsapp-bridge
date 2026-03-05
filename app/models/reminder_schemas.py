@@ -349,3 +349,53 @@ class SchedulerControlRequest(BaseModel):
         ..., 
         description="Action to perform"
     )
+
+
+class ReminderBatchRecipientReport(BaseModel):
+    """Per-recipient report row for a reminder batch."""
+    party_code: str
+    recipient_name: Optional[str] = None
+    phone: Optional[str] = None
+    status: str
+    queue_status: str
+    delivery_status: str
+    failure_stage: Optional[str] = None
+    failure_code: Optional[str] = None
+    failure_message: Optional[str] = None
+    retry_count: int = 0
+    is_dead_letter: bool = False
+    queue_id: Optional[int] = None
+    message_id: Optional[str] = None
+    amount_due: Optional[str] = None
+    media_attached: bool = False
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class ReminderBatchSummaryReport(BaseModel):
+    """Batch-level report summary."""
+    batch_id: str
+    session_id: Optional[str] = None
+    company_id: str = "default"
+    template_id: Optional[str] = None
+    sent_by: Optional[str] = None
+    total_parties: int
+    status: str
+    queue_success_count: int = 0
+    queue_failed_count: int = 0
+    skipped_count: int = 0
+    delivery_accepted_count: int = 0
+    delivery_sent_count: int = 0
+    delivery_delivered_count: int = 0
+    delivery_read_count: int = 0
+    delivery_failed_count: int = 0
+    in_flight_count: int = 0
+    created_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+class ReminderBatchReportResponse(BaseModel):
+    """Batch report with summary and recipients."""
+    batch: Dict[str, Any]
+    recipients: List[Dict[str, Any]]

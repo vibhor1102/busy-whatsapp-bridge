@@ -55,7 +55,9 @@ class MessageQueueDB:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     sent_at TIMESTAMP,
                     message_id TEXT,
-                    source TEXT DEFAULT 'api'
+                    source TEXT DEFAULT 'api',
+                    batch_id TEXT,
+                    party_code TEXT
                 )
             """)
             
@@ -80,6 +82,8 @@ class MessageQueueDB:
                     read_at TIMESTAMP,
                     failed_at TIMESTAMP,
                     recipient_waid TEXT,
+                    batch_id TEXT,
+                    party_code TEXT,
                     created_at TIMESTAMP,
                     sent_at TIMESTAMP,
                     completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -102,6 +106,8 @@ class MessageQueueDB:
                     file_name TEXT,
                     provider TEXT,
                     source TEXT DEFAULT 'api',
+                    batch_id TEXT,
+                    party_code TEXT,
                     retry_count INTEGER,
                     final_error TEXT,
                     created_at TIMESTAMP,
@@ -109,6 +115,59 @@ class MessageQueueDB:
                     FOREIGN KEY (queue_id) REFERENCES message_queue(id)
                 )
             """)
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS reminder_batches (
+                    batch_id TEXT PRIMARY KEY,
+                    session_id TEXT,
+                    company_id TEXT DEFAULT 'default',
+                    template_id TEXT,
+                    sent_by TEXT DEFAULT 'manual',
+                    total_parties INTEGER DEFAULT 0,
+                    status TEXT DEFAULT 'sending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    started_at TIMESTAMP,
+                    completed_at TIMESTAMP,
+                    queue_success_count INTEGER DEFAULT 0,
+                    queue_failed_count INTEGER DEFAULT 0,
+                    skipped_count INTEGER DEFAULT 0,
+                    delivery_accepted_count INTEGER DEFAULT 0,
+                    delivery_sent_count INTEGER DEFAULT 0,
+                    delivery_delivered_count INTEGER DEFAULT 0,
+                    delivery_read_count INTEGER DEFAULT 0,
+                    delivery_failed_count INTEGER DEFAULT 0,
+                    in_flight_count INTEGER DEFAULT 0
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS reminder_batch_recipients (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    batch_id TEXT NOT NULL,
+                    party_code TEXT NOT NULL,
+                    recipient_name TEXT,
+                    phone TEXT,
+                    queue_id INTEGER,
+                    message_id TEXT,
+                    status TEXT DEFAULT 'pending',
+                    queue_status TEXT DEFAULT 'pending',
+                    delivery_status TEXT DEFAULT 'unknown',
+                    failure_stage TEXT,
+                    failure_code TEXT,
+                    failure_message TEXT,
+                    retry_count INTEGER DEFAULT 0,
+                    is_dead_letter INTEGER DEFAULT 0,
+                    amount_due TEXT,
+                    media_attached INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(batch_id, party_code),
+                    FOREIGN KEY (batch_id) REFERENCES reminder_batches(batch_id)
+                )
+                """
+            )
             
             # Indexes for performance
             conn.execute("""
@@ -126,11 +185,38 @@ class MessageQueueDB:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_history_message_id ON message_history(message_id)
             """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_reminder_batch_created_at ON reminder_batches(created_at)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_reminder_recipient_batch_id ON reminder_batch_recipients(batch_id)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_reminder_recipient_party_code ON reminder_batch_recipients(party_code)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_reminder_recipient_status ON reminder_batch_recipients(status)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_reminder_recipient_failure_stage ON reminder_batch_recipients(failure_stage)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_reminder_recipient_created_at ON reminder_batch_recipients(created_at)
+            """)
             
             conn.commit()
             self._run_migrations(conn)
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_history_source ON message_history(source)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_queue_batch_party ON message_queue(batch_id, party_code)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_history_batch_party ON message_history(batch_id, party_code)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_dead_letter_batch_party ON dead_letter_queue(batch_id, party_code)
             """)
             conn.commit()
             logger.info("message_queue_db_initialized", db_path=str(self.db_path))
@@ -177,6 +263,24 @@ class MessageQueueDB:
         if not self._has_column(conn, "dead_letter_queue", "file_name"):
             conn.execute("ALTER TABLE dead_letter_queue ADD COLUMN file_name TEXT")
             migrated = True
+        if not self._has_column(conn, "message_queue", "batch_id"):
+            conn.execute("ALTER TABLE message_queue ADD COLUMN batch_id TEXT")
+            migrated = True
+        if not self._has_column(conn, "message_queue", "party_code"):
+            conn.execute("ALTER TABLE message_queue ADD COLUMN party_code TEXT")
+            migrated = True
+        if not self._has_column(conn, "message_history", "batch_id"):
+            conn.execute("ALTER TABLE message_history ADD COLUMN batch_id TEXT")
+            migrated = True
+        if not self._has_column(conn, "message_history", "party_code"):
+            conn.execute("ALTER TABLE message_history ADD COLUMN party_code TEXT")
+            migrated = True
+        if not self._has_column(conn, "dead_letter_queue", "batch_id"):
+            conn.execute("ALTER TABLE dead_letter_queue ADD COLUMN batch_id TEXT")
+            migrated = True
+        if not self._has_column(conn, "dead_letter_queue", "party_code"):
+            conn.execute("ALTER TABLE dead_letter_queue ADD COLUMN party_code TEXT")
+            migrated = True
         if migrated:
             conn.commit()
             logger.info("message_queue_db_migrated")
@@ -190,6 +294,248 @@ class MessageQueueDB:
             yield conn
         finally:
             conn.close()
+
+    def create_reminder_batch(
+        self,
+        *,
+        batch_id: str,
+        session_id: Optional[str],
+        company_id: str,
+        template_id: str,
+        sent_by: str,
+        total_parties: int,
+    ) -> None:
+        """Create or replace reminder batch metadata row."""
+        now = datetime.now()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO reminder_batches
+                (batch_id, session_id, company_id, template_id, sent_by, total_parties, status, created_at, started_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'sending', ?, ?)
+                """,
+                (batch_id, session_id, company_id, template_id, sent_by, total_parties, now, now),
+            )
+            conn.commit()
+
+    def set_reminder_batch_status(self, batch_id: str, status: str) -> None:
+        """Update reminder batch status and completion timestamp."""
+        now = datetime.now()
+        completed_at = now if status in ("completed", "failed", "cancelled", "stopped") else None
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE reminder_batches
+                SET status = ?,
+                    completed_at = COALESCE(?, completed_at)
+                WHERE batch_id = ?
+                """,
+                (status, completed_at, batch_id),
+            )
+            self._refresh_reminder_batch_aggregates(conn, batch_id)
+            conn.commit()
+
+    def upsert_reminder_batch_recipient(
+        self,
+        *,
+        batch_id: str,
+        party_code: str,
+        recipient_name: Optional[str] = None,
+        phone: Optional[str] = None,
+        queue_id: Optional[int] = None,
+        message_id: Optional[str] = None,
+        status: Optional[str] = None,
+        queue_status: Optional[str] = None,
+        delivery_status: Optional[str] = None,
+        failure_stage: Optional[str] = None,
+        failure_code: Optional[str] = None,
+        failure_message: Optional[str] = None,
+        retry_count: Optional[int] = None,
+        is_dead_letter: Optional[bool] = None,
+        amount_due: Optional[str] = None,
+        media_attached: Optional[bool] = None,
+    ) -> None:
+        """Upsert per-recipient report row."""
+        now = datetime.now()
+        dead_letter = int(is_dead_letter) if is_dead_letter is not None else None
+        media = int(media_attached) if media_attached is not None else None
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO reminder_batch_recipients
+                (batch_id, party_code, recipient_name, phone, queue_id, message_id, status, queue_status, delivery_status,
+                 failure_stage, failure_code, failure_message, retry_count, is_dead_letter, amount_due, media_attached,
+                 created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, COALESCE(?, 0), ?, ?)
+                ON CONFLICT(batch_id, party_code) DO UPDATE SET
+                    recipient_name = COALESCE(excluded.recipient_name, reminder_batch_recipients.recipient_name),
+                    phone = COALESCE(excluded.phone, reminder_batch_recipients.phone),
+                    queue_id = COALESCE(excluded.queue_id, reminder_batch_recipients.queue_id),
+                    message_id = COALESCE(excluded.message_id, reminder_batch_recipients.message_id),
+                    status = COALESCE(excluded.status, reminder_batch_recipients.status),
+                    queue_status = COALESCE(excluded.queue_status, reminder_batch_recipients.queue_status),
+                    delivery_status = COALESCE(excluded.delivery_status, reminder_batch_recipients.delivery_status),
+                    failure_stage = COALESCE(excluded.failure_stage, reminder_batch_recipients.failure_stage),
+                    failure_code = COALESCE(excluded.failure_code, reminder_batch_recipients.failure_code),
+                    failure_message = COALESCE(excluded.failure_message, reminder_batch_recipients.failure_message),
+                    retry_count = COALESCE(excluded.retry_count, reminder_batch_recipients.retry_count),
+                    is_dead_letter = COALESCE(excluded.is_dead_letter, reminder_batch_recipients.is_dead_letter),
+                    amount_due = COALESCE(excluded.amount_due, reminder_batch_recipients.amount_due),
+                    media_attached = COALESCE(excluded.media_attached, reminder_batch_recipients.media_attached),
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    batch_id,
+                    party_code,
+                    recipient_name,
+                    phone,
+                    queue_id,
+                    message_id,
+                    status,
+                    queue_status,
+                    delivery_status,
+                    failure_stage,
+                    failure_code,
+                    failure_message,
+                    retry_count,
+                    dead_letter,
+                    amount_due,
+                    media,
+                    now,
+                    now,
+                ),
+            )
+            self._refresh_reminder_batch_aggregates(conn, batch_id)
+            conn.commit()
+
+    def _refresh_reminder_batch_aggregates(self, conn: sqlite3.Connection, batch_id: str) -> None:
+        """Recompute aggregate counters for a batch."""
+        cursor = conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN queue_status = 'queued' THEN 1 ELSE 0 END) AS queue_success_count,
+                SUM(CASE WHEN status = 'failed' AND queue_status != 'queued' THEN 1 ELSE 0 END) AS queue_failed_count,
+                SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped_count,
+                SUM(CASE WHEN delivery_status = 'accepted' THEN 1 ELSE 0 END) AS delivery_accepted_count,
+                SUM(CASE WHEN delivery_status = 'sent' THEN 1 ELSE 0 END) AS delivery_sent_count,
+                SUM(CASE WHEN delivery_status = 'delivered' THEN 1 ELSE 0 END) AS delivery_delivered_count,
+                SUM(CASE WHEN delivery_status = 'read' THEN 1 ELSE 0 END) AS delivery_read_count,
+                SUM(CASE WHEN delivery_status = 'failed' THEN 1 ELSE 0 END) AS delivery_failed_count,
+                SUM(
+                    CASE
+                        WHEN queue_status = 'queued' AND delivery_status IN ('unknown', 'accepted', 'sent')
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS in_flight_count
+            FROM reminder_batch_recipients
+            WHERE batch_id = ?
+            """,
+            (batch_id,),
+        )
+        row = cursor.fetchone()
+        conn.execute(
+            """
+            UPDATE reminder_batches
+            SET queue_success_count = COALESCE(?, 0),
+                queue_failed_count = COALESCE(?, 0),
+                skipped_count = COALESCE(?, 0),
+                delivery_accepted_count = COALESCE(?, 0),
+                delivery_sent_count = COALESCE(?, 0),
+                delivery_delivered_count = COALESCE(?, 0),
+                delivery_read_count = COALESCE(?, 0),
+                delivery_failed_count = COALESCE(?, 0),
+                in_flight_count = COALESCE(?, 0)
+            WHERE batch_id = ?
+            """,
+            (
+                row["queue_success_count"] if row else 0,
+                row["queue_failed_count"] if row else 0,
+                row["skipped_count"] if row else 0,
+                row["delivery_accepted_count"] if row else 0,
+                row["delivery_sent_count"] if row else 0,
+                row["delivery_delivered_count"] if row else 0,
+                row["delivery_read_count"] if row else 0,
+                row["delivery_failed_count"] if row else 0,
+                row["in_flight_count"] if row else 0,
+                batch_id,
+            ),
+        )
+
+    def get_reminder_batch_report(self, batch_id: str) -> Optional[Dict[str, Any]]:
+        """Return reminder batch report with summary and recipient rows."""
+        with self._get_connection() as conn:
+            self._refresh_reminder_batch_aggregates(conn, batch_id)
+            batch_row = conn.execute(
+                "SELECT * FROM reminder_batches WHERE batch_id = ?",
+                (batch_id,),
+            ).fetchone()
+            if not batch_row:
+                return None
+            recipient_rows = conn.execute(
+                """
+                SELECT * FROM reminder_batch_recipients
+                WHERE batch_id = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (batch_id,),
+            ).fetchall()
+            conn.commit()
+            return {
+                "batch": dict(batch_row),
+                "recipients": [dict(r) for r in recipient_rows],
+            }
+
+    def get_reminder_batch_failures(
+        self,
+        batch_id: str,
+        failure_stage: Optional[str] = None,
+        failure_code: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return failed recipients for a batch with optional filters."""
+        query = """
+            SELECT * FROM reminder_batch_recipients
+            WHERE batch_id = ? AND status = 'failed'
+        """
+        params: List[Any] = [batch_id]
+        if failure_stage:
+            query += " AND failure_stage = ?"
+            params.append(failure_stage)
+        if failure_code:
+            query += " AND failure_code = ?"
+            params.append(failure_code)
+        query += " ORDER BY updated_at DESC, id DESC"
+        with self._get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_recent_reminder_batches(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """List recent reminder batches."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM reminder_batches
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_batch_id_for_session(self, session_id: str) -> Optional[str]:
+        """Find the latest batch ID associated with a session."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT batch_id
+                FROM reminder_batches
+                WHERE session_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+            return str(row["batch_id"]) if row else None
     
     def enqueue_message(
         self,
@@ -198,17 +544,19 @@ class MessageQueueDB:
         pdf_url: Optional[str] = None,
         file_name: Optional[str] = None,
         provider: str = "baileys",
-        source: str = "api"
+        source: str = "api",
+        batch_id: Optional[str] = None,
+        party_code: Optional[str] = None,
     ) -> int:
         """Add a message to the queue."""
         with self._get_connection() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO message_queue 
-                (phone, message, pdf_url, file_name, provider, status, source, next_retry_at)
-                VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+                (phone, message, pdf_url, file_name, provider, status, source, next_retry_at, batch_id, party_code)
+                VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
                 """,
-                (phone, message, pdf_url, file_name, provider, source, datetime.now())
+                (phone, message, pdf_url, file_name, provider, source, datetime.now(), batch_id, party_code)
             )
             conn.commit()
             message_id = cursor.lastrowid
@@ -263,9 +611,9 @@ class MessageQueueDB:
                     INSERT INTO message_history 
                     (queue_id, phone, message, pdf_url, file_name, provider, source, status, 
                      retry_count, message_id, delivery_status, delivery_updated_at,
-                     delivered_at, read_at, failed_at, recipient_waid,
+                     delivered_at, read_at, failed_at, recipient_waid, batch_id, party_code,
                      created_at, sent_at, completed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         # sqlite3.Row behaves like a mapping but has no .get()
@@ -285,11 +633,47 @@ class MessageQueueDB:
                         (now if (delivery_status or "").strip().lower() == "read" else None),
                         (now if (delivery_status or "").strip().lower() == "failed" else None),
                         (resolved_phone.lstrip('+') if resolved_phone else None),
+                        (row['batch_id'] if 'batch_id' in row.keys() else None),
+                        (row['party_code'] if 'party_code' in row.keys() else None),
                         row['created_at'],
                         now,
                         now,
                     )
                 )
+                if (
+                    row["source"] == "payment_reminder"
+                    and row["batch_id"]
+                    and row["party_code"]
+                ):
+                    mapped_status = "sent" if (delivery_status or "").strip().lower() != "failed" else "failed"
+                    conn.execute(
+                        """
+                        UPDATE reminder_batch_recipients
+                        SET message_id = ?,
+                            phone = COALESCE(?, phone),
+                            status = ?,
+                            queue_status = 'queued',
+                            delivery_status = ?,
+                            failure_stage = CASE WHEN ? = 'failed' THEN 'provider_send' ELSE failure_stage END,
+                            failure_code = CASE WHEN ? = 'failed' THEN COALESCE(failure_code, 'provider_send_failed') ELSE failure_code END,
+                            failure_message = CASE WHEN ? = 'failed' THEN COALESCE(failure_message, 'Provider send returned failed status') ELSE failure_message END,
+                            updated_at = ?
+                        WHERE batch_id = ? AND party_code = ?
+                        """,
+                        (
+                            message_id,
+                            (resolved_phone or row["phone"]),
+                            mapped_status,
+                            (delivery_status or "unknown").strip().lower(),
+                            (delivery_status or "").strip().lower(),
+                            (delivery_status or "").strip().lower(),
+                            (delivery_status or "").strip().lower(),
+                            now,
+                            row["batch_id"],
+                            row["party_code"],
+                        ),
+                    )
+                    self._refresh_reminder_batch_aggregates(conn, row["batch_id"])
                 
                 # Remove from queue
                 conn.execute(
@@ -340,17 +724,47 @@ class MessageQueueDB:
                     """
                     INSERT INTO dead_letter_queue 
                     (queue_id, phone, message, pdf_url, file_name, provider, source, retry_count, 
-                     final_error, created_at, failed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     final_error, created_at, failed_at, batch_id, party_code)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         queue_id, msg_row['phone'], msg_row['message'],
                         msg_row['pdf_url'], (msg_row['file_name'] if 'file_name' in msg_row.keys() else None),
                         msg_row['provider'], (msg_row['source'] if 'source' in msg_row.keys() else 'api'),
                         new_retry_count, error_message,
-                        msg_row['created_at'], now
+                        msg_row['created_at'], now,
+                        (msg_row['batch_id'] if 'batch_id' in msg_row.keys() else None),
+                        (msg_row['party_code'] if 'party_code' in msg_row.keys() else None),
                     )
                 )
+                if (
+                    msg_row["source"] == "payment_reminder"
+                    and msg_row["batch_id"]
+                    and msg_row["party_code"]
+                ):
+                    conn.execute(
+                        """
+                        UPDATE reminder_batch_recipients
+                        SET status = 'failed',
+                            queue_status = 'failed',
+                            delivery_status = 'failed',
+                            failure_stage = 'dead_letter',
+                            failure_code = 'retry_exhausted',
+                            failure_message = ?,
+                            retry_count = ?,
+                            is_dead_letter = 1,
+                            updated_at = ?
+                        WHERE batch_id = ? AND party_code = ?
+                        """,
+                        (
+                            error_message,
+                            new_retry_count,
+                            now,
+                            msg_row["batch_id"],
+                            msg_row["party_code"],
+                        ),
+                    )
+                    self._refresh_reminder_batch_aggregates(conn, msg_row["batch_id"])
                 
                 # Remove from queue
                 conn.execute(
@@ -384,6 +798,31 @@ class MessageQueueDB:
                     """,
                     (new_retry_count, error_message, next_retry, now, queue_id)
                 )
+                msg_row = conn.execute(
+                    "SELECT source, batch_id, party_code FROM message_queue WHERE id = ?",
+                    (queue_id,),
+                ).fetchone()
+                if (
+                    msg_row
+                    and msg_row["source"] == "payment_reminder"
+                    and msg_row["batch_id"]
+                    and msg_row["party_code"]
+                ):
+                    conn.execute(
+                        """
+                        UPDATE reminder_batch_recipients
+                        SET status = 'failed',
+                            queue_status = 'retrying',
+                            failure_stage = 'provider_send',
+                            failure_code = 'provider_send_failed',
+                            failure_message = ?,
+                            retry_count = ?,
+                            updated_at = ?
+                        WHERE batch_id = ? AND party_code = ?
+                        """,
+                        (error_message, new_retry_count, now, msg_row["batch_id"], msg_row["party_code"]),
+                    )
+                    self._refresh_reminder_batch_aggregates(conn, msg_row["batch_id"])
                 
                 conn.commit()
                 logger.info(
@@ -478,6 +917,46 @@ class MessageQueueDB:
                     history_id,
                 ),
             )
+            history_row = conn.execute(
+                "SELECT batch_id, party_code FROM message_history WHERE id = ?",
+                (history_id,),
+            ).fetchone()
+            if (
+                history_row
+                and history_row["batch_id"]
+                and history_row["party_code"]
+            ):
+                failure_stage = "delivery_webhook" if normalized == "failed" else None
+                failure_code = "delivery_failed" if normalized == "failed" else None
+                conn.execute(
+                    """
+                    UPDATE reminder_batch_recipients
+                    SET status = ?,
+                        delivery_status = ?,
+                        failure_stage = COALESCE(?, failure_stage),
+                        failure_code = COALESCE(?, failure_code),
+                        failure_message = CASE
+                            WHEN ? IS NOT NULL THEN ?
+                            ELSE failure_message
+                        END,
+                        message_id = COALESCE(?, message_id),
+                        updated_at = ?
+                    WHERE batch_id = ? AND party_code = ?
+                    """,
+                    (
+                        final_status,
+                        normalized,
+                        failure_stage,
+                        failure_code,
+                        current_error,
+                        current_error,
+                        message_id,
+                        now,
+                        history_row["batch_id"],
+                        history_row["party_code"],
+                    ),
+                )
+                self._refresh_reminder_batch_aggregates(conn, history_row["batch_id"])
             conn.commit()
 
             logger.info(
@@ -552,6 +1031,40 @@ class MessageQueueDB:
                 normalized_rows.append(item)
             return normalized_rows
 
+    def count_message_history(
+        self,
+        phone: Optional[str] = None,
+        status: Optional[str] = None,
+        source: Optional[str] = None,
+        delivery_status: Optional[str] = None,
+        from_time: Optional[datetime] = None,
+        to_time: Optional[datetime] = None,
+    ) -> int:
+        """Count message history rows for pagination metadata."""
+        query = "SELECT COUNT(*) AS total FROM message_history WHERE 1=1"
+        params: List[Any] = []
+        if phone:
+            query += " AND phone LIKE ?"
+            params.append(f"%{phone}%")
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        if source:
+            query += " AND source = ?"
+            params.append(source)
+        if delivery_status:
+            query += " AND delivery_status = ?"
+            params.append(delivery_status)
+        if from_time:
+            query += " AND completed_at >= ?"
+            params.append(from_time)
+        if to_time:
+            query += " AND completed_at <= ?"
+            params.append(to_time)
+        with self._get_connection() as conn:
+            row = conn.execute(query, params).fetchone()
+            return int(row["total"] if row else 0)
+
     # REMOVED: Meta webhook methods - Meta Cloud API removed
     # These methods were used for Meta webhook processing
     # TODO: Re-add via Baileys integration when needed
@@ -591,13 +1104,15 @@ class MessageQueueDB:
                 """
                 INSERT INTO message_queue 
                 (phone, message, pdf_url, file_name, provider, status, retry_count, 
-                 next_retry_at, created_at, updated_at, source)
-                VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)
+                 next_retry_at, created_at, updated_at, source, batch_id, party_code)
+                VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row['phone'], row['message'], row['pdf_url'], (row['file_name'] if 'file_name' in row.keys() else None),
                     row['provider'], datetime.now(),
-                    row['created_at'], datetime.now(), (row['source'] if 'source' in row.keys() else 'api')
+                    row['created_at'], datetime.now(), (row['source'] if 'source' in row.keys() else 'api'),
+                    (row['batch_id'] if 'batch_id' in row.keys() else None),
+                    (row['party_code'] if 'party_code' in row.keys() else None),
                 )
             )
             

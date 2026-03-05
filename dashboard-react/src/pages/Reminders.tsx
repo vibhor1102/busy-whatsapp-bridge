@@ -30,7 +30,15 @@ import { getStatusDotColor } from '../utils/statusColors';
 import { formatCurrency, formatDateTime, formatDuration } from '../utils/formatters';
 import { REFETCH_INTERVALS, LIMITS, RETRY_DELAYS, POLLING } from '../constants';
 import { toast } from 'sonner';
-import type { MessageTemplate, ReminderSession, PartyReminderInfo, AntiSpamConfig, RefreshStats } from '../types';
+import type {
+  MessageTemplate,
+  ReminderSession,
+  PartyReminderInfo,
+  AntiSpamConfig,
+  RefreshStats,
+  ReminderBatchReport,
+  ReminderBatchRecipient
+} from '../types';
 
 // ─── Sub-Components ────────────────────────────────────
 
@@ -166,6 +174,91 @@ function SessionPanel({ session, onPause, onResume, onStop }: {
   );
 }
 
+function BatchReportPanel({
+  report,
+  failedOnly,
+  onToggleFailedOnly,
+  failureStage,
+  onFailureStageChange,
+}: {
+  report: ReminderBatchReport;
+  failedOnly: boolean;
+  onToggleFailedOnly: (value: boolean) => void;
+  failureStage: string;
+  onFailureStageChange: (value: string) => void;
+}) {
+  const summary = report.batch;
+  const rows = report.recipients.filter((row: ReminderBatchRecipient) => {
+    if (failedOnly && row.status !== 'failed') return false;
+    if (failureStage && row.failure_stage !== failureStage) return false;
+    return true;
+  });
+
+  return (
+    <div className="card p-5">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+          Batch Report {summary.batch_id}
+        </h3>
+        <div className="flex items-center gap-2">
+          <label className="text-xs flex items-center gap-1">
+            <input type="checkbox" checked={failedOnly} onChange={(e) => onToggleFailedOnly(e.target.checked)} />
+            Failed only
+          </label>
+          <select className="input text-xs max-w-[180px]" value={failureStage} onChange={(e) => onFailureStageChange(e.target.value)}>
+            <option value="">All stages</option>
+            <option value="validation">validation</option>
+            <option value="ledger_pdf">ledger_pdf</option>
+            <option value="render">render</option>
+            <option value="enqueue">enqueue</option>
+            <option value="provider_send">provider_send</option>
+            <option value="delivery_webhook">delivery_webhook</option>
+            <option value="dead_letter">dead_letter</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
+        <StatCard title="Queued" value={summary.queue_success_count} />
+        <StatCard title="Queue Failed" value={summary.queue_failed_count} />
+        <StatCard title="Delivered" value={summary.delivery_delivered_count} />
+        <StatCard title="Read" value={summary.delivery_read_count} />
+        <StatCard title="In Flight" value={summary.in_flight_count} />
+      </div>
+
+      <div className="max-h-72 overflow-auto rounded-lg border" style={{ borderColor: 'var(--border-default)' }}>
+        <table className="w-full text-xs">
+          <thead>
+            <tr>
+              <th className="p-2 text-left">Party</th>
+              <th className="p-2 text-left">Phone</th>
+              <th className="p-2 text-left">Status</th>
+              <th className="p-2 text-left">Failure Stage</th>
+              <th className="p-2 text-left">Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row: ReminderBatchRecipient) => (
+              <tr key={`${row.batch_id}-${row.party_code}`} className="border-t" style={{ borderColor: 'var(--border-default)' }}>
+                <td className="p-2">{row.party_code}</td>
+                <td className="p-2">{row.phone || '-'}</td>
+                <td className="p-2">{row.status}/{row.delivery_status}</td>
+                <td className="p-2">{row.failure_stage || '-'}</td>
+                <td className="p-2">{row.failure_code || row.failure_message || '-'}</td>
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr>
+                <td className="p-3 text-center" colSpan={5}>No records for selected filters.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // Toggle switch component
 function Toggle({ checked, onChange, label, description }: {
   checked: boolean;
@@ -204,6 +297,9 @@ export function Reminders() {
   const [filterBy, setFilterBy] = useState('all');
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionData, setSessionData] = useState<ReminderSession | null>(null);
+  const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
+  const [failedOnly, setFailedOnly] = useState(false);
+  const [failureStage, setFailureStage] = useState('');
   const [isTemplateEditorOpen, setIsTemplateEditorOpen] = useState(false);
   const [companies, setCompanies] = useState<CompanyInfo[]>([]);
   const activeCompanyId = api.getCompanyId();
@@ -297,6 +393,13 @@ export function Reminders() {
     placeholderData: keepPreviousData,
   });
 
+  const { data: batchReport } = useQuery({
+    queryKey: ['reminder-batch-report', activeBatchId],
+    queryFn: () => api.getBatchReport(activeBatchId!),
+    enabled: !!activeBatchId,
+    refetchInterval: POLLING.SESSION_INTERVAL,
+  });
+
   useEffect(() => {
     if (config) setConfig(config);
     if (templates) {
@@ -342,6 +445,9 @@ export function Reminders() {
 
         if (status) {
           setSessionData(status);
+          if (status.batch_id) {
+            setActiveBatchId(status.batch_id);
+          }
           if (['completed', 'stopped', 'error'].includes(status.state)) {
             sessionTimeoutRef.current = setTimeout(() => {
               if (isActive) {
@@ -397,6 +503,9 @@ export function Reminders() {
     onSuccess: (data) => {
       if (data.session_id) {
         setActiveSessionId(data.session_id);
+      }
+      if (data.batch_id) {
+        setActiveBatchId(data.batch_id);
       }
       toast.success('Reminders queued successfully');
     },
@@ -667,6 +776,16 @@ export function Reminders() {
             )
           }
         </AnimatePresence >
+
+        {batchReport && (
+          <BatchReportPanel
+            report={batchReport}
+            failedOnly={failedOnly}
+            onToggleFailedOnly={setFailedOnly}
+            failureStage={failureStage}
+            onFailureStageChange={setFailureStage}
+          />
+        )}
 
         {/* Template Selection */}
         < div className="card p-5" >

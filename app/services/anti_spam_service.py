@@ -470,7 +470,7 @@ class AntiSpamService:
                 "sent": session.metrics.sent_count,
                 "failed": session.metrics.failed_count,
                 "percentage": round(
-                    (session.current_index / session.metrics.total_messages * 100), 1
+                    (min(session.current_index, session.metrics.total_messages) / session.metrics.total_messages * 100), 1
                 ) if session.metrics.total_messages > 0 else 0
             },
             "metrics": {
