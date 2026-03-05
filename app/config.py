@@ -95,6 +95,29 @@ class Settings(BaseModel):
     baileys: BaileysSettings = Field(default_factory=BaileysSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     reminders: ReminderSettings = Field(default_factory=ReminderSettings)
+
+    def resolve_company_id(self, company_id: Optional[str] = None) -> str:
+        """
+        Resolve an effective company id for database-bound operations.
+
+        Behavior:
+        - Use requested id if it exists in configured companies.
+        - For missing/blank/default requests:
+          - Use legacy database path if present.
+          - Otherwise, fall back to the first configured company.
+        """
+        requested = (company_id or "default").strip() or "default"
+
+        if requested in self.database.companies:
+            return requested
+
+        if requested == "default":
+            if self.database.bds_file_path:
+                return "default"
+            if self.database.companies:
+                return next(iter(self.database.companies.keys()))
+
+        return requested
     
     @property
     def DEBUG(self) -> bool:
@@ -111,14 +134,16 @@ class Settings(BaseModel):
     @property
     def BDS_FILE_PATH(self) -> str:
         # Backward compatibility property; getting the path for 'default' company if it exists
-        if "default" in self.database.companies:
-            return self.database.companies["default"].bds_file_path
+        effective_company_id = self.resolve_company_id("default")
+        if effective_company_id in self.database.companies:
+            return self.database.companies[effective_company_id].bds_file_path
         return self.database.bds_file_path
     
     @property
     def BDS_PASSWORD(self) -> str:
-        if "default" in self.database.companies:
-            return self.database.companies["default"].bds_password
+        effective_company_id = self.resolve_company_id("default")
+        if effective_company_id in self.database.companies:
+            return self.database.companies[effective_company_id].bds_password
         return self.database.bds_password
     
     @property
@@ -199,6 +224,8 @@ class Settings(BaseModel):
     
     def get_database_connection_string(self, company_id: str = "default") -> str:
         """Generate ODBC connection string for MS Access for a specific company."""
+        company_id = self.resolve_company_id(company_id)
+
         # 1. Look in companies dictionary
         if company_id in self.database.companies:
             path = self.database.companies[company_id].bds_file_path
