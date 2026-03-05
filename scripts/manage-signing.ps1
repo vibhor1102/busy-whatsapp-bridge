@@ -14,6 +14,8 @@ param(
     [string]$File
 )
 
+$ErrorActionPreference = "Stop"
+
 $CertName = "vibhor1102 Developer"
 $CertFile = "vibhor1102-dev.pfx"
 $PublicCertFile = "vibhor1102-dev.cer"
@@ -70,9 +72,6 @@ function Sign-File {
 
     Write-Host "Signing $File ..." -ForegroundColor Cyan
     
-    # Ensure necessary module is loaded
-    Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue
-    
     # Check if PFX exists
     if (-not (Test-Path $CertFile)) {
         Write-Host "PFX file not found. Generating first..." -ForegroundColor Yellow
@@ -82,14 +81,21 @@ function Sign-File {
     # Load certificate from PFX
     $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CertFile, $Password, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
 
-    Set-AuthenticodeSignature -FilePath $File -Certificate $cert -HashAlgorithm SHA256 -TimestampServer "http://timestamp.digicert.com"
-    
+    $null = Set-AuthenticodeSignature -FilePath $File -Certificate $cert -HashAlgorithm SHA256 -TimestampServer "http://timestamp.digicert.com"
+
     $status = Get-AuthenticodeSignature -FilePath $File
+    if ($status.SignatureType -eq "None" -or -not $status.SignerCertificate) {
+        Write-Error "Signing failed: no signature embedded in file."
+        exit 1
+    }
+
     if ($status.Status -eq "Valid") {
         Write-Host "Successfully signed: $File" -ForegroundColor Green
+    } elseif ($status.Status -in @("UnknownError", "NotTrusted")) {
+        Write-Host "Signed with status: $($status.Status) (signature is present)." -ForegroundColor Yellow
     } else {
-        Write-Host "Signature check: $($status.Status)" -ForegroundColor Yellow
-        Write-Host "Note: Status might be 'UnknownError' until the certificate is added to Trusted Root."
+        Write-Error "Signing failed: status is '$($status.Status)'."
+        exit 1
     }
 }
 

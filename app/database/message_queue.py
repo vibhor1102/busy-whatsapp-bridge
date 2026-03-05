@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import structlog
+from app.utils.phone import normalize_phone_e164
 
 logger = structlog.get_logger()
 
@@ -82,6 +83,10 @@ class MessageQueueDB:
                     read_at TIMESTAMP,
                     failed_at TIMESTAMP,
                     recipient_waid TEXT,
+                    contact_name TEXT,
+                    contact_source TEXT,
+                    contact_is_saved INTEGER,
+                    contact_state TEXT,
                     batch_id TEXT,
                     party_code TEXT,
                     created_at TIMESTAMP,
@@ -157,6 +162,10 @@ class MessageQueueDB:
                     failure_stage TEXT,
                     failure_code TEXT,
                     failure_message TEXT,
+                    contact_name TEXT,
+                    contact_source TEXT,
+                    contact_is_saved INTEGER DEFAULT 0,
+                    contact_state TEXT,
                     retry_count INTEGER DEFAULT 0,
                     is_dead_letter INTEGER DEFAULT 0,
                     amount_due TEXT,
@@ -308,6 +317,18 @@ class MessageQueueDB:
         if not self._has_column(conn, "message_history", "recipient_waid"):
             conn.execute("ALTER TABLE message_history ADD COLUMN recipient_waid TEXT")
             migrated = True
+        if not self._has_column(conn, "message_history", "contact_name"):
+            conn.execute("ALTER TABLE message_history ADD COLUMN contact_name TEXT")
+            migrated = True
+        if not self._has_column(conn, "message_history", "contact_source"):
+            conn.execute("ALTER TABLE message_history ADD COLUMN contact_source TEXT")
+            migrated = True
+        if not self._has_column(conn, "message_history", "contact_is_saved"):
+            conn.execute("ALTER TABLE message_history ADD COLUMN contact_is_saved INTEGER")
+            migrated = True
+        if not self._has_column(conn, "message_history", "contact_state"):
+            conn.execute("ALTER TABLE message_history ADD COLUMN contact_state TEXT")
+            migrated = True
         if not self._has_column(conn, "dead_letter_queue", "source"):
             conn.execute("ALTER TABLE dead_letter_queue ADD COLUMN source TEXT DEFAULT 'api'")
             migrated = True
@@ -337,6 +358,18 @@ class MessageQueueDB:
             migrated = True
         if not self._has_column(conn, "dead_letter_queue", "party_code"):
             conn.execute("ALTER TABLE dead_letter_queue ADD COLUMN party_code TEXT")
+            migrated = True
+        if not self._has_column(conn, "reminder_batch_recipients", "contact_name"):
+            conn.execute("ALTER TABLE reminder_batch_recipients ADD COLUMN contact_name TEXT")
+            migrated = True
+        if not self._has_column(conn, "reminder_batch_recipients", "contact_source"):
+            conn.execute("ALTER TABLE reminder_batch_recipients ADD COLUMN contact_source TEXT")
+            migrated = True
+        if not self._has_column(conn, "reminder_batch_recipients", "contact_is_saved"):
+            conn.execute("ALTER TABLE reminder_batch_recipients ADD COLUMN contact_is_saved INTEGER DEFAULT 0")
+            migrated = True
+        if not self._has_column(conn, "reminder_batch_recipients", "contact_state"):
+            conn.execute("ALTER TABLE reminder_batch_recipients ADD COLUMN contact_state TEXT")
             migrated = True
         if migrated:
             conn.commit()
@@ -407,6 +440,10 @@ class MessageQueueDB:
         failure_stage: Optional[str] = None,
         failure_code: Optional[str] = None,
         failure_message: Optional[str] = None,
+        contact_name: Optional[str] = None,
+        contact_source: Optional[str] = None,
+        contact_is_saved: Optional[bool] = None,
+        contact_state: Optional[str] = None,
         retry_count: Optional[int] = None,
         is_dead_letter: Optional[bool] = None,
         amount_due: Optional[str] = None,
@@ -416,14 +453,16 @@ class MessageQueueDB:
         now = datetime.now()
         dead_letter = int(is_dead_letter) if is_dead_letter is not None else None
         media = int(media_attached) if media_attached is not None else None
+        saved_flag = int(contact_is_saved) if contact_is_saved is not None else None
         with self._get_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO reminder_batch_recipients
                 (batch_id, party_code, recipient_name, phone, queue_id, message_id, status, queue_status, delivery_status,
-                 failure_stage, failure_code, failure_message, retry_count, is_dead_letter, amount_due, media_attached,
+                 failure_stage, failure_code, failure_message, contact_name, contact_source, contact_is_saved, contact_state,
+                 retry_count, is_dead_letter, amount_due, media_attached,
                  created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, COALESCE(?, 0), ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, COALESCE(?, 0), ?, ?)
                 ON CONFLICT(batch_id, party_code) DO UPDATE SET
                     recipient_name = COALESCE(excluded.recipient_name, reminder_batch_recipients.recipient_name),
                     phone = COALESCE(excluded.phone, reminder_batch_recipients.phone),
@@ -435,6 +474,10 @@ class MessageQueueDB:
                     failure_stage = COALESCE(excluded.failure_stage, reminder_batch_recipients.failure_stage),
                     failure_code = COALESCE(excluded.failure_code, reminder_batch_recipients.failure_code),
                     failure_message = COALESCE(excluded.failure_message, reminder_batch_recipients.failure_message),
+                    contact_name = COALESCE(excluded.contact_name, reminder_batch_recipients.contact_name),
+                    contact_source = COALESCE(excluded.contact_source, reminder_batch_recipients.contact_source),
+                    contact_is_saved = COALESCE(excluded.contact_is_saved, reminder_batch_recipients.contact_is_saved),
+                    contact_state = COALESCE(excluded.contact_state, reminder_batch_recipients.contact_state),
                     retry_count = COALESCE(excluded.retry_count, reminder_batch_recipients.retry_count),
                     is_dead_letter = COALESCE(excluded.is_dead_letter, reminder_batch_recipients.is_dead_letter),
                     amount_due = COALESCE(excluded.amount_due, reminder_batch_recipients.amount_due),
@@ -454,6 +497,10 @@ class MessageQueueDB:
                     failure_stage,
                     failure_code,
                     failure_message,
+                    contact_name,
+                    contact_source,
+                    saved_flag,
+                    contact_state,
                     retry_count,
                     dead_letter,
                     amount_due,
@@ -606,8 +653,8 @@ class MessageQueueDB:
         party_code: Optional[str] = None,
     ) -> int:
         """Add a message to the queue."""
-        normalized_phone = (phone or "").strip()
-        if not normalized_phone:
+        incoming_phone = (phone or "").strip()
+        if not incoming_phone:
             logger.warning(
                 "message_enqueue_validation_failed",
                 reason="phone_empty",
@@ -617,6 +664,20 @@ class MessageQueueDB:
                 party_code=party_code,
             )
             raise ValueError("phone_validation_failed: phone is empty")
+        try:
+            normalized_phone = normalize_phone_e164(incoming_phone)
+        except ValueError as exc:
+            logger.warning(
+                "message_enqueue_validation_failed",
+                reason="phone_invalid",
+                error=str(exc),
+                phone=incoming_phone,
+                source=source,
+                provider=provider,
+                batch_id=batch_id,
+                party_code=party_code,
+            )
+            raise
 
         with self._get_connection() as conn:
             cursor = conn.execute(
@@ -671,6 +732,10 @@ class MessageQueueDB:
         provider: str,
         delivery_status: str = "accepted",
         resolved_phone: Optional[str] = None,
+        contact_name: Optional[str] = None,
+        contact_source: Optional[str] = None,
+        contact_is_saved: Optional[bool] = None,
+        contact_state: Optional[str] = None,
     ):
         """Mark message as successfully sent and move to history."""
         now = datetime.now()
@@ -693,9 +758,9 @@ class MessageQueueDB:
                     INSERT INTO message_history 
                     (queue_id, phone, message, pdf_url, file_name, provider, source, status, 
                      retry_count, message_id, delivery_status, delivery_updated_at,
-                     delivered_at, read_at, failed_at, recipient_waid, batch_id, party_code,
+                     delivered_at, read_at, failed_at, recipient_waid, contact_name, contact_source, contact_is_saved, contact_state, batch_id, party_code,
                      created_at, sent_at, completed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         # sqlite3.Row behaves like a mapping but has no .get()
@@ -707,6 +772,7 @@ class MessageQueueDB:
                         row['file_name'] if 'file_name' in row.keys() else None,
                         provider,
                         (row['source'] if 'source' in row.keys() else 'api'),
+                        'sent',
                         row['retry_count'],
                         message_id,
                         normalized_delivery,
@@ -715,6 +781,10 @@ class MessageQueueDB:
                         (now if normalized_delivery == "read" else None),
                         (now if normalized_delivery == "failed" else None),
                         (resolved_phone.lstrip('+') if resolved_phone else None),
+                        contact_name,
+                        contact_source,
+                        (int(contact_is_saved) if contact_is_saved is not None else None),
+                        contact_state,
                         (row['batch_id'] if 'batch_id' in row.keys() else None),
                         (row['party_code'] if 'party_code' in row.keys() else None),
                         row['created_at'],
@@ -736,6 +806,10 @@ class MessageQueueDB:
                             status = ?,
                             queue_status = 'queued',
                             delivery_status = ?,
+                            contact_name = COALESCE(?, contact_name),
+                            contact_source = COALESCE(?, contact_source),
+                            contact_is_saved = COALESCE(?, contact_is_saved),
+                            contact_state = COALESCE(?, contact_state),
                             failure_stage = CASE WHEN ? = 'failed' THEN 'provider_send' ELSE failure_stage END,
                             failure_code = CASE WHEN ? = 'failed' THEN COALESCE(failure_code, 'provider_send_failed') ELSE failure_code END,
                             failure_message = CASE WHEN ? = 'failed' THEN COALESCE(failure_message, 'Provider send returned failed status') ELSE failure_message END,
@@ -747,6 +821,10 @@ class MessageQueueDB:
                             (resolved_phone or row["phone"]),
                             mapped_status,
                             normalized_delivery,
+                            contact_name,
+                            contact_source,
+                            (int(contact_is_saved) if contact_is_saved is not None else None),
+                            contact_state,
                             normalized_delivery,
                             normalized_delivery,
                             normalized_delivery,
@@ -801,6 +879,7 @@ class MessageQueueDB:
                 "phone is required",
                 "phone has no digits",
                 "phone length invalid",
+                "not a valid indian mobile",
             )
         )
         
@@ -952,6 +1031,10 @@ class MessageQueueDB:
         delivery_status: str,
         error_message: Optional[str] = None,
         recipient_waid: Optional[str] = None,
+        contact_name: Optional[str] = None,
+        contact_source: Optional[str] = None,
+        contact_is_saved: Optional[bool] = None,
+        contact_state: Optional[str] = None,
         provider: Optional[str] = None,
         event_time: Optional[datetime] = None,
         raw_payload: Optional[Dict[str, Any]] = None,
@@ -1031,6 +1114,10 @@ class MessageQueueDB:
                     read_at = COALESCE(?, read_at),
                     failed_at = COALESCE(?, failed_at),
                     recipient_waid = COALESCE(?, recipient_waid),
+                    contact_name = COALESCE(?, contact_name),
+                    contact_source = COALESCE(?, contact_source),
+                    contact_is_saved = COALESCE(?, contact_is_saved),
+                    contact_state = COALESCE(?, contact_state),
                     provider = COALESCE(?, provider),
                     error_message = CASE
                         WHEN ? IS NOT NULL THEN ?
@@ -1047,6 +1134,10 @@ class MessageQueueDB:
                     read_at,
                     failed_at,
                     recipient_waid,
+                    contact_name,
+                    contact_source,
+                    (int(contact_is_saved) if contact_is_saved is not None else None),
+                    contact_state,
                     provider,
                     current_error,
                     current_error,
@@ -1072,6 +1163,10 @@ class MessageQueueDB:
                         delivery_status = ?,
                         failure_stage = COALESCE(?, failure_stage),
                         failure_code = COALESCE(?, failure_code),
+                        contact_name = COALESCE(?, contact_name),
+                        contact_source = COALESCE(?, contact_source),
+                        contact_is_saved = COALESCE(?, contact_is_saved),
+                        contact_state = COALESCE(?, contact_state),
                         failure_message = CASE
                             WHEN ? IS NOT NULL THEN ?
                             ELSE failure_message
@@ -1085,6 +1180,10 @@ class MessageQueueDB:
                         normalized,
                         failure_stage,
                         failure_code,
+                        contact_name,
+                        contact_source,
+                        (int(contact_is_saved) if contact_is_saved is not None else None),
+                        contact_state,
                         current_error,
                         current_error,
                         message_id,

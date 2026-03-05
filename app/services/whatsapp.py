@@ -93,18 +93,24 @@ class BaileysProvider(WhatsAppProvider):
                     raise ValueError(error_data.get('error', f'HTTP {response.status_code}'))
                 
                 result = response.json()
+                data = result.get("data", {}) if isinstance(result, dict) else {}
+                contact = data.get("contact", {}) if isinstance(data, dict) else {}
                 
                 logger.info(
                     "baileys_message_sent",
                     to=message.to,
-                    message_id=result.get("data", {}).get("messageId")
+                    message_id=data.get("messageId")
                 )
                 
                 return WhatsAppResponse(
                     success=True,
-                    message_id=result.get("data", {}).get("messageId"),
+                    message_id=data.get("messageId"),
                     delivery_status="accepted",
                     normalized_to=normalize_phone_e164(message.to, self.default_country_code),
+                    contact_name=contact.get("name"),
+                    contact_source=contact.get("source"),
+                    contact_is_saved=contact.get("isSaved"),
+                    contact_state=contact.get("state"),
                     error=None
                 )
                 

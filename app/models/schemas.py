@@ -97,6 +97,10 @@ class WhatsAppResponse(BaseModel):
     message_id: Optional[str] = Field(None, description="Message ID from provider")
     delivery_status: Optional[str] = Field(None, description="Provider delivery status")
     normalized_to: Optional[str] = Field(None, description="Normalized destination number")
+    contact_name: Optional[str] = Field(None, description="Resolved contact/display name if available")
+    contact_source: Optional[str] = Field(None, description="Source of contact metadata")
+    contact_is_saved: Optional[bool] = Field(None, description="Whether contact is saved in address book")
+    contact_state: Optional[str] = Field(None, description="saved|likely_unsaved|unknown|not_on_whatsapp")
     error: Optional[str] = Field(None, description="Error message if failed")
     
     class Config:

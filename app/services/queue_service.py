@@ -136,6 +136,10 @@ class MessageQueueService:
                     provider=provider_name,
                     delivery_status=delivery_status,
                     resolved_phone=result.normalized_to,
+                    contact_name=result.contact_name,
+                    contact_source=result.contact_source,
+                    contact_is_saved=result.contact_is_saved,
+                    contact_state=result.contact_state,
                 )
                 logger.info(
                     "queue_message_sent",

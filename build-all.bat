@@ -278,10 +278,22 @@ echo.
 
 REM Sign the installer
 echo Signing installer...
-powershell.exe -ExecutionPolicy Bypass -File "scripts\manage-signing.ps1" -Action sign -File "%INSTALLER_FILE%" 2>nul
+"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "scripts\manage-signing.ps1" -Action sign -File "%INSTALLER_FILE%"
 IF ERRORLEVEL 1 (
-    echo [WARNING] Signing failed, but installer was created successfully.
+    echo [ERROR] Signing failed. Aborting release build.
+    call :maybe_pause
+    exit /b 1
 )
+echo.
+
+echo Verifying installer signature...
+"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$s = Get-AuthenticodeSignature '%INSTALLER_FILE%'; if ($s.SignatureType -eq 'None' -or -not $s.SignerCertificate) { exit 1 } else { exit 0 }"
+IF ERRORLEVEL 1 (
+    echo [ERROR] Signature verification failed. Installer is not signed.
+    call :maybe_pause
+    exit /b 1
+)
+echo [OK] Installer signature verified
 echo.
 
 REM Report

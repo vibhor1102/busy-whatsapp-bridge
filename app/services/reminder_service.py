@@ -974,6 +974,51 @@ class ReminderService:
         sessions = anti_spam_service.get_active_sessions()
         summaries = [anti_spam_service.get_session_summary(s.session_id) for s in sessions]
         return [s for s in summaries if s is not None]
+
+    @staticmethod
+    def _infer_unsaved_contact(row: Dict[str, Any]) -> Optional[Dict[str, str]]:
+        state = (row.get("contact_state") or "").strip().lower()
+        if state in {"saved", "not_on_whatsapp"}:
+            return None
+        if state in {"likely_unsaved", "unknown"}:
+            return {
+                "name": row.get("recipient_name") or "Unknown",
+                "phone": row.get("phone") or "N/A",
+                "classification": state,
+                "reason": (row.get("failure_message") or row.get("failure_code") or "contact_lookup").strip(),
+            }
+
+        code = (row.get("failure_code") or "").strip().lower()
+        message = (row.get("failure_message") or "").strip().lower()
+        if code in {"delivery_failed", "provider_send_failed"} and any(
+            token in message
+            for token in ("not found", "does not exist", "no user", "invalid jid", "unregistered", "recipient")
+        ):
+            return {
+                "name": row.get("recipient_name") or "Unknown",
+                "phone": row.get("phone") or "N/A",
+                "classification": "likely_unsaved",
+                "reason": row.get("failure_message") or row.get("failure_code") or "delivery_failure_heuristic",
+            }
+        return None
+
+    @staticmethod
+    def _chunk_report_lines(lines: List[str], max_chars: int = 3500) -> List[str]:
+        chunks: List[str] = []
+        current: List[str] = []
+        current_len = 0
+        for line in lines:
+            add_len = len(line) + 1
+            if current and current_len + add_len > max_chars:
+                chunks.append("\n".join(current))
+                current = [line]
+                current_len = add_len
+            else:
+                current.append(line)
+                current_len += add_len
+        if current:
+            chunks.append("\n".join(current))
+        return chunks
     
     async def _send_session_report(self, session: ReminderSession, batch_id: Optional[str] = None):
         """Send session completion report to admin.
@@ -996,69 +1041,83 @@ class ReminderService:
             read_count = int(batch_report["batch"]["delivery_read_count"]) if batch_report else 0
             failed_delivery = int(batch_report["batch"]["delivery_failed_count"]) if batch_report else 0
             inflight = int(batch_report["batch"]["in_flight_count"]) if batch_report else 0
-
-            top_failure_reasons = []
+            failed_rows = []
+            unsaved_contacts: List[Dict[str, str]] = []
+            seen_unsaved: set[tuple[str, str]] = set()
             if batch_report:
-                reason_counts: Dict[str, int] = {}
                 for row in batch_report["recipients"]:
-                    if row.get("status") != "failed":
-                        continue
-                    reason = row.get("failure_code") or row.get("failure_stage") or "unknown_failure"
-                    reason_counts[reason] = reason_counts.get(reason, 0) + 1
-                top_failure_reasons = sorted(reason_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+                    if row.get("status") == "failed":
+                        failed_rows.append(row)
+                    inferred_unsaved = self._infer_unsaved_contact(row)
+                    if inferred_unsaved:
+                        key = (inferred_unsaved["phone"], inferred_unsaved["name"])
+                        if key not in seen_unsaved:
+                            seen_unsaved.add(key)
+                            unsaved_contacts.append(inferred_unsaved)
 
             # Format report message
             duration_mins = int(session.metrics.duration_seconds / 60)
             duration_secs = int(session.metrics.duration_seconds % 60)
-            
-            report = f"""📊 Reminder Session Complete
-━━━━━━━━━━━━━━━━━━━━━
-⏱️ Duration: {duration_mins}m {duration_secs}s
-👥 Total: {session.metrics.total_messages} parties
-✅ Queued: {queue_success}
-❌ Queue Failed: {queue_failed}
-📬 Delivered: {delivered}
-👀 Read: {read_count}
-🚫 Delivery Failed: {failed_delivery}
-⏳ In Flight: {inflight}
 
-⏱️ Anti-Spam Metrics:
-• Avg delay: {round(session.metrics.avg_delay_seconds, 1)}s
-• Typing simulation: {'ON' if config.typing_simulation else 'OFF'}
-• Total typing time: {int(session.metrics.typing_time_total)}s
-• Total reading time: {int(session.metrics.reading_time_total)}s"""
-            if top_failure_reasons:
-                report += "\n\n⚠️ Top Failure Reasons:"
-                for reason, count in top_failure_reasons:
-                    report += f"\n• {reason}: {count}"
+            lines = [
+                "📊 Reminder Session Complete",
+                "━━━━━━━━━━━━━━━━━━━━━",
+                f"⏱️ Duration: {duration_mins}m {duration_secs}s",
+                f"👥 Total: {session.metrics.total_messages} parties",
+                f"✅ Queued: {queue_success}",
+                f"❌ Queue Failed: {queue_failed}",
+                f"📬 Delivered: {delivered}",
+                f"👀 Read: {read_count}",
+                f"🚫 Delivery Failed: {failed_delivery}",
+                f"⏳ In Flight: {inflight}",
+                "",
+                "⏱️ Anti-Spam Metrics:",
+                f"• Avg delay: {round(session.metrics.avg_delay_seconds, 1)}s",
+                f"• Typing simulation: {'ON' if config.typing_simulation else 'OFF'}",
+                f"• Total typing time: {int(session.metrics.typing_time_total)}s",
+                f"• Total reading time: {int(session.metrics.reading_time_total)}s",
+            ]
             if inflight > 0:
-                report += "\n\nℹ️ Note: Some messages are still in-flight; delivery updates may arrive later."
-            
-            # Add unsaved contacts info if any
-            if session.metrics.unsaved_contacts:
-                report += f"""
+                lines.append("")
+                lines.append("ℹ️ Note: Some messages are still in-flight; delivery updates may arrive later.")
 
-⚠️ Attention Required:
-• {len(session.metrics.unsaved_contacts)} numbers may be unsaved"""
-                for contact in session.metrics.unsaved_contacts[:3]:  # Show first 3
-                    report += f"\n• {contact.get('name', 'Unknown')}: {contact.get('phone', 'N/A')}"
-                if len(session.metrics.unsaved_contacts) > 3:
-                    report += f"\n• ... and {len(session.metrics.unsaved_contacts) - 3} more"
-                
-                report += "\n\n💾 Recommendation: Save these contacts to phone"
-            
-            # Queue report message to admin
-            message_db.enqueue_message(
-                phone=admin_phone,
-                message=report,
-                provider="baileys",
-                source="admin_report"
-            )
+            if failed_rows:
+                lines.extend(["", f"⚠️ Failed Recipients ({len(failed_rows)}):"])
+                for row in failed_rows:
+                    lines.append(
+                        "• {name} | {phone} | stage={stage} | code={code} | reason={reason}".format(
+                            name=row.get("recipient_name") or "Unknown",
+                            phone=row.get("phone") or "N/A",
+                            stage=row.get("failure_stage") or "unknown",
+                            code=row.get("failure_code") or "unknown",
+                            reason=(row.get("failure_message") or "Unknown failure").replace("\n", " ").strip(),
+                        )
+                    )
+
+            if unsaved_contacts:
+                lines.extend(["", f"📇 Not Saved / Likely Unsaved Contacts ({len(unsaved_contacts)}):"])
+                for contact in unsaved_contacts:
+                    lines.append(
+                        f"• {contact['name']} | {contact['phone']} | {contact['classification']} | {contact['reason']}"
+                    )
+                lines.append("")
+                lines.append("💾 Recommendation: Save these contacts to reduce false positives.")
+
+            chunks = self._chunk_report_lines(lines)
+            for idx, chunk in enumerate(chunks, start=1):
+                prefix = f"[Report {idx}] " if idx > 1 else ""
+                message_db.enqueue_message(
+                    phone=admin_phone,
+                    message=f"{prefix}{chunk}",
+                    provider="baileys",
+                    source="admin_report"
+                )
             
             logger.info(
                 "session_report_queued",
                 session_id=session.session_id,
-                admin_phone=admin_phone
+                admin_phone=admin_phone,
+                chunks=len(chunks)
             )
             
         except Exception as e:

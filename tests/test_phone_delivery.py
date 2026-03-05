@@ -1,15 +1,32 @@
 from pathlib import Path
 from datetime import datetime, timedelta
 
+import pytest
+
 from app.database.message_queue import MessageQueueDB
-from app.utils.phone import normalize_phone_e164, to_wa_id
+from app.utils.phone import normalize_indian_phone_local, normalize_phone_e164, to_wa_id
 
 
 def test_indian_local_number_normalization():
+    assert normalize_indian_phone_local("9215536993") == "9215536993"
     assert normalize_phone_e164("9215536993") == "+919215536993"
     assert to_wa_id("9215536993") == "919215536993"
     assert normalize_phone_e164("09215536993") == "+919215536993"
-    assert normalize_phone_e164("+14155552671") == "+14155552671"
+    assert normalize_phone_e164("+91 92155 36993") == "+919215536993"
+    assert normalize_phone_e164("91-92155-36993") == "+919215536993"
+    assert normalize_phone_e164("0091 92155 36993") == "+919215536993"
+    assert normalize_phone_e164("000919215536993") == "+919215536993"
+
+
+def test_indian_phone_rejection_rules():
+    with pytest.raises(ValueError, match="phone length invalid"):
+        normalize_phone_e164("921553699")
+    with pytest.raises(ValueError, match="phone is not a valid Indian mobile"):
+        normalize_phone_e164("5215536993")
+    with pytest.raises(ValueError, match="phone has no digits"):
+        normalize_phone_e164("abc")
+    with pytest.raises(ValueError, match="phone is not a valid Indian mobile"):
+        normalize_phone_e164("+14155552671")
 
 
 def test_delivery_status_lifecycle_update(tmp_path: Path):

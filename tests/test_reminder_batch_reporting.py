@@ -65,7 +65,7 @@ def test_queue_link_updates_recipient_status(tmp_path):
         queue_status="queued",
     )
     queue_id = db.enqueue_message(
-        phone="+911234567890",
+        phone="+919234567890",
         message="hello",
         provider="baileys",
         source="payment_reminder",
@@ -77,10 +77,25 @@ def test_queue_link_updates_recipient_status(tmp_path):
         message_id="wamid-1",
         provider="baileys",
         delivery_status="accepted",
-        resolved_phone="+911234567890",
+        resolved_phone="+919234567890",
+        contact_name="Alpha",
+        contact_source="contact_cache",
+        contact_is_saved=True,
+        contact_state="saved",
     )
-    db.update_delivery_status(message_id="wamid-1", delivery_status="failed", error_message="blocked")
+    db.update_delivery_status(
+        message_id="wamid-1",
+        delivery_status="failed",
+        error_message="blocked",
+        contact_name="Alpha",
+        contact_source="delivery_cache",
+        contact_is_saved=False,
+        contact_state="likely_unsaved",
+    )
     failures = db.get_reminder_batch_failures(batch_id=batch_id)
     assert len(failures) == 1
     assert failures[0]["failure_stage"] == "delivery_webhook"
     assert failures[0]["failure_code"] == "delivery_failed"
+    assert failures[0]["contact_name"] == "Alpha"
+    assert failures[0]["contact_source"] == "delivery_cache"
+    assert failures[0]["contact_state"] == "likely_unsaved"

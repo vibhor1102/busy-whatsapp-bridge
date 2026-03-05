@@ -104,6 +104,10 @@ client.on('delivery_update', (data) => {
         message_id: data.messageId,
         delivery_status: data.deliveryStatus,
         recipient_waid: recipient || null,
+        contact_name: data.contactName || null,
+        contact_source: data.contactSource || null,
+        contact_is_saved: typeof data.contactIsSaved === 'boolean' ? data.contactIsSaved : null,
+        contact_state: data.contactState || null,
         event_time: new Date(data.eventTime || Date.now()).toISOString(),
         raw_payload: data.raw || null,
     });

@@ -6,6 +6,7 @@ from contextlib import suppress
 from threading import RLock
 from typing import Optional, List, Dict, Any, Tuple
 from app.config import get_settings
+from app.utils.phone import normalize_indian_phone_local
 
 logger = structlog.get_logger()
 pyodbc.pooling = False
@@ -210,12 +211,7 @@ class BusyDatabase:
     def get_party_by_phone(self, phone: str, company_id: str = "default") -> Optional[Dict[str, Any]]:
         """Fetch party details from Master1 by phone number."""
         try:
-            # Clean phone number - remove spaces and common prefixes
-            clean_phone = phone.replace(" ", "").replace("-", "")
-            if clean_phone.startswith("+91"):
-                clean_phone = clean_phone[3:]
-            elif clean_phone.startswith("0"):
-                clean_phone = clean_phone[1:]
+            clean_phone = normalize_indian_phone_local(phone)
             
             with self.get_cursor(company_id=company_id) as cursor:
                 # Try exact match first

@@ -68,14 +68,19 @@ def main():
             print("\nSigning EXE...")
             try:
                 subprocess.run([
-                    "powershell.exe", "-ExecutionPolicy", "Bypass", 
+                    r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
                     "-File", str(script_dir / "scripts" / "manage-signing.ps1"), 
                     "-Action", "sign", 
                     "-File", str(exe_path)
                 ], check=True)
             except subprocess.CalledProcessError:
-                print("Warning: Signing failed, but EXE was built successfully.")
-                
+                print("ERROR: Signing failed for BusyWhatsappBridge.exe.")
+                return 1
+
             return 0
     
     print("\nBuild failed!")

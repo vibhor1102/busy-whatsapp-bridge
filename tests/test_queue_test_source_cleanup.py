@@ -9,13 +9,13 @@ def test_test_source_cleanup_runs_once_and_preserves_non_test(tmp_path: Path):
 
     # Insert mixed sources.
     test_qid = db.enqueue_message(
-        phone="+911111111111",
+        phone="+919111111111",
         message="test pending",
         provider="baileys",
         source="test",
     )
     keep_qid = db.enqueue_message(
-        phone="+922222222222",
+        phone="+917222222222",
         message="keep pending",
         provider="baileys",
         source="api",
@@ -27,7 +27,7 @@ def test_test_source_cleanup_runs_once_and_preserves_non_test(tmp_path: Path):
         delivery_status="accepted",
     )
     dead_qid = db.enqueue_message(
-        phone="+933333333333",
+        phone="+917333333333",
         message="test dead",
         provider="baileys",
         source="test",

@@ -43,6 +43,7 @@ class BaileysClient extends EventEmitter {
         this.isRestarting = false;
         this.reconnectTimer = null;
         this.socketGeneration = 0;
+        this.contactCache = new Map();
     }
 
     async initialize() {
@@ -117,6 +118,89 @@ class BaileysClient extends EventEmitter {
                 this.logger.error({ error: error.message }, 'Reconnect initialize failed');
             });
         }, delay);
+    }
+
+    normalizeIndianPhone(phone) {
+        const digitsOnly = String(phone || '').replace(/\D/g, '');
+        if (!digitsOnly) {
+            throw new Error('phone has no digits');
+        }
+
+        let digits = digitsOnly;
+        while (digits.length > 10 && digits.startsWith('0')) {
+            digits = digits.slice(1);
+        }
+        while (digits.length > 10 && digits.startsWith('91')) {
+            digits = digits.slice(2);
+        }
+        if (digits.length > 10) {
+            digits = digits.slice(-10);
+        }
+        if (digits.length !== 10) {
+            throw new Error('phone length invalid after normalization');
+        }
+        if (!/^[6-9]\d{9}$/.test(digits)) {
+            throw new Error('phone is not a valid Indian mobile number');
+        }
+        return digits;
+    }
+
+    normalizeJid(jid) {
+        if (!jid) return '';
+        if (jid.includes('@')) return jid;
+        return `${jid}@s.whatsapp.net`;
+    }
+
+    _buildContactInfoFromCache(jid, source = 'cache') {
+        const normalized = this.normalizeJid(jid);
+        const cached = this.contactCache.get(normalized);
+        if (!cached) {
+            return {
+                jid: normalized || null,
+                phone: (normalized || '').replace('@s.whatsapp.net', '') || null,
+                name: null,
+                source,
+                isSaved: false,
+                state: 'unknown',
+            };
+        }
+        const name = cached.name || cached.notify || cached.pushName || null;
+        const hasAddressBookName = Boolean(cached.name || cached.notify);
+        return {
+            jid: normalized,
+            phone: (normalized || '').replace('@s.whatsapp.net', '') || null,
+            name,
+            source,
+            isSaved: hasAddressBookName,
+            state: hasAddressBookName ? 'saved' : 'likely_unsaved',
+        };
+    }
+
+    async resolveRecipientContact(jid) {
+        const normalized = this.normalizeJid(jid);
+        if (!normalized) {
+            return this._buildContactInfoFromCache(jid, 'unknown');
+        }
+
+        try {
+            if (this.socket && typeof this.socket.onWhatsApp === 'function') {
+                const lookup = await this.socket.onWhatsApp(normalized);
+                const hit = Array.isArray(lookup) ? lookup[0] : null;
+                if (hit && hit.exists === false) {
+                    return {
+                        jid: normalized,
+                        phone: normalized.replace('@s.whatsapp.net', ''),
+                        name: null,
+                        source: 'on_whatsapp_lookup',
+                        isSaved: false,
+                        state: 'not_on_whatsapp',
+                    };
+                }
+            }
+        } catch (error) {
+            this.logger.debug({ jid: normalized, error: error.message }, 'Contact lookup failed');
+        }
+        return this._buildContactInfoFromCache(normalized, 'contact_cache');
     }
 
     setupEventHandlers(generation) {
@@ -256,6 +340,40 @@ class BaileysClient extends EventEmitter {
             }
         });
 
+        this.socket.ev.on('contacts.upsert', (contacts) => {
+            if (generation !== this.socketGeneration) {
+                return;
+            }
+            if (!Array.isArray(contacts)) {
+                return;
+            }
+            for (const contact of contacts) {
+                const jid = this.normalizeJid(contact?.id);
+                if (!jid) continue;
+                this.contactCache.set(jid, {
+                    ...this.contactCache.get(jid),
+                    ...contact,
+                });
+            }
+        });
+
+        this.socket.ev.on('contacts.update', (contacts) => {
+            if (generation !== this.socketGeneration) {
+                return;
+            }
+            if (!Array.isArray(contacts)) {
+                return;
+            }
+            for (const contact of contacts) {
+                const jid = this.normalizeJid(contact?.id);
+                if (!jid) continue;
+                this.contactCache.set(jid, {
+                    ...this.contactCache.get(jid),
+                    ...contact,
+                });
+            }
+        });
+
         this.socket.ev.on('messages.update', (updates) => {
             if (generation !== this.socketGeneration) {
                 return;
@@ -274,10 +392,15 @@ class BaileysClient extends EventEmitter {
                     if (!mappedStatus) {
                         continue;
                     }
+                    const contact = this._buildContactInfoFromCache(key.remoteJid, 'delivery_cache');
                     this.emit('delivery_update', {
                         messageId: key.id,
                         deliveryStatus: mappedStatus,
                         recipientWaid: key.remoteJid || null,
+                        contactName: contact.name,
+                        contactSource: contact.source,
+                        contactIsSaved: contact.isSaved,
+                        contactState: contact.state,
                         eventTime: Date.now(),
                         raw: item,
                     });
@@ -411,6 +534,7 @@ class BaileysClient extends EventEmitter {
         }
 
         let jid = this.formatPhoneNumber(to);
+        const contact = await this.resolveRecipientContact(jid);
 
         try {
             const messageContent = options.mediaUrl
@@ -432,7 +556,8 @@ class BaileysClient extends EventEmitter {
             return {
                 success: true,
                 messageId: result.key.id,
-                timestamp: result.messageTimestamp
+                timestamp: result.messageTimestamp,
+                contact,
             };
         } catch (error) {
             this.logger.error(
@@ -449,6 +574,7 @@ class BaileysClient extends EventEmitter {
         }
 
         let jid = this.formatPhoneNumber(to);
+        const contact = await this.resolveRecipientContact(jid);
         const mimetype = options.mimetype || 'application/pdf';
         
         // Handle both URLs and local file paths
@@ -484,7 +610,8 @@ class BaileysClient extends EventEmitter {
             return {
                 success: true,
                 messageId: result.key.id,
-                timestamp: result.messageTimestamp
+                timestamp: result.messageTimestamp,
+                contact,
             };
         } catch (error) {
             this.logger.error(
@@ -496,13 +623,8 @@ class BaileysClient extends EventEmitter {
     }
 
     formatPhoneNumber(phone) {
-        let cleaned = phone.replace(/[^0-9]/g, '');
-        
-        if (!cleaned.startsWith('91') && cleaned.length === 10) {
-            cleaned = '91' + cleaned;
-        }
-        
-        return cleaned + '@s.whatsapp.net';
+        const local = this.normalizeIndianPhone(phone);
+        return `91${local}@s.whatsapp.net`;
     }
 
     async setPresence(online = true) {

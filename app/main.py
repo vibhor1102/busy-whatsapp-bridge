@@ -16,6 +16,7 @@ import shutil
 import re
 import uuid
 import asyncio
+import subprocess
 
 from app.config import get_settings, get_config_path, get_config_details, get_roaming_appdata_path, load_settings, save_settings, Settings, CompanyDatabase
 from app.models.schemas import (
@@ -87,9 +88,106 @@ class BaileysDeliveryUpdate(BaseModel):
     message_id: str = Field(..., description="Provider message ID")
     delivery_status: str = Field(..., description="accepted|sent|delivered|read|failed")
     recipient_waid: Optional[str] = Field(None, description="Recipient waid/number if available")
+    contact_name: Optional[str] = Field(None, description="Resolved contact/display name if available")
+    contact_source: Optional[str] = Field(None, description="Source of contact metadata")
+    contact_is_saved: Optional[bool] = Field(None, description="Whether recipient is saved in address book")
+    contact_state: Optional[str] = Field(None, description="saved|likely_unsaved|unknown|not_on_whatsapp")
     error: Optional[str] = Field(None, description="Error text for failed updates")
     event_time: Optional[datetime] = Field(None, description="Provider event timestamp")
     raw_payload: Optional[dict] = Field(None, description="Raw provider payload for diagnostics")
+
+
+def _run_windows_powershell(script: str, timeout_seconds: int = 45) -> subprocess.CompletedProcess:
+    """Execute a PowerShell script with Win10/11-safe defaults."""
+    creation_flags = 0
+    if os.name == "nt":
+        creation_flags = subprocess.CREATE_NO_WINDOW
+    return subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-STA",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        creationflags=creation_flags,
+        timeout=timeout_seconds,
+    )
+
+
+def _browse_system_file_blocking() -> dict:
+    """Blocking Win32 file picker invocation for use in a worker thread."""
+    ps_script = r"""
+$ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+Add-Type -AssemblyName System.Drawing | Out-Null
+
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.InitialDirectory = "C:\"
+$dialog.Filter = "Busy Database (*.bds)|*.bds|All Files (*.*)|*.*"
+$dialog.CheckFileExists = $true
+$dialog.Multiselect = $false
+$dialog.RestoreDirectory = $true
+$dialog.Title = "Select Busy Database File"
+
+$result = $dialog.ShowDialog()
+if ($result -eq [System.Windows.Forms.DialogResult]::OK -and -not [string]::IsNullOrWhiteSpace($dialog.FileName)) {
+    Write-Output $dialog.FileName
+}
+"""
+    try:
+        result = _run_windows_powershell(ps_script, timeout_seconds=45)
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+
+        if result.returncode != 0:
+            return {
+                "path": None,
+                "success": False,
+                "reason": "powershell_error",
+                "stderr": stderr or None,
+                "exit_code": result.returncode,
+                "timeout": False,
+                "message": "Failed to open file browser",
+            }
+
+        if stdout:
+            return {"path": os.path.normpath(stdout), "success": True}
+
+        return {
+            "path": None,
+            "success": False,
+            "reason": "cancelled",
+            "stderr": stderr or None,
+            "exit_code": result.returncode,
+            "timeout": False,
+            "message": "No file selected",
+        }
+    except subprocess.TimeoutExpired as e:
+        return {
+            "path": None,
+            "success": False,
+            "reason": "timeout",
+            "stderr": ((e.stderr or "") if isinstance(e.stderr, str) else "").strip() or None,
+            "exit_code": None,
+            "timeout": True,
+            "message": "File browser timed out",
+        }
+    except Exception as e:
+        return {
+            "path": None,
+            "success": False,
+            "reason": "exception",
+            "stderr": str(e),
+            "exit_code": None,
+            "timeout": False,
+            "message": "Failed to open file browser",
+        }
 
 
 @asynccontextmanager
@@ -661,6 +759,10 @@ async def baileys_delivery_status(update: BaileysDeliveryUpdate):
         delivery_status=normalized,
         error_message=update.error,
         recipient_waid=update.recipient_waid,
+        contact_name=update.contact_name,
+        contact_source=update.contact_source,
+        contact_is_saved=update.contact_is_saved,
+        contact_state=update.contact_state,
         provider="baileys",
         event_time=update.event_time,
         raw_payload=update.raw_payload,
@@ -1058,40 +1160,16 @@ async def browse_system_file():
     Open a native OS file dialog to select a database file.
     Uses PowerShell to open the dialog, bypassing tkinter dependencies.
     """
-    try:
-        import subprocess
-        
-        ps_script = '''
-Function Get-FileName($initialDirectory)
-{
-    [System.Reflection.Assembly]::LoadWithPartialName("System.windows.forms") | Out-Null
-    $OpenFileDialog = New-Object System.Windows.Forms.OpenFileDialog
-    $OpenFileDialog.initialDirectory = $initialDirectory
-    $OpenFileDialog.filter = "Busy Database (*.bds)|*.bds|All Files (*.*)|*.*"
-    $OpenFileDialog.ShowDialog() | Out-Null
-    $OpenFileDialog.filename
-}
-Get-FileName -initialDirectory "C:\\"
-'''
-        
-        result = subprocess.run(
-            ["powershell", "-Command", ps_script], 
-            capture_output=True, 
-            text=True, 
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+    result = await asyncio.to_thread(_browse_system_file_blocking)
+    if not result.get("success"):
+        logger.warning(
+            "file_browser_failed",
+            reason=result.get("reason"),
+            timeout=result.get("timeout"),
+            stderr=result.get("stderr"),
+            exit_code=result.get("exit_code"),
         )
-        
-        file_path = result.stdout.strip()
-        
-        if file_path:
-            path = os.path.normpath(file_path)
-            return {"path": path, "success": True}
-            
-        return {"path": None, "success": False, "message": "No file selected"}
-        
-    except Exception as e:
-        logger.error("file_browser_failed", error=str(e))
-        return {"path": None, "success": False, "message": f"Failed to open file browser: {str(e)}"}
+    return result
 
 
 class DatabaseIdentifyRequest(BaseModel):
