@@ -19,6 +19,7 @@ import {
   Search,
   X,
   Loader2,
+  ExternalLink,
 } from 'lucide-react';
 import { api, type CompanyInfo } from '../services/api';
 import { useRemindersStore } from '../stores/remindersStore';
@@ -254,6 +255,8 @@ export function Reminders() {
   const setDefaultTemplateId = useRemindersStore((state) => state.setDefaultTemplateId);
   const setPersistedSelection = useRemindersStore((state) => state.setPersistedSelection);
   const selectParties = useRemindersStore((state) => state.selectParties);
+  const setPartyTemplate = useRemindersStore((state) => state.setPartyTemplate);
+  const clearPartyTemplate = useRemindersStore((state) => state.clearPartyTemplate);
   const defaultTemplateId = useRemindersStore((state) => state.defaultTemplateId);
   const selectedPartyCodes = useRemindersStore((state) => state.selectedPartyCodes);
   const togglePartySelection = useRemindersStore((state) => state.togglePartySelection);
@@ -416,6 +419,33 @@ export function Reminders() {
     togglePartySelection(code);
   }, [togglePartySelection]);
 
+  const handleOpenLedger = useCallback(async (partyCode: string) => {
+    try {
+      const blob = await api.generateLedgerPdf(partyCode);
+      const objectUrl = URL.createObjectURL(blob);
+      window.open(objectUrl, '_blank', 'noopener,noreferrer');
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to open ledger PDF';
+      toast.error(message);
+    }
+  }, []);
+
+  const getEffectivePartyTemplate = useCallback((partyCode: string) => {
+    if (Object.prototype.hasOwnProperty.call(partyTemplates, partyCode)) {
+      return partyTemplates[partyCode];
+    }
+    return config?.parties?.[partyCode]?.custom_template_id || '';
+  }, [partyTemplates, config]);
+
+  const handleTemplateOverrideChange = useCallback((partyCode: string, templateId: string) => {
+    if (templateId === '__inherit__') {
+      clearPartyTemplate(partyCode);
+      return;
+    }
+    setPartyTemplate(partyCode, templateId);
+  }, [clearPartyTemplate, setPartyTemplate]);
+
   const selectedParties = useMemo(() =>
     parties.filter((p) => selectedPartyCodes.has(p.code)),
     [parties, selectedPartyCodes]
@@ -459,10 +489,17 @@ export function Reminders() {
       // If stats fetch fails, let the backend validate
     }
 
+    const explicitTemplateMap: Record<string, string> = {};
+    for (const code of selectedCodes) {
+      if (Object.prototype.hasOwnProperty.call(partyTemplates, code)) {
+        explicitTemplateMap[code] = partyTemplates[code];
+      }
+    }
+
     sendRemindersMutation.mutate({
       partyCodes: selectedCodes,
       templateId: defaultTemplateId,
-      partyTemplates: partyTemplates,
+      partyTemplates: explicitTemplateMap,
     });
   }, [selectedPartyCodes, defaultTemplateId, partyTemplates, sendRemindersMutation, antiSpamConfig]);
 
@@ -841,14 +878,43 @@ export function Reminders() {
                               >
                                 <X className="w-3.5 h-3.5" />
                               </button>
-                              <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenLedger(party.code)}
+                                className="text-sm font-medium truncate text-left hover:underline"
+                                style={{ color: 'var(--text-primary)' }}
+                                title="Open ledger PDF in new tab"
+                              >
                                 {party.name}
-                              </p>
+                              </button>
                             </div>
 
-                            <p className="text-sm font-medium flex-shrink-0 text-right" style={{ color: 'var(--text-primary)' }}>
-                              {formatCurrency(party.amount_due)}
-                            </p>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <select
+                                value={getEffectivePartyTemplate(party.code)}
+                                onChange={(e) => handleTemplateOverrideChange(party.code, e.target.value)}
+                                className="input text-xs py-1 px-2 w-40"
+                                aria-label={`Template override for ${party.name}`}
+                              >
+                                <option value="__inherit__">Use saved/default</option>
+                                <option value="">Use batch default</option>
+                                {templates?.map((t: MessageTemplate) => (
+                                  <option key={t.id} value={t.id}>{t.name}</option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenLedger(party.code)}
+                                className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5"
+                                aria-label={`Open ledger for ${party.name}`}
+                                title="Open ledger PDF"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </button>
+                              <p className="text-sm font-medium text-right min-w-20" style={{ color: 'var(--text-primary)' }}>
+                                {formatCurrency(party.amount_due)}
+                              </p>
+                            </div>
                           </div>
                         );
                       })}
@@ -938,10 +1004,18 @@ export function Reminders() {
                     {availableVirtualizer.getVirtualItems().map((virtualItem: any) => {
                       const party = availableParties[virtualItem.index];
                       return (
-                        <button
+                        <div
                           key={party.code}
                           onClick={() => handleToggleSelection(party.code)}
-                          className="w-full flex items-center justify-between p-2.5 rounded-lg transition-colors text-left absolute top-0 left-0"
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              handleToggleSelection(party.code);
+                            }
+                          }}
+                          className="w-full flex items-center justify-between p-2.5 rounded-lg transition-colors text-left absolute top-0 left-0 cursor-pointer"
                           style={{
                             height: `${virtualItem.size - 6}px`, // gap accounting
                             transform: `translateY(${virtualItem.start}px)`,
@@ -965,15 +1039,51 @@ export function Reminders() {
                               style={{ borderColor: 'var(--border-strong)' }}
                               aria-hidden="true"
                             />
-                            <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenLedger(party.code);
+                              }}
+                              className="text-sm font-medium truncate text-left hover:underline"
+                              style={{ color: 'var(--text-primary)' }}
+                              title="Open ledger PDF in new tab"
+                            >
                               {party.name}
-                            </p>
+                            </button>
                           </div>
 
-                          <p className="text-sm font-medium flex-shrink-0 text-right" style={{ color: 'var(--text-primary)' }}>
-                            {formatCurrency(party.amount_due)}
-                          </p>
-                        </button>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <select
+                              value={getEffectivePartyTemplate(party.code)}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => handleTemplateOverrideChange(party.code, e.target.value)}
+                              className="input text-xs py-1 px-2 w-40"
+                              aria-label={`Template override for ${party.name}`}
+                            >
+                              <option value="__inherit__">Use saved/default</option>
+                              <option value="">Use batch default</option>
+                              {templates?.map((t: MessageTemplate) => (
+                                <option key={t.id} value={t.id}>{t.name}</option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenLedger(party.code);
+                              }}
+                              className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5"
+                              aria-label={`Open ledger for ${party.name}`}
+                              title="Open ledger PDF"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </button>
+                            <p className="text-sm font-medium text-right min-w-20" style={{ color: 'var(--text-primary)' }}>
+                              {formatCurrency(party.amount_due)}
+                            </p>
+                          </div>
+                        </div>
                       );
                     })}
                   </div>

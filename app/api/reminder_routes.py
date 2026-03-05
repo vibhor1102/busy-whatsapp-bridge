@@ -10,6 +10,7 @@ Provides endpoints for:
 - Statistics and history
 """
 import asyncio
+import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
@@ -321,6 +322,16 @@ async def send_reminders_batch(
         session = await anti_spam_service.create_session(
             party_codes=request.party_codes,
             template_id=request.template_id
+        )
+
+        # Persist user intent at send-start success (validated + session created).
+        reminder_service.persist_selection_preferences_on_send_start(
+            selected_party_codes=request.party_codes,
+            company_id=company_id,
+        )
+        reminder_service.persist_explicit_template_overrides(
+            explicit_overrides=getattr(request, "party_templates", None),
+            company_id=company_id,
         )
 
         # Define the background task wrapper

@@ -60,12 +60,15 @@ class BaileysProvider(WhatsAppProvider):
                     "to": to_number,
                     "mediaUrl": message.media_url,
                     "caption": message.body,
-                    "mimetype": "application/pdf"
+                    "mimetype": "application/pdf",
                 }
+                if message.file_name:
+                    payload["fileName"] = message.file_name
                 logger.info(
                     "baileys_sending_media",
                     to=message.to,
-                    url=message.media_url
+                    url=message.media_url,
+                    file_name=message.file_name,
                 )
             else:
                 endpoint = f"{self.server_url}/send"

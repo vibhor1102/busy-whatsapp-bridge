@@ -121,3 +121,33 @@ def test_query_parties_filter_enabled(tmp_path: Path):
 
     assert total == 1
     assert rows[0]["party_code"] == "100"
+
+
+def test_positive_due_codes_and_bulk_enabled_update(tmp_path: Path):
+    db = ReminderSnapshotDB(str(tmp_path / "snapshot.db"))
+    db.replace_snapshot(
+        _seed_rows(),
+        duration_ms=800,
+        row_count=3,
+        nonzero_count=2,
+        error_count=0,
+        source_db_path_hash="hash",
+    )
+
+    positive_codes = set(db.get_positive_due_party_codes())
+    assert positive_codes == {"100", "102"}
+
+    db.set_permanent_enabled_for_positive_due(selected_codes=["102"])
+
+    total, rows = db.query_parties(
+        search=None,
+        filter_by="enabled",
+        min_amount=None,
+        include_zero=True,
+        sort_by="code",
+        sort_order="asc",
+        offset=0,
+        limit=50,
+    )
+    assert total == 1
+    assert rows[0]["party_code"] == "102"

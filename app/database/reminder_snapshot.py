@@ -160,6 +160,43 @@ class ReminderSnapshotDB:
             )
             conn.commit()
 
+    def get_positive_due_party_codes(self, company_id: str = "default") -> List[str]:
+        """Return party codes currently in snapshot with positive amount due."""
+        with self._get_connection(company_id) as conn:
+            rows = conn.execute(
+                """
+                SELECT party_code
+                FROM reminder_party_snapshot
+                WHERE amount_due > 0
+                """
+            ).fetchall()
+            return [str(r["party_code"]) for r in rows]
+
+    def set_permanent_enabled_for_positive_due(
+        self, selected_codes: List[str], company_id: str = "default"
+    ) -> None:
+        """
+        Bulk-update permanent_enabled for the current eligible universe (amount_due > 0):
+        - reset all eligible rows to 0
+        - set selected eligible rows to 1
+        """
+        selected = {str(code) for code in selected_codes}
+        with self._get_connection(company_id) as conn:
+            conn.execute(
+                "UPDATE reminder_party_snapshot SET permanent_enabled = 0 WHERE amount_due > 0"
+            )
+            if selected:
+                placeholders = ",".join("?" for _ in selected)
+                conn.execute(
+                    f"""
+                    UPDATE reminder_party_snapshot
+                    SET permanent_enabled = 1
+                    WHERE amount_due > 0 AND party_code IN ({placeholders})
+                    """,
+                    list(selected),
+                )
+            conn.commit()
+
     def get_status(self, company_id: str = "default") -> Dict[str, Any]:
         with self._get_connection(company_id) as conn:
             row = conn.execute(

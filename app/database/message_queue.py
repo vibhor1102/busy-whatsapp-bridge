@@ -44,6 +44,7 @@ class MessageQueueDB:
                     phone TEXT NOT NULL,
                     message TEXT NOT NULL,
                     pdf_url TEXT,
+                    file_name TEXT,
                     provider TEXT DEFAULT 'baileys',
                     status TEXT DEFAULT 'pending',
                     retry_count INTEGER DEFAULT 0,
@@ -66,6 +67,7 @@ class MessageQueueDB:
                     phone TEXT NOT NULL,
                     message TEXT NOT NULL,
                     pdf_url TEXT,
+                    file_name TEXT,
                     provider TEXT,
                     source TEXT DEFAULT 'api',
                     status TEXT NOT NULL,
@@ -97,6 +99,7 @@ class MessageQueueDB:
                     phone TEXT NOT NULL,
                     message TEXT NOT NULL,
                     pdf_url TEXT,
+                    file_name TEXT,
                     provider TEXT,
                     source TEXT DEFAULT 'api',
                     retry_count INTEGER,
@@ -165,6 +168,15 @@ class MessageQueueDB:
         if not self._has_column(conn, "dead_letter_queue", "source"):
             conn.execute("ALTER TABLE dead_letter_queue ADD COLUMN source TEXT DEFAULT 'api'")
             migrated = True
+        if not self._has_column(conn, "message_queue", "file_name"):
+            conn.execute("ALTER TABLE message_queue ADD COLUMN file_name TEXT")
+            migrated = True
+        if not self._has_column(conn, "message_history", "file_name"):
+            conn.execute("ALTER TABLE message_history ADD COLUMN file_name TEXT")
+            migrated = True
+        if not self._has_column(conn, "dead_letter_queue", "file_name"):
+            conn.execute("ALTER TABLE dead_letter_queue ADD COLUMN file_name TEXT")
+            migrated = True
         if migrated:
             conn.commit()
             logger.info("message_queue_db_migrated")
@@ -184,6 +196,7 @@ class MessageQueueDB:
         phone: str,
         message: str,
         pdf_url: Optional[str] = None,
+        file_name: Optional[str] = None,
         provider: str = "baileys",
         source: str = "api"
     ) -> int:
@@ -192,10 +205,10 @@ class MessageQueueDB:
             cursor = conn.execute(
                 """
                 INSERT INTO message_queue 
-                (phone, message, pdf_url, provider, status, source, next_retry_at)
-                VALUES (?, ?, ?, ?, 'pending', ?, ?)
+                (phone, message, pdf_url, file_name, provider, status, source, next_retry_at)
+                VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
                 """,
-                (phone, message, pdf_url, provider, source, datetime.now())
+                (phone, message, pdf_url, file_name, provider, source, datetime.now())
             )
             conn.commit()
             message_id = cursor.lastrowid
@@ -248,11 +261,11 @@ class MessageQueueDB:
                 conn.execute(
                     """
                     INSERT INTO message_history 
-                    (queue_id, phone, message, pdf_url, provider, source, status, 
+                    (queue_id, phone, message, pdf_url, file_name, provider, source, status, 
                      retry_count, message_id, delivery_status, delivery_updated_at,
                      delivered_at, read_at, failed_at, recipient_waid,
                      created_at, sent_at, completed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         # sqlite3.Row behaves like a mapping but has no .get()
@@ -261,6 +274,7 @@ class MessageQueueDB:
                         (resolved_phone or row['phone']),
                         row['message'],
                         row['pdf_url'],
+                        row['file_name'] if 'file_name' in row.keys() else None,
                         provider,
                         (row['source'] if 'source' in row.keys() else 'api'),
                         row['retry_count'],
@@ -325,13 +339,14 @@ class MessageQueueDB:
                 conn.execute(
                     """
                     INSERT INTO dead_letter_queue 
-                    (queue_id, phone, message, pdf_url, provider, source, retry_count, 
+                    (queue_id, phone, message, pdf_url, file_name, provider, source, retry_count, 
                      final_error, created_at, failed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         queue_id, msg_row['phone'], msg_row['message'],
-                        msg_row['pdf_url'], msg_row['provider'], (msg_row['source'] if 'source' in msg_row.keys() else 'api'),
+                        msg_row['pdf_url'], (msg_row['file_name'] if 'file_name' in msg_row.keys() else None),
+                        msg_row['provider'], (msg_row['source'] if 'source' in msg_row.keys() else 'api'),
                         new_retry_count, error_message,
                         msg_row['created_at'], now
                     )
@@ -575,12 +590,12 @@ class MessageQueueDB:
             conn.execute(
                 """
                 INSERT INTO message_queue 
-                (phone, message, pdf_url, provider, status, retry_count, 
+                (phone, message, pdf_url, file_name, provider, status, retry_count, 
                  next_retry_at, created_at, updated_at, source)
-                VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)
                 """,
                 (
-                    row['phone'], row['message'], row['pdf_url'],
+                    row['phone'], row['message'], row['pdf_url'], (row['file_name'] if 'file_name' in row.keys() else None),
                     row['provider'], datetime.now(),
                     row['created_at'], datetime.now(), (row['source'] if 'source' in row.keys() else 'api')
                 )

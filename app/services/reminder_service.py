@@ -39,6 +39,7 @@ from app.database.message_queue import message_db
 from app.database.reminder_snapshot import reminder_snapshot_db
 from app.config import get_roaming_appdata_path, get_settings
 from app.services.reminder_snapshot_service import reminder_snapshot_service
+from app.utils.file_naming import build_pdf_filename
 from app.constants.reminder_constants import (
     REMINDER_STATUS_COMPLETED,
     REMINDER_STATUS_FAILED,
@@ -459,7 +460,6 @@ class ReminderService:
             session.state = SessionState.ONLINE
 
             results = {}
-            templates_used: Dict[str, str] = {}
 
             for i, party_code in enumerate(party_codes):
                 try:
@@ -481,7 +481,6 @@ class ReminderService:
                         party_templates=party_templates,
                         company_id=company_id
                     )
-                    templates_used[party_code] = effective_template_id
 
                     effective_template = next((t for t in config.templates if t.id == effective_template_id), None)
                     if effective_template is None:
@@ -533,6 +532,10 @@ class ReminderService:
                     if party_info.phone:
                         provider_name = self._resolve_delivery_provider(config.default_provider)
                         media_ref = pdf_path if provider_name == "baileys" else None
+                        file_name = build_pdf_filename(
+                            kind="ledger",
+                            customer_name=(getattr(party_info, "print_name", None) or getattr(party_info, "name", None)),
+                        )
 
                         if media_ref is None:
                             logger.warning(
@@ -545,6 +548,7 @@ class ReminderService:
                             phone=party_info.phone,
                             message=message,
                             pdf_url=media_ref,
+                            file_name=file_name,
                             provider=provider_name,
                             source="payment_reminder"
                         )
@@ -581,8 +585,6 @@ class ReminderService:
                         "status": "failed",
                         "error": str(ex)
                     }
-
-            self._persist_template_overrides(templates_used, company_id=company_id)
 
             batch.status = REMINDER_STATUS_COMPLETED
             batch.results = results
@@ -665,7 +667,11 @@ class ReminderService:
         3. Batch default template
         """
         if party_templates and party_code in party_templates:
-            return party_templates[party_code]
+            explicit_template = (party_templates[party_code] or "").strip()
+            if explicit_template:
+                return explicit_template
+            # Explicit "use default" for this request.
+            return batch_template_id
 
         config = self.config_service.get_config(scope_key=company_id)
         party_config = config.parties.get(party_code)
@@ -674,26 +680,75 @@ class ReminderService:
 
         return batch_template_id
 
-    def _persist_template_overrides(self, templates_used: Dict[str, str], company_id: str = "default") -> None:
-        """
-        Persist template overrides to party configs for parties where
-        a non-default template was used in this batch.
-        """
+    def persist_explicit_template_overrides(
+        self, explicit_overrides: Optional[Dict[str, str]], company_id: str = "default"
+    ) -> None:
+        """Persist only explicit per-party template choices from request payload."""
+        if not explicit_overrides:
+            return
+
         config = self.config_service.get_config(scope_key=company_id)
         changed = False
-        
-        for party_code, template_id in templates_used.items():
+
+        for party_code, template_id in explicit_overrides.items():
             party_config = config.parties.get(party_code)
             if party_config is None:
                 party_config = PartyConfig()
 
-            if party_config.custom_template_id != template_id:
-                party_config.custom_template_id = template_id
+            explicit_template = (template_id or "").strip()
+            new_value = explicit_template or None
+
+            if party_config.custom_template_id != new_value:
+                party_config.custom_template_id = new_value
                 config.parties[party_code] = party_config
                 changed = True
-                
+
         if changed:
             self.config_service.save_config(config, scope_key=company_id)
+            logger.info(
+                "persisted_explicit_template_overrides",
+                company_id=company_id,
+                count=len(explicit_overrides),
+            )
+
+    def persist_selection_preferences_on_send_start(
+        self, selected_party_codes: List[str], company_id: str = "default"
+    ) -> None:
+        """
+        Persist enabled defaults for the current eligible snapshot universe.
+        Parties not present in this universe are intentionally left untouched.
+        """
+        selected = {str(code) for code in selected_party_codes}
+        eligible_codes = self.snapshot_db.get_positive_due_party_codes(company_id=company_id)
+        if not eligible_codes:
+            logger.info("selection_persist_skipped_no_eligible_snapshot", company_id=company_id)
+            return
+
+        config = self.config_service.get_config(scope_key=company_id)
+        changed = False
+
+        for party_code in eligible_codes:
+            existing = config.parties.get(party_code)
+            party_config = existing or PartyConfig()
+            should_enable = party_code in selected
+            if existing is None or existing.enabled != should_enable:
+                party_config.enabled = should_enable
+                config.parties[party_code] = party_config
+                changed = True
+
+        if changed:
+            self.config_service.save_config(config, scope_key=company_id)
+
+        self.snapshot_db.set_permanent_enabled_for_positive_due(
+            selected_codes=list(selected), company_id=company_id
+        )
+        logger.info(
+            "selection_preferences_persisted",
+            company_id=company_id,
+            eligible_count=len(eligible_codes),
+            selected_count=len(selected),
+            config_changed=changed,
+        )
 
     async def get_session_status(self, session_id: str) -> Optional[dict]:
         """Get status of a reminder session.

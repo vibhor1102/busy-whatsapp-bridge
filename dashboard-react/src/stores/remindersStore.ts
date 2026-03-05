@@ -33,6 +33,7 @@ interface RemindersActions {
   setParties: (parties: PartyReminderInfo[]) => void;
   setDefaultTemplateId: (id: string) => void;
   setPartyTemplate: (partyCode: string, templateId: string) => void;
+  clearPartyTemplate: (partyCode: string) => void;
   setAntiSpamConfig: (config: AntiSpamConfig) => void;
   setActiveSession: (session: ReminderSession | null) => void;
   togglePartySelection: (partyCode: string) => void;
@@ -83,6 +84,12 @@ export const useRemindersStore = create<RemindersState & RemindersActions>((set,
         [partyCode]: templateId,
       },
     });
+  },
+  clearPartyTemplate: (partyCode) => {
+    const { partyTemplates } = get();
+    const next = { ...partyTemplates };
+    delete next[partyCode];
+    set({ partyTemplates: next });
   },
 
   setAntiSpamConfig: (antiSpamConfig) => set({ antiSpamConfig }),

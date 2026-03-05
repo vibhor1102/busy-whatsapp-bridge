@@ -50,6 +50,7 @@ class MessageQueueService:
         phone: str,
         message: str,
         pdf_url: Optional[str] = None,
+        file_name: Optional[str] = None,
         provider: str = "baileys",
         source: str = "busy"
     ) -> dict:
@@ -58,6 +59,7 @@ class MessageQueueService:
             phone=phone,
             message=message,
             pdf_url=pdf_url,
+            file_name=file_name,
             provider=provider,
             source=source
         )
@@ -75,6 +77,7 @@ class MessageQueueService:
         phone = message['phone']
         text = message['message']
         pdf_url = message['pdf_url']
+        file_name = message['file_name'] if 'file_name' in message else None
         provider_name = message['provider']
         
         try:
@@ -117,7 +120,8 @@ class MessageQueueService:
             wa_message = WhatsAppMessage(
                 to=phone,
                 body=text,
-                media_url=pdf_url
+                media_url=pdf_url,
+                file_name=file_name,
             )
             
             # Send the message

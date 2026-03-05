@@ -12,6 +12,7 @@ from app.models.schemas import (
 )
 from app.services.whatsapp import get_whatsapp_provider
 from app.services.queue_service import queue_service
+from app.utils.file_naming import build_pdf_filename
 
 logger = structlog.get_logger()
 
@@ -102,8 +103,13 @@ class BusyHandler:
                     cleaned_msg, 
                     party
                 )
+                file_name = build_pdf_filename(
+                    kind="invoice",
+                    customer_name=party.print_name or party.name,
+                )
             else:
                 enhanced_message = cleaned_msg
+                file_name = build_pdf_filename(kind="invoice")
                 logger.warning(
                     "party_not_found_in_db",
                     phone=notification.phone,
@@ -115,6 +121,7 @@ class BusyHandler:
                 phone=notification.phone,
                 message=enhanced_message,
                 pdf_url=extracted_pdf_url,
+                file_name=file_name,
                 provider=self.settings.WHATSAPP_PROVIDER,
                 source="busy"
             )

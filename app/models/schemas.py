@@ -78,13 +78,15 @@ class WhatsAppMessage(BaseModel):
     to: str = Field(..., description="Recipient phone number")
     body: str = Field(..., description="Message body")
     media_url: Optional[str] = Field(None, description="Media/PDF URL")
+    file_name: Optional[str] = Field(None, description="Media filename for WhatsApp")
     
     class Config:
         json_schema_extra = {
             "example": {
                 "to": "+919876543210",
                 "body": "Your invoice is ready",
-                "media_url": "https://example.com/invoice.pdf"
+                "media_url": "https://example.com/invoice.pdf",
+                "file_name": "abc_enterprises_invoice_05-03-2026.pdf"
             }
         }
 
