@@ -168,6 +168,15 @@ class MessageQueueDB:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
             
             # Indexes for performance
             conn.execute("""
@@ -219,7 +228,55 @@ class MessageQueueDB:
                 CREATE INDEX IF NOT EXISTS idx_dead_letter_batch_party ON dead_letter_queue(batch_id, party_code)
             """)
             conn.commit()
+            self._cleanup_legacy_test_data(conn)
             logger.info("message_queue_db_initialized", db_path=str(self.db_path))
+
+    def _get_app_state(self, conn: sqlite3.Connection, key: str) -> Optional[str]:
+        row = conn.execute(
+            "SELECT value FROM app_state WHERE key = ?",
+            (key,),
+        ).fetchone()
+        if not row:
+            return None
+        return row["value"]
+
+    def _set_app_state(self, conn: sqlite3.Connection, key: str, value: str) -> None:
+        conn.execute(
+            """
+            INSERT INTO app_state (key, value, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (key, value),
+        )
+
+    def _cleanup_legacy_test_data(self, conn: sqlite3.Connection) -> None:
+        marker = "cleanup_test_source_v1_done"
+        already_marked = self._get_app_state(conn, marker) == "1"
+        queue_deleted = conn.execute(
+            "DELETE FROM message_queue WHERE source = ?",
+            ("test",),
+        ).rowcount
+        history_deleted = conn.execute(
+            "DELETE FROM message_history WHERE source = ?",
+            ("test",),
+        ).rowcount
+        dead_letter_deleted = conn.execute(
+            "DELETE FROM dead_letter_queue WHERE source = ?",
+            ("test",),
+        ).rowcount
+        if not already_marked:
+            self._set_app_state(conn, marker, "1")
+        conn.commit()
+        if (queue_deleted + history_deleted + dead_letter_deleted) > 0 or not already_marked:
+            logger.info(
+                "legacy_test_data_cleanup_complete",
+                queue_deleted=queue_deleted,
+                history_deleted=history_deleted,
+                dead_letter_deleted=dead_letter_deleted,
+            )
 
     def _has_column(self, conn: sqlite3.Connection, table_name: str, column_name: str) -> bool:
         """Check whether a table has the requested column."""
@@ -590,11 +647,14 @@ class MessageQueueDB:
         queue_id: int,
         message_id: str,
         provider: str,
-        delivery_status: str = "delivered",
+        delivery_status: str = "accepted",
         resolved_phone: Optional[str] = None,
     ):
         """Mark message as successfully sent and move to history."""
         now = datetime.now()
+        normalized_delivery = (delivery_status or "accepted").strip().lower()
+        if normalized_delivery not in {"accepted", "sent", "delivered", "read", "failed", "unknown"}:
+            normalized_delivery = "accepted"
         
         with self._get_connection() as conn:
             # Get message data
@@ -627,11 +687,11 @@ class MessageQueueDB:
                         (row['source'] if 'source' in row.keys() else 'api'),
                         row['retry_count'],
                         message_id,
-                        delivery_status,
+                        normalized_delivery,
                         now,
-                        (now if (delivery_status or "").strip().lower() == "delivered" else None),
-                        (now if (delivery_status or "").strip().lower() == "read" else None),
-                        (now if (delivery_status or "").strip().lower() == "failed" else None),
+                        (now if normalized_delivery == "delivered" else None),
+                        (now if normalized_delivery == "read" else None),
+                        (now if normalized_delivery == "failed" else None),
                         (resolved_phone.lstrip('+') if resolved_phone else None),
                         (row['batch_id'] if 'batch_id' in row.keys() else None),
                         (row['party_code'] if 'party_code' in row.keys() else None),
@@ -645,7 +705,7 @@ class MessageQueueDB:
                     and row["batch_id"]
                     and row["party_code"]
                 ):
-                    mapped_status = "sent" if (delivery_status or "").strip().lower() != "failed" else "failed"
+                    mapped_status = "sent" if normalized_delivery != "failed" else "failed"
                     conn.execute(
                         """
                         UPDATE reminder_batch_recipients
@@ -664,10 +724,10 @@ class MessageQueueDB:
                             message_id,
                             (resolved_phone or row["phone"]),
                             mapped_status,
-                            (delivery_status or "unknown").strip().lower(),
-                            (delivery_status or "").strip().lower(),
-                            (delivery_status or "").strip().lower(),
-                            (delivery_status or "").strip().lower(),
+                            normalized_delivery,
+                            normalized_delivery,
+                            normalized_delivery,
+                            normalized_delivery,
                             now,
                             row["batch_id"],
                             row["party_code"],
@@ -687,9 +747,21 @@ class MessageQueueDB:
                     queue_id=queue_id,
                     message_id=message_id,
                     provider=provider,
-                    delivery_status=delivery_status,
+                    delivery_status=normalized_delivery,
                     phone=resolved_phone or row['phone'],
                 )
+
+    @staticmethod
+    def _delivery_rank(status: str) -> int:
+        order = {
+            "unknown": 0,
+            "accepted": 1,
+            "sent": 2,
+            "delivered": 3,
+            "read": 4,
+            "failed": 5,
+        }
+        return order.get((status or "unknown").strip().lower(), 0)
     
     def mark_message_failed(
         self,
@@ -855,6 +927,8 @@ class MessageQueueDB:
         normalized = (delivery_status or "").strip().lower()
         if not normalized:
             normalized = "unknown"
+        if normalized not in {"accepted", "sent", "delivered", "read", "failed", "unknown"}:
+            normalized = "unknown"
 
         final_status = "failed" if normalized == "failed" else "sent"
         payload_text = json.dumps(raw_payload, ensure_ascii=False) if raw_payload else None
@@ -864,7 +938,7 @@ class MessageQueueDB:
 
         with self._get_connection() as conn:
             cursor = conn.execute(
-                "SELECT id FROM message_history WHERE message_id = ? ORDER BY id DESC LIMIT 1",
+                "SELECT id, delivery_status FROM message_history WHERE message_id = ? ORDER BY id DESC LIMIT 1",
                 (message_id,),
             )
             row = cursor.fetchone()
@@ -877,6 +951,28 @@ class MessageQueueDB:
                 return False
 
             history_id = row["id"]
+            current_delivery = (row["delivery_status"] or "unknown").strip().lower()
+            # Monotonic lifecycle updates:
+            # accepted -> sent -> delivered -> read
+            # failed is terminal unless existing state is read (do not regress from read).
+            if current_delivery == "read" and normalized != "read":
+                logger.info(
+                    "delivery_status_update_ignored",
+                    message_id=message_id,
+                    current_status=current_delivery,
+                    incoming_status=normalized,
+                    reason="current_read_terminal",
+                )
+                return True
+            if normalized != "failed" and self._delivery_rank(normalized) < self._delivery_rank(current_delivery):
+                logger.info(
+                    "delivery_status_update_ignored",
+                    message_id=message_id,
+                    current_status=current_delivery,
+                    incoming_status=normalized,
+                    reason="non_monotonic",
+                )
+                return True
             current_error = error_message
             if payload_text:
                 if current_error:

@@ -8,6 +8,7 @@ const BaileysClient = require('./baileys-client');
 const app = express();
 const PORT = process.env.BAILEYS_PORT || 3001;
 const AUTH_DIR = process.env.BAILEYS_AUTH_DIR || path.join(__dirname, 'auth', 'baileys_session');
+const DELIVERY_WEBHOOK_URL = process.env.BWB_DELIVERY_WEBHOOK_URL || 'http://localhost:8000/api/v1/baileys/delivery-status';
 
 app.use(express.json());
 
@@ -31,6 +32,22 @@ const client = new BaileysClient({
     authDir: AUTH_DIR,
     logLevel: process.env.BAILEYS_LOG_LEVEL || 'info'
 });
+
+async function postDeliveryUpdate(payload) {
+    try {
+        const response = await fetch(DELIVERY_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+            const body = await response.text();
+            console.error('[DELIVERY] Callback failed:', response.status, body);
+        }
+    } catch (error) {
+        console.error('[DELIVERY] Callback error:', error.message);
+    }
+}
 
 client.on('qr', async (qr) => {
     console.log('[QR] New QR code generated');
@@ -67,6 +84,17 @@ client.on('reconnecting', (data) => {
     broadcastSSE({
         type: 'reconnecting',
         data: data
+    });
+});
+
+client.on('delivery_update', (data) => {
+    const recipient = (data.recipientWaid || '').replace('@s.whatsapp.net', '');
+    postDeliveryUpdate({
+        message_id: data.messageId,
+        delivery_status: data.deliveryStatus,
+        recipient_waid: recipient || null,
+        event_time: new Date(data.eventTime || Date.now()).toISOString(),
+        raw_payload: data.raw || null,
     });
 });
 

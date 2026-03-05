@@ -61,6 +61,7 @@ TRAY_ICON: Optional[Any] = None
 INSTANCE_MUTEX_HANDLE = None
 LOG_QUEUE: queue.Queue = queue.Queue()
 CONSOLE_MODE = True
+LAST_SERVER_LINE: Dict[str, tuple[str, float]] = {}
 
 
 ANSI_COLORS = {
@@ -94,11 +95,18 @@ def log(prefix: str, message: str, color: str = 'white'):
     LOG_QUEUE.put(line)
 
 def log_raw(server: str, line: str):
+    text = line.rstrip()
+    now = time.time()
+    prev = LAST_SERVER_LINE.get(server)
+    if prev and prev[0] == text and (now - prev[1]) < 0.75:
+        return
+    LAST_SERVER_LINE[server] = (text, now)
+
     if CONSOLE_MODE:
         color = 'cyan' if server == 'baileys' else 'magenta'
         prefix = colorize(f"[{server}]", color)
-        print(f"{colorize(f'[{timestamp()}]', 'dim')} {prefix} {line.rstrip()}", flush=True)
-    LOG_QUEUE.put(f"[{timestamp()}] [{server}] {line.rstrip()}")
+        print(f"{colorize(f'[{timestamp()}]', 'dim')} {prefix} {text}", flush=True)
+    LOG_QUEUE.put(f"[{timestamp()}] [{server}] {text}")
 
 def write_to_log_file():
     log_file = LOG_DIR / f"gateway_{datetime.now().strftime('%Y%m%d')}.log"

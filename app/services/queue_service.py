@@ -128,9 +128,7 @@ class MessageQueueService:
             result = await provider.send_message(wa_message)
             
             if result.success:
-                delivery_status = result.delivery_status
-                if not delivery_status:
-                    delivery_status = "delivered"
+                delivery_status = (result.delivery_status or "accepted").strip().lower()
                 # Mark as sent
                 message_db.mark_message_sent(
                     queue_id=queue_id,
@@ -279,8 +277,6 @@ class MessageQueueService:
     
     async def _worker_loop(self):
         """Background worker loop."""
-        logger.info("message_queue_worker_started")
-        
         while self._processing:
             try:
                 # 1. Prune history once a day

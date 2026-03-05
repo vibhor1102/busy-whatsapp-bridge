@@ -103,7 +103,7 @@ class BaileysProvider(WhatsAppProvider):
                 return WhatsAppResponse(
                     success=True,
                     message_id=result.get("data", {}).get("messageId"),
-                    delivery_status="delivered",
+                    delivery_status="accepted",
                     normalized_to=normalize_phone_e164(message.to, self.default_country_code),
                     error=None
                 )

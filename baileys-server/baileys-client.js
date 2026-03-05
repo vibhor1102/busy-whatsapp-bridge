@@ -255,6 +255,50 @@ class BaileysClient extends EventEmitter {
                 });
             }
         });
+
+        this.socket.ev.on('messages.update', (updates) => {
+            if (generation !== this.socketGeneration) {
+                return;
+            }
+            if (!Array.isArray(updates)) {
+                return;
+            }
+            for (const item of updates) {
+                try {
+                    const key = item?.key || {};
+                    if (!key.id || !key.fromMe) {
+                        continue;
+                    }
+                    const statusValue = Number(item?.update?.status);
+                    const mappedStatus = this.mapMessageStatus(statusValue);
+                    if (!mappedStatus) {
+                        continue;
+                    }
+                    this.emit('delivery_update', {
+                        messageId: key.id,
+                        deliveryStatus: mappedStatus,
+                        recipientWaid: key.remoteJid || null,
+                        eventTime: Date.now(),
+                        raw: item,
+                    });
+                } catch (error) {
+                    this.logger.debug({ error: error.message }, 'Failed to map messages.update item');
+                }
+            }
+        });
+    }
+
+    mapMessageStatus(statusValue) {
+        if (!Number.isFinite(statusValue)) {
+            return null;
+        }
+        // Baileys/WA status generally escalates numerically.
+        // We keep a conservative mapping for lifecycle reporting.
+        if (statusValue >= 4) return 'read';
+        if (statusValue >= 3) return 'delivered';
+        if (statusValue >= 2) return 'sent';
+        if (statusValue >= 1) return 'accepted';
+        return 'accepted';
     }
 
     getStatus() {

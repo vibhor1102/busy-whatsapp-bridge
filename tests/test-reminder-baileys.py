@@ -109,7 +109,7 @@ async def test_reminder_queue_flow():
             message="This is a test payment reminder from Busy WhatsApp Bridge via Baileys.",
             pdf_url=test_pdf_path,
             provider="baileys",
-            source="test"
+            source="integration_test"
         )
         
         queue_id = result.get("queue_id")

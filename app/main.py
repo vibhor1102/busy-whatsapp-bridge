@@ -71,6 +71,15 @@ structlog.configure(
 
 logger = structlog.get_logger()
 
+class BaileysDeliveryUpdate(BaseModel):
+    """Internal callback payload for Baileys delivery lifecycle updates."""
+    message_id: str = Field(..., description="Provider message ID")
+    delivery_status: str = Field(..., description="accepted|sent|delivered|read|failed")
+    recipient_waid: Optional[str] = Field(None, description="Recipient waid/number if available")
+    error: Optional[str] = Field(None, description="Error text for failed updates")
+    event_time: Optional[datetime] = Field(None, description="Provider event timestamp")
+    raw_payload: Optional[dict] = Field(None, description="Raw provider payload for diagnostics")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -143,7 +152,6 @@ async def lifespan(app: FastAPI):
     # Start queue worker automatically so webhook-queued messages are delivered.
     try:
         queue_service.start_worker()
-        logger.info("message_queue_worker_started")
     except Exception as e:
         logger.error("message_queue_worker_start_failed", error=str(e))
     
@@ -620,6 +628,30 @@ async def get_message_history(
         "limit": limit,
         "offset": offset,
         "messages": history
+    }
+
+
+@app.post("/api/v1/baileys/delivery-status", tags=["Baileys"])
+async def baileys_delivery_status(update: BaileysDeliveryUpdate):
+    """Receive delivery lifecycle updates from Baileys bridge."""
+    normalized = (update.delivery_status or "").strip().lower()
+    if normalized not in {"accepted", "sent", "delivered", "read", "failed"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported delivery_status: {update.delivery_status}")
+
+    updated = message_db.update_delivery_status(
+        message_id=update.message_id,
+        delivery_status=normalized,
+        error_message=update.error,
+        recipient_waid=update.recipient_waid,
+        provider="baileys",
+        event_time=update.event_time,
+        raw_payload=update.raw_payload,
+    )
+    return {
+        "success": True,
+        "updated": updated,
+        "message_id": update.message_id,
+        "delivery_status": normalized,
     }
 
 

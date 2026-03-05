@@ -25,14 +25,16 @@ def test_delivery_status_lifecycle_update(tmp_path: Path):
         queue_id=queue_id,
         message_id="wamid.TEST123",
         provider="baileys",
-        delivery_status="delivered",
+        delivery_status="accepted",
         resolved_phone="+919215536993",
     )
 
     rows = db.get_message_history(source="payment_reminder", limit=5)
     assert len(rows) == 1
     assert rows[0]["status"] == "sent"
-    assert rows[0]["delivery_status"] == "delivered"
+    assert rows[0]["delivery_status"] == "accepted"
+    assert rows[0]["delivered_at"] is None
+    assert rows[0]["read_at"] is None
     assert rows[0]["phone"] == "+919215536993"
 
     # REMOVED: Meta webhook status updates - only Baileys available now
@@ -70,7 +72,7 @@ def test_baileys_delivery_and_history_time_filters(tmp_path: Path):
         queue_id=qid,
         message_id="wamid.TS1",
         provider="baileys",
-        delivery_status="delivered",
+        delivery_status="accepted",
         resolved_phone="+919999999999",
     )
 
@@ -81,3 +83,31 @@ def test_baileys_delivery_and_history_time_filters(tmp_path: Path):
         limit=10,
     )
     assert len(rows) >= 1
+
+
+def test_delivery_status_monotonic_and_idempotent(tmp_path: Path):
+    db = MessageQueueDB(db_path=str(tmp_path / "messages.db"))
+    qid = db.enqueue_message(
+        phone="+919999999999",
+        message="status flow",
+        provider="baileys",
+        source="payment_reminder",
+    )
+    db.mark_message_sent(
+        queue_id=qid,
+        message_id="wamid.MONO1",
+        provider="baileys",
+        delivery_status="accepted",
+        resolved_phone="+919999999999",
+    )
+
+    assert db.update_delivery_status(message_id="wamid.MONO1", delivery_status="delivered")
+    assert db.update_delivery_status(message_id="wamid.MONO1", delivery_status="sent")
+    # Non-monotonic downgrade should be ignored; remains delivered.
+    row = db.get_message_history(source="payment_reminder", limit=1)[0]
+    assert row["delivery_status"] == "delivered"
+
+    assert db.update_delivery_status(message_id="wamid.MONO1", delivery_status="read")
+    assert db.update_delivery_status(message_id="wamid.MONO1", delivery_status="read")
+    row = db.get_message_history(source="payment_reminder", limit=1)[0]
+    assert row["delivery_status"] == "read"

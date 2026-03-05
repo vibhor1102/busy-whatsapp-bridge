@@ -4,20 +4,16 @@ Test script for message queue system.
 Tests enqueue, processing, retry logic, and history tracking.
 """
 
-import asyncio
-import sys
-from datetime import datetime, timedelta
+import os
 from pathlib import Path
 
-# Add parent directory to path (go up one level from tests/)
-script_dir = Path(__file__).parent
-sys.path.insert(0, str(script_dir.parent))
-
-from app.database.message_queue import message_db
+from app.database.message_queue import MessageQueueDB
 
 
-def test_queue_operations():
+def test_queue_operations(tmp_path: Path):
     """Test basic queue operations."""
+    message_db = MessageQueueDB(db_path=str(tmp_path / "messages.db"))
+
     print("=" * 60)
     print("Testing Message Queue System")
     print("=" * 60)
@@ -166,4 +162,10 @@ def test_queue_operations():
 
 
 if __name__ == "__main__":
-    test_queue_operations()
+    if os.environ.get("ALLOW_LIVE_QUEUE_TESTS", "").strip() != "1":
+        raise SystemExit(
+            "Refusing direct execution by default. "
+            "Use pytest (isolated tmp DB) or set ALLOW_LIVE_QUEUE_TESTS=1 for manual run."
+        )
+    # Explicit opt-in manual run still uses a local DB file in repo root.
+    test_queue_operations(Path("."))
