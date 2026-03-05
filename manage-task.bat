@@ -23,6 +23,14 @@ IF NOT EXIST "%PYTHON_EXE%" (
     exit /b 1
 )
 
+REM Non-interactive mode (for installer/scripts):
+REM   manage-task.bat install|remove|status|start|stop
+IF /I "%~1"=="install" GOTO cli_install
+IF /I "%~1"=="remove" GOTO cli_remove
+IF /I "%~1"=="status" GOTO cli_status
+IF /I "%~1"=="start" GOTO cli_start
+IF /I "%~1"=="stop" GOTO cli_stop
+
 :menu
 cls
 echo ================================================
@@ -129,3 +137,33 @@ echo Goodbye!
 echo.
 ENDLOCAL
 exit /b 0
+
+:cli_install
+"%PYTHON_EXE%" -m app.task_scheduler install
+SET "EXIT_CODE=%ERRORLEVEL%"
+ENDLOCAL
+exit /b %EXIT_CODE%
+
+:cli_remove
+"%PYTHON_EXE%" -m app.task_scheduler remove
+SET "EXIT_CODE=%ERRORLEVEL%"
+ENDLOCAL
+exit /b %EXIT_CODE%
+
+:cli_status
+"%PYTHON_EXE%" -m app.task_scheduler status
+SET "EXIT_CODE=%ERRORLEVEL%"
+ENDLOCAL
+exit /b %EXIT_CODE%
+
+:cli_start
+"%PYTHON_EXE%" -m app.task_scheduler start
+SET "EXIT_CODE=%ERRORLEVEL%"
+ENDLOCAL
+exit /b %EXIT_CODE%
+
+:cli_stop
+"%PYTHON_EXE%" -m app.task_scheduler stop
+SET "EXIT_CODE=%ERRORLEVEL%"
+ENDLOCAL
+exit /b %EXIT_CODE%

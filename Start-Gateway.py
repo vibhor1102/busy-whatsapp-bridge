@@ -30,13 +30,21 @@ def get_executable_dir() -> Path:
 
 def find_venv_python(program_dir: Path) -> Path:
     """Find the virtual environment Python executable."""
-    # Check for venv in program directory
+    # Prefer pythonw for normal GUI/tray startup to avoid any console windows.
+    venv_pythonw = program_dir / "venv" / "Scripts" / "pythonw.exe"
+    if venv_pythonw.exists():
+        return venv_pythonw
+
+    # Fallback to console Python if pythonw is unavailable.
     venv_python = program_dir / "venv" / "Scripts" / "python.exe"
-    
     if venv_python.exists():
         return venv_python
-    
+
     # Check for bundled Python (fallback)
+    bundled_python = program_dir / "python" / "pythonw.exe"
+    if bundled_python.exists():
+        return bundled_python
+
     bundled_python = program_dir / "python" / "python.exe"
     if bundled_python.exists():
         return bundled_python
@@ -60,6 +68,7 @@ def run_setup_if_needed(program_dir: Path, silent: bool = False) -> bool:
     
     setup_script = program_dir / "setup.py"
     bundled_python = program_dir / "python" / "python.exe"
+    bundled_pythonw = program_dir / "python" / "pythonw.exe"
     
     if not setup_script.exists():
         print("ERROR: setup.py not found!")
@@ -70,11 +79,18 @@ def run_setup_if_needed(program_dir: Path, silent: bool = False) -> bool:
         return False
 
     try:
-        args = [str(bundled_python), str(setup_script)]
+        setup_python = bundled_python
+        if silent and bundled_pythonw.exists():
+            setup_python = bundled_pythonw
+
+        args = [str(setup_python), str(setup_script)]
         if silent:
             args.append("--silent")
 
-        result = subprocess.run(args, check=True)
+        run_kwargs = {}
+        if silent and sys.platform == "win32":
+            run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        result = subprocess.run(args, check=True, **run_kwargs)
         return result.returncode == 0
     except subprocess.CalledProcessError:
         print("ERROR: Setup failed!")
@@ -94,10 +110,15 @@ def cleanup_existing_runtime() -> None:
         "Select-Object -ExpandProperty OwningProcess -Unique | "
         "ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }"
     )
+    kwargs = {
+        "capture_output": True,
+        "text": True,
+    }
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     subprocess.run(
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cleanup_cmd],
-        capture_output=True,
-        text=True
+        **kwargs
     )
 
 
@@ -205,7 +226,10 @@ def main():
         os.chdir(program_dir)
         
         # Execute run.py
-        result = subprocess.run(cmd)
+        run_kwargs = {}
+        if sys.platform == "win32":
+            run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        result = subprocess.run(cmd, **run_kwargs)
         return result.returncode
         
     except KeyboardInterrupt:

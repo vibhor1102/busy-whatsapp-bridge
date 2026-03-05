@@ -73,15 +73,22 @@ source venv/Scripts/activate  # Git Bash
 
 ## Build System Guide
 
-Reference: `docs/BUILD_SYSTEM_GUIDE.md` - Complete Windows application build instructions. Detailed technical docs are available in the `docs/` folder for reference.
+Reference: `docs/BUILD_SYSTEM_GUIDE.md` - Complete Windows application build instructions.
 
 **Dashboard:** React 19 + TypeScript in `dashboard-react/` (not `dashboard/`)
 
 **One-File Philosophy:**
 - `run-dev.bat` - Development launcher (one file, auto-builds dashboard)
 - `run.py` - Production launcher (one file, system tray, process orchestration)
+- `build-all.bat` - **Single orchestrator** for production builds. Builds dashboard → EXE → stages files into `release_dist/` → calls Inno Setup → signs installer. No other build script needed.
 
-**Production Build:** `./build-all.bat` - Builds dashboard → EXE → installer
+**Staging Approach:** `build-all.bat` collects all release files into `release_dist/` (gitignored). `installer.iss` packages that folder. New files/folders in `app/` are auto-included. Root-level files use a required/optional manifest in the bat script.
+
+**Deprecated:** `build-installer.bat` — responsibilities absorbed into `build-all.bat`.
+
+**Agent Notes (Build):**
+- In `build-all.bat`, install Baileys deps before copying `baileys-server` into `release_dist`.
+- `build-all.bat` supports non-interactive mode: set `BUILD_NO_PAUSE=1` (or `CI=true`).
 
 ---
 
@@ -105,6 +112,12 @@ This is a **portable bundled distribution** with Python and all dependencies inc
 ./manage-task.bat              # Menu: enable/disable auto-start
 ./Start-Gateway.py --tray     # Manual start with tray icon
 ```
+
+**Agent Notes (Runtime/Installer):**
+- Installer auto-start must call `venv\Scripts\python.exe -m app.task_scheduler install` (never hidden interactive `manage-task.bat`).
+- Task Scheduler task name is `BusyWhatsappBridge` (same for uninstall cleanup).
+- End-user launch path must stay windowless (`Start-Gateway.py` prefers `pythonw.exe`).
+- `manage-task.bat` supports CLI mode: `install|remove|status|start|stop`.
 
 ---
 
@@ -283,8 +296,8 @@ Configuration stored in `%APPDATA%\BusyWhatsappBridge\conf.json`:
 ## Version Management
 
 - **Source of Truth:** `version.json` (root).
-- **Access:** `app/version.py` reads it dynamically.
-- **Builds:** Scripts use `app.version.get_version()`.
+- **Access:** `app/version.py` reads it dynamically. Fallback: `0.0.0.0` (Inno Setup compatible).
+- **Builds:** `build-all.bat` reads `version.json` via Python temp-file redirect, passes to Inno Setup via `/DMyAppVersion=X.X.X`.
 
 ## Baileys (WhatsApp Web)
 

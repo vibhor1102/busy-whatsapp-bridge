@@ -135,11 +135,17 @@ def stream_output(server: str, pipe):
 def check_prerequisites() -> bool:
     log('SYSTEM', 'Checking prerequisites...', 'yellow')
     
-    node_result = subprocess.run(['node', '--version'], capture_output=True, text=True, timeout=5)
-    if node_result.returncode != 0:
-        log('SYSTEM', 'ERROR: Node.js not found! Install from https://nodejs.org/', 'red')
+    try:
+        node_result = subprocess.run(['node', '--version'], capture_output=True, text=True, timeout=5)
+        if node_result.returncode != 0:
+            raise FileNotFoundError("node returned non-zero")
+        log('SYSTEM', f'Node.js: {node_result.stdout.strip()}', 'green')
+    except (FileNotFoundError, OSError):
+        error_msg = "Node.js is not installed!\n\nPlease install Node.js from:\nhttps://nodejs.org/\n\nThen restart the application."
+        log('SYSTEM', f'ERROR: {error_msg}', 'red')
+        if sys.platform == 'win32':
+            ctypes.windll.user32.MessageBoxW(0, error_msg, "Missing Dependency: Node.js", 0x10)
         return False
-    log('SYSTEM', f'Node.js: {node_result.stdout.strip()}', 'green')
     
     py_result = subprocess.run([sys.executable, '--version'], capture_output=True, text=True, timeout=5)
     if py_result.returncode != 0:
@@ -160,6 +166,12 @@ def check_prerequisites() -> bool:
                     ctypes.windll.user32.MessageBoxW(0, error_msg, "Dependency Installation Error", 0x10) # 0x10 = MB_ICONERROR
                 return False
             log('SYSTEM', 'Baileys dependencies installed', 'green')
+        except (FileNotFoundError, OSError):
+            error_msg = "npm is not installed!\n\nPlease install Node.js (which includes npm) from:\nhttps://nodejs.org/\n\nThen restart the application."
+            log('SYSTEM', f'ERROR: {error_msg}', 'red')
+            if sys.platform == 'win32':
+                ctypes.windll.user32.MessageBoxW(0, error_msg, "Missing Dependency: npm", 0x10)
+            return False
         except subprocess.TimeoutExpired:
             error_msg = "Installation timed out. Please check your internet connection or run 'npm install' manually in 'baileys-server' folder."
             log('SYSTEM', f'ERROR: {error_msg}', 'red')

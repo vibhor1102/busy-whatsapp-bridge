@@ -273,10 +273,10 @@ class LedgerDataService:
         fallback_name = self._detect_company_name_fallback(company_id=company_id)
         logger.info("company_info_using_fallback", fallback_name=fallback_name)
         info = CompanyInfo(name=fallback_name)
-        self._company_info_cache = info
+        self._company_info_cache[company_id] = info
         return info
 
-    def _detect_company_name_fallback(self) -> str:
+    def _detect_company_name_fallback(self, company_id: str = "default") -> str:
         """
         Best-effort company name when Config rec-type mapping is unavailable.
         Priority:

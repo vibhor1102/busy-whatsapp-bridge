@@ -83,12 +83,12 @@ Filename: "{app}\{#MyAppExeName}"; \
     Description: "Launch Busy Whatsapp Bridge"; Flags: postinstall nowait skipifsilent unchecked
 
 ; Configure auto-start with Windows if selected
-Filename: "{app}\manage-task.bat"; Parameters: "install"; \
-    Description: "Configure auto-start"; Flags: runhidden; Tasks: autostart
+Filename: "{app}\venv\Scripts\python.exe"; Parameters: "-m app.task_scheduler install"; \
+    Description: "Configure auto-start"; Flags: runhidden waituntilterminated; Tasks: autostart
 
 [UninstallRun]
 ; Remove Task Scheduler task if it exists
-Filename: "schtasks"; Parameters: "/delete /tn ""BusyWhatsappBridge_AutoStart"" /f"; \
+Filename: "schtasks"; Parameters: "/delete /tn ""BusyWhatsappBridge"" /f"; \
     RunOnceId: "RemoveTask"; Flags: runhidden
 
 ; Run uninstall script before removing files

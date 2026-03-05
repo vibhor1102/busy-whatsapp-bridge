@@ -30,10 +30,9 @@ project-root/
 ├── Start-Gateway.py               ← EXE entry point 
 ├── run.py                         ← Production orchestrator (ONE FILE)
 ├── Run-Dev.bat                    ← Development launcher (ONE FILE)
-├── build-all.bat                  ← Master build script
-├── build-installer.bat            ← Inno Setup compiler wrapper
+├── build-all.bat                  ← Single build orchestrator (ONE FILE)
 ├── build-launcher-exe.py          ← PyInstaller build script
-├── installer.iss                  ← Inno Setup installer config
+├── installer.iss                  ← Inno Setup config (reads from release_dist/)
 ├── app.ico                        ← Application icon
 ├── version.json                   ← Single source of truth for version
 ├── app/                           ← Python backend (FastAPI)
@@ -43,6 +42,7 @@ project-root/
 │   └── dist/                      ← Built dashboard (production)
 ├── baileys-server/                ← Node.js WhatsApp server
 ├── python/                        ← Bundled Python (embeddable)
+├── release_dist/                  ← Staging directory (gitignored, built by build-all.bat)
 └── venv/                          ← Python virtual environment
 ```
 
@@ -83,22 +83,22 @@ copy Run-Dev.bat "%USERPROFILE%\Desktop\"
 ```
 
 ### What It Does (5 Steps)
-1. **Builds dashboard** — `npm install` + `npm run build` in `dashboard-react/`
-2. **Builds EXE** — PyInstaller creates `BusyWhatsappBridge.exe` with app icon
-3. **Signs EXE** — PowerShell script applies developer signature to the launcher
-4. **Builds installer** — Passes version to Inno Setup, compiles `installer.iss`
-5. **Signs installer** — Applies signature to the final setup EXE
+1. **Detects version** — Reads `version.json` via Python, checks Inno Setup installed
+2. **Builds dashboard** — `npm install` + `npm run build` in `dashboard-react/`
+3. **Builds EXE** — PyInstaller creates `BusyWhatsappBridge.exe` (+ signs it)
+4. **Stages files** — Copies all release files into `release_dist/` via robocopy. Root files use required/optional manifest. New `app/` subdirs auto-included.
+5. **Builds & signs installer** — Calls ISCC directly with version, signs output
 
 ### Output
 ```
-BusyWhatsappBridge-vX.X.X-Setup.exe  (~50-100 MB)
+BusyWhatsappBridge-vX.X.X-Setup.exe  (~60-70 MB)
 ```
 
 ### Version Management
 - Single source of truth: `version.json` (root)
-- Loaded by: `app/version.py` (which other scripts import)
-- `build-all.bat` & `build-installer.bat` read version dynamically via `app.version.get_version()`
-- Version is passed to Inno Setup via `/DMyAppVersion=X.X.X`
+- `build-all.bat` reads it via Python temp-file redirect (avoids batch quoting issues)
+- Passed to Inno Setup via `/DMyAppVersion=X.X.X`
+- Fallback: `0.0.0` (Inno Setup compatible numeric format)
 - To bump version: edit `version.json`, then rebuild
 
 ---
@@ -146,14 +146,16 @@ If users see a "Smart App Control" block, they must perform a one-time trust:
 | Post-install setup | Runs `setup.py --silent` automatically |
 
 ### What Gets Installed
+Everything in `release_dist/`, which includes:
 - `app/` — Python backend (excludes `__pycache__`)
 - `dashboard-react/dist/` — Pre-built React dashboard (dist only, not source)
 - `baileys-server/` — Node.js server + dependencies
 - `python/` — Bundled Python runtime
 - `venv/` — Virtual environment with all pip packages
+- `version.json` — Version info (so installed app reports correct version)
 - `run.py`, `Start-Gateway.py` — Launchers
 - `setup.py`, `uninstall.py` — Setup/cleanup scripts
-- Documentation: README, USER-GUIDE, INSTALL, LICENSE
+- Documentation: README, USER-GUIDE, INSTALL, LICENSE (optional: CHANGELOG)
 
 ---
 

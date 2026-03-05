@@ -17,7 +17,7 @@ import sys
 import os
 from pathlib import Path
 from typing import Optional
-import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape
 
 
 class TaskSchedulerManager:
@@ -49,10 +49,10 @@ class TaskSchedulerManager:
     
     def is_installed(self) -> bool:
         """Check if the task is already installed."""
-        returncode, stdout, _ = self._run_schtasks([
-            "/query", "/tn", self.TASK_NAME, "/fo", "list"
+        returncode, _, _ = self._run_schtasks([
+            "/query", "/tn", self.TASK_NAME
         ])
-        return returncode == 0 and self.TASK_NAME in stdout
+        return returncode == 0
     
     def is_running(self) -> bool:
         """Check if the task is currently running."""
@@ -203,10 +203,11 @@ class TaskSchedulerManager:
     
     def _create_task_xml(self) -> str:
         """Create Task Scheduler XML definition."""
-        # Use escaped backslashes for paths in XML
-        python_path = str(self.python_exe).replace('\\', '\\\\')
-        script_path = str(self.run_script).replace('\\', '\\\\')
-        working_dir = str(self.working_dir).replace('\\', '\\\\')
+        # XML needs entity escaping for special chars, not path backslash doubling.
+        python_path = escape(str(self.python_exe))
+        script_path = escape(str(self.run_script))
+        quoted_script_arg = f'"{script_path}"'
+        working_dir = escape(str(self.working_dir))
         
         xml = f'''<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -251,7 +252,7 @@ class TaskSchedulerManager:
   <Actions Context="Author">
     <Exec>
       <Command>{python_path}</Command>
-      <Arguments>{script_path}</Arguments>
+      <Arguments>{quoted_script_arg}</Arguments>
       <WorkingDirectory>{working_dir}</WorkingDirectory>
     </Exec>
   </Actions>

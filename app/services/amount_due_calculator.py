@@ -6,6 +6,7 @@ Calculates amount due based on:
 - Recent sales transactions within credit period
 - Credit days from Master1.I2 (with fallback to default)
 """
+import asyncio
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Dict, List, Optional, Set, Tuple
@@ -241,6 +242,22 @@ class AmountDueCalculator:
             return int((cursor.fetchone() or [0])[0] or 0)
     
     async def calculate_for_party(
+        self,
+        party_code: str,
+        credit_days: Optional[int] = None,
+        as_of_date: Optional[date] = None,
+        company_id: str = "default"
+    ) -> AmountDueCalculation:
+        """Async wrapper to keep blocking ODBC reads off the event loop."""
+        return await asyncio.to_thread(
+            self._calculate_for_party_sync,
+            party_code,
+            credit_days,
+            as_of_date,
+            company_id,
+        )
+
+    def _calculate_for_party_sync(
         self,
         party_code: str,
         credit_days: Optional[int] = None,

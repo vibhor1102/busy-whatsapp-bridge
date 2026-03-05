@@ -2,6 +2,8 @@ import pyodbc
 import structlog
 import time
 from contextlib import contextmanager
+from contextlib import suppress
+from threading import RLock
 from typing import Optional, List, Dict, Any, Tuple
 from app.config import get_settings
 
@@ -14,20 +16,16 @@ class BusyDatabase:
     
     def __init__(self):
         self.settings = get_settings()
-        self._connections: Dict[str, pyodbc.Connection] = {}
+        self._active_connections: set[pyodbc.Connection] = set()
+        self._lock = RLock()
         self._last_test_errors: Dict[str, Optional[str]] = {}
     
     def refresh_settings(self):
         """Refresh settings from config file."""
         get_settings.cache_clear()
         self.settings = get_settings()
-        # Force reconnection on next use for all companies
-        for conn in self._connections.values():
-            try:
-                conn.close()
-            except Exception:
-                pass
-        self._connections.clear()
+        # Existing in-flight operations keep their short-lived connections.
+        # New calls will use the refreshed settings immediately.
         logger.info("database_settings_refreshed")
         
         # Update reminder config scope
@@ -42,17 +40,25 @@ class BusyDatabase:
         """Establish database connection."""
         conn_str = self.settings.get_database_connection_string(company_id=company_id)
         last_error: Optional[Exception] = None
+        transient_error_signatures = (
+            "Too many client tasks",
+            "Could not lock file",
+            "file already in use",
+            "database has been placed in a state",
+        )
         for attempt in range(1, 4):
             try:
-                connection = pyodbc.connect(conn_str, timeout=30)
-                self._connections[company_id] = connection
+                # Keep read-only queries outside transactions to reduce lock pressure.
+                connection = pyodbc.connect(conn_str, timeout=30, autocommit=True)
+                with self._lock:
+                    self._active_connections.add(connection)
                 logger.info("database_connected", company_id=company_id, attempt=attempt)
                 return connection
             except pyodbc.Error as e:
                 last_error = e
                 error_text = str(e)
                 logger.error("database_connection_failed", company_id=company_id, error=error_text, attempt=attempt)
-                if "Too many client tasks" in error_text and attempt < 3:
+                if any(sig in error_text for sig in transient_error_signatures) and attempt < 3:
                     time.sleep(0.4 * attempt)
                     continue
                 raise
@@ -60,25 +66,20 @@ class BusyDatabase:
     
     def disconnect(self, company_id: Optional[str] = None):
         """Close database connection."""
-        if company_id:
-            connection = self._connections.pop(company_id, None)
-            if connection:
-                try:
-                    connection.close()
-                except pyodbc.ProgrammingError:
-                    # Connection may already be closed by an earlier failure path.
-                    logger.warning("database_already_closed", company_id=company_id)
-                except pyodbc.Error as e:
-                    logger.warning("database_disconnect_failed", company_id=company_id, error=str(e))
-                logger.info("database_disconnected", company_id=company_id)
-        else:
-            for c_id, connection in list(self._connections.items()):
-                try:
-                    connection.close()
-                except Exception as e:
-                    logger.warning("database_disconnect_failed", company_id=c_id, error=str(e))
-                logger.info("database_disconnected", company_id=c_id)
-            self._connections.clear()
+        # Connections are short-lived per operation. This is a best-effort
+        # shutdown hook for any still-open handles.
+        with self._lock:
+            active = list(self._active_connections)
+            self._active_connections.clear()
+
+        for connection in active:
+            try:
+                connection.close()
+            except pyodbc.ProgrammingError:
+                logger.warning("database_already_closed", company_id=company_id or "all")
+            except pyodbc.Error as e:
+                logger.warning("database_disconnect_failed", company_id=company_id or "all", error=str(e))
+        logger.info("database_disconnected", company_id=company_id or "all", count=len(active))
     
     @contextmanager
     def get_cursor(self, company_id: str = "default"):
@@ -89,29 +90,20 @@ class BusyDatabase:
             conn = self.connect(company_id=company_id)
             cursor = conn.cursor()
             yield cursor
-            conn.commit()
         except pyodbc.Error as e:
-            if conn:
-                conn.rollback()
             logger.error("database_error", company_id=company_id, error=str(e))
             raise
         except Exception:
-            if conn:
-                conn.rollback()
             raise
         finally:
             if cursor:
-                try:
+                with suppress(Exception):
                     cursor.close()
-                except Exception:
-                    pass
             if conn:
-                try:
+                with suppress(Exception):
                     conn.close()
-                except Exception:
-                    pass
-                if self._connections.get(company_id) is conn:
-                    self._connections.pop(company_id, None)
+                with self._lock:
+                    self._active_connections.discard(conn)
     
     def test_connection_with_error(self, company_id: str = "default", retries: int = 2, delay_seconds: float = 0.35) -> Tuple[bool, Optional[str]]:
         """Test database connectivity with retry and return error context."""

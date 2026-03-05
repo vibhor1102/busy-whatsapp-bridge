@@ -5,6 +5,7 @@ Dashboard API routes for the web interface.
 from fastapi import APIRouter, HTTPException
 from datetime import datetime, timedelta
 from typing import Optional
+import asyncio
 import httpx
 import structlog
 
@@ -40,7 +41,7 @@ async def get_dashboard_stats():
     sent_this_week = week_counts['sent']
     
     # Check database connection with retry and explicit error context.
-    db_connected, db_error = db.test_connection_with_error()
+    db_connected, db_error = await asyncio.to_thread(db.test_connection_with_error)
     
     return {
         "system": {

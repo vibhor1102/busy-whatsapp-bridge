@@ -15,6 +15,7 @@ import os
 import shutil
 import re
 import uuid
+import asyncio
 
 from app.config import get_settings, get_config_path, get_config_details, get_roaming_appdata_path, load_settings, save_settings, Settings
 from app.models.schemas import (
@@ -277,7 +278,9 @@ async def get_companies():
         if not company_name:
             try:
                 # Try to get company name from database if available, otherwise just use company_id
-                company_info = ledger_data_service.get_company_info(company_id=company_id)
+                company_info = await asyncio.to_thread(
+                    ledger_data_service.get_company_info, company_id=company_id
+                )
                 company_name = company_info.name if company_info.name != "Unknown Company" else f"Company ({company_id})"
             except Exception as e:
                 logger.warning("get_company_name_failed", company_id=company_id, error=str(e))
@@ -295,9 +298,7 @@ async def get_companies():
 @app.get("/api/v1/health", response_model=HealthResponse, tags=["Health"])
 async def health_check():
     """Health check endpoint."""
-    # Refresh database settings before testing connection
-    db.refresh_settings()
-    db_connected = db.test_connection()
+    db_connected = await asyncio.to_thread(db.test_connection)
     
     # Check WhatsApp provider status
     whatsapp_status = {
@@ -345,7 +346,7 @@ async def get_party_by_phone(phone: str):
     
     Queries the Master1 table in the Busy database.
     """
-    party_data = db.get_party_by_phone(phone)
+    party_data = await asyncio.to_thread(db.get_party_by_phone, phone)
     
     if not party_data:
         raise HTTPException(
@@ -414,7 +415,9 @@ async def get_vouchers_by_party(
     
     Queries the Tran1 table in the Busy database.
     """
-    vouchers = db.get_voucher_by_party(party_code, vch_type, limit)
+    vouchers = await asyncio.to_thread(
+        db.get_voucher_by_party, party_code, vch_type, limit
+    )
     
     if not vouchers:
         raise HTTPException(
@@ -440,7 +443,7 @@ async def search_parties(
     
     Queries the Master1 table for matching records.
     """
-    parties = db.search_parties(search_term, limit)
+    parties = await asyncio.to_thread(db.search_parties, search_term, limit)
     
     return {
         "search_term": search_term,
@@ -1064,6 +1067,8 @@ async def identify_database(req: DatabaseIdentifyRequest):
             f"DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};"
             f"DBQ={path};"
             f"PWD={req.bds_password};"
+            "Mode=Read;"
+            "Exclusive=0;"
             f"ExtendedAnsiSQL=1;"
         )
         
@@ -1072,33 +1077,34 @@ async def identify_database(req: DatabaseIdentifyRequest):
         
         try:
             # Short timeout so it doesn't hang forever on bad network paths
-            connection = pyodbc.connect(conn_str, timeout=10)
-            cursor = connection.cursor()
-            
-            # 1. Get Company Name
-            cursor.execute("SELECT C1 FROM Config WHERE RecType = 1")
-            row = cursor.fetchone()
-            if row and row[0]:
-                company_name = str(row[0]).strip()
-                
-            # 2. Get Financial Year
-            cursor.execute("SELECT C1, C2 FROM Config WHERE RecType = 2")
-            row = cursor.fetchone()
-            if row and row[0] and row[1]:
-                start_date = row[0]
-                end_date = row[1]
-                if hasattr(start_date, 'year') and hasattr(end_date, 'year'):
-                    if start_date.year == end_date.year:
-                        fy_name = str(start_date.year)
-                    else:
-                        fy_name = f"{start_date.year}-{str(end_date.year)[-2:]}"
-                else:
-                    fy_name = str(start_date)[:4]
-            
-            connection.close()
+            with pyodbc.connect(conn_str, timeout=10, autocommit=True) as connection:
+                cursor = connection.cursor()
+                try:
+                    # 1. Get Company Name
+                    cursor.execute("SELECT C1 FROM Config WHERE RecType = 1")
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        company_name = str(row[0]).strip()
+                    
+                    # 2. Get Financial Year
+                    cursor.execute("SELECT C1, C2 FROM Config WHERE RecType = 2")
+                    row = cursor.fetchone()
+                    if row and row[0] and row[1]:
+                        start_date = row[0]
+                        end_date = row[1]
+                        if hasattr(start_date, 'year') and hasattr(end_date, 'year'):
+                            if start_date.year == end_date.year:
+                                fy_name = str(start_date.year)
+                            else:
+                                fy_name = f"{start_date.year}-{str(end_date.year)[-2:]}"
+                        else:
+                            fy_name = str(start_date)[:4]
+                finally:
+                    cursor.close()
             
         except pyodbc.Error as e:
-            return {"success": False, "message": f"Database connection failed: {str(e)}"}
+            logger.warning("identify_database_connection_failed", path=path, error=str(e))
+            return {"success": False, "message": "Database connection failed. Please verify file path and password."}
             
         return {
             "success": True, 

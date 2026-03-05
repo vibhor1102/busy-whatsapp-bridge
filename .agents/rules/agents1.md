@@ -70,7 +70,8 @@ Reference: `docs/BUILD_SYSTEM_GUIDE.md` - Complete Windows application build ins
 - `run-dev.bat` - Development launcher (one file, auto-builds dashboard)
 - `run.py` - Production launcher (one file, system tray, process orchestration)
 
-**Production Build:** `./build-all.bat` - Builds dashboard → EXE → installer
+**Production Build:** `./build-all.bat` - Single orchestrator. Builds dashboard → EXE → stages into `release_dist/` → Inno Setup → signs. `build-installer.bat` is deprecated.
+- Build rule: install Baileys deps before staging `baileys-server`; use `BUILD_NO_PAUSE=1` (or `CI=true`) for non-interactive runs.
 
 ---
 
@@ -94,6 +95,10 @@ This is a **portable bundled distribution** with Python and all dependencies inc
 ./manage-task.bat              # Menu: enable/disable auto-start
 ./Start-Gateway.py --tray     # Manual start with tray icon
 ```
+- Installer autostart action: `venv\Scripts\python.exe -m app.task_scheduler install` (not hidden interactive `manage-task.bat`).
+- Task name: `BusyWhatsappBridge`.
+- End-user launch must be windowless (`Start-Gateway.py` via `pythonw.exe`).
+- `manage-task.bat` also supports CLI: `install|remove|status|start|stop`.
 
 ---
 

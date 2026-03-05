@@ -9,6 +9,7 @@ REM
 REM Author: vibhor1102
 
 SETLOCAL EnableDelayedExpansion
+SET "NO_PAUSE=%BUILD_NO_PAUSE%"
 
 echo ================================================
 echo Busy Whatsapp Bridge - Complete Build
@@ -26,7 +27,7 @@ REM ============================================================================
 SET "VENV_PYTHON=%SCRIPT_DIR%venv\Scripts\python.exe"
 IF NOT EXIST "%VENV_PYTHON%" (
     echo [ERROR] Virtual environment not found! Run setup-bundled.bat first.
-    pause
+    call :maybe_pause
     exit /b 1
 )
 
@@ -62,7 +63,7 @@ IF NOT DEFINED ISCC (
     echo Please install Inno Setup 6 from:
     echo https://jrsoftware.org/isdl.php
     echo.
-    pause
+    call :maybe_pause
     exit /b 1
 )
 echo [OK] Inno Setup found: %ISCC%
@@ -70,7 +71,7 @@ echo [OK] Inno Setup found: %ISCC%
 REM Check other prerequisites
 IF NOT EXIST "python\python.exe" (
     echo [ERROR] Bundled Python not found!
-    pause
+    call :maybe_pause
     exit /b 1
 )
 echo [OK] Prerequisites met
@@ -85,10 +86,14 @@ echo.
 IF NOT EXIST "dashboard-react\node_modules" (
     echo [INFO] Installing dashboard dependencies...
     cd dashboard-react
-    call npm install
+    call npm ci
+    IF ERRORLEVEL 1 (
+        echo [WARNING] npm ci failed, falling back to npm install...
+        call npm install
+    )
     IF ERRORLEVEL 1 (
         echo [ERROR] Failed to install dashboard dependencies!
-        pause
+        call :maybe_pause
         exit /b 1
     )
     cd ..
@@ -103,7 +108,7 @@ IF ERRORLEVEL 1 (
     echo.
     echo [ERROR] Dashboard build failed!
     echo Check the errors above.
-    pause
+    call :maybe_pause
     exit /b 1
 )
 
@@ -113,7 +118,7 @@ echo.
 REM Verify dist folder exists
 IF NOT EXIST "dist\index.html" (
     echo [ERROR] Dashboard build did not create dist/index.html!
-    pause
+    call :maybe_pause
     exit /b 1
 )
 
@@ -127,17 +132,24 @@ echo.
 
 IF NOT EXIST "build-launcher-exe.py" (
     echo [ERROR] build-launcher-exe.py not found!
-    pause
+    call :maybe_pause
     exit /b 1
 )
 
 echo Running PyInstaller...
+IF EXIST "BusyWhatsappBridge.exe" del /f /q "BusyWhatsappBridge.exe" >nul 2>nul
 "%VENV_PYTHON%" build-launcher-exe.py
+IF ERRORLEVEL 1 (
+    echo.
+    echo [ERROR] EXE build command failed.
+    call :maybe_pause
+    exit /b 1
+)
 
 IF NOT EXIST "BusyWhatsappBridge.exe" (
     echo.
     echo [ERROR] EXE build failed! BusyWhatsappBridge.exe not found.
-    pause
+    call :maybe_pause
     exit /b 1
 )
 
@@ -163,21 +175,25 @@ echo   Copying bundled Python...
 robocopy "python" "%DIST_DIR%\python" /E /NFL /NDL /NJH /NJS /nc /ns /np
 IF %ERRORLEVEL% GEQ 8 ( echo [ERROR] Failed to copy python & exit /b 1 )
 
-echo   Copying Baileys server...
-robocopy "baileys-server" "%DIST_DIR%\baileys-server" /E /XD auth logs /NFL /NDL /NJH /NJS /nc /ns /np
-IF %ERRORLEVEL% GEQ 8 ( echo [ERROR] Failed to copy baileys-server & exit /b 1 )
-
 REM Install baileys node_modules if missing
 IF NOT EXIST "baileys-server\node_modules" (
     echo   Installing Baileys dependencies...
     cd baileys-server
-    call npm install --production
+    call npm ci --omit=dev
+    IF ERRORLEVEL 1 (
+        echo   [WARNING] npm ci failed, falling back to npm install --production...
+        call npm install --production
+    )
     IF ERRORLEVEL 1 (
         echo [ERROR] Failed to install Baileys dependencies!
         exit /b 1
     )
     cd ..
 )
+
+echo   Copying Baileys server...
+robocopy "baileys-server" "%DIST_DIR%\baileys-server" /E /XD auth logs /NFL /NDL /NJH /NJS /nc /ns /np
+IF %ERRORLEVEL% GEQ 8 ( echo [ERROR] Failed to copy baileys-server & exit /b 1 )
 
 echo   Copying virtual environment...
 robocopy "venv" "%DIST_DIR%\venv" /E /XD __pycache__ /XF *.pyc /NFL /NDL /NJH /NJS /nc /ns /np
@@ -206,10 +222,10 @@ FOR %%F IN (
     LICENSE
 ) DO (
     IF EXIST "%%F" (
-        copy "%%F" "%DIST_DIR%\" >nul
+            copy "%%F" "%DIST_DIR%\" >nul
     ) ELSE (
         echo [ERROR] Required file missing: %%F
-        pause
+        call :maybe_pause
         exit /b 1
     )
 )
@@ -239,7 +255,7 @@ echo.
 IF ERRORLEVEL 1 (
     echo.
     echo [ERROR] Installer build failed!
-    pause
+    call :maybe_pause
     exit /b 1
 )
 
@@ -247,7 +263,7 @@ SET "INSTALLER_FILE=BusyWhatsappBridge-v%VERSION%-Setup.exe"
 
 IF NOT EXIST "%INSTALLER_FILE%" (
     echo [ERROR] Installer file not created!
-    pause
+    call :maybe_pause
     exit /b 1
 )
 
@@ -290,6 +306,13 @@ echo   1. Test the installer on a clean machine
 echo   2. Upload %INSTALLER_FILE% for distribution
 echo.
 
-ENDLOCAL
 echo.
+call :maybe_pause
+ENDLOCAL
+exit /b 0
+
+:maybe_pause
+IF /I "%NO_PAUSE%"=="1" goto :eof
+IF /I "%CI%"=="true" goto :eof
 pause
+goto :eof

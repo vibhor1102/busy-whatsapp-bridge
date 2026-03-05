@@ -212,11 +212,15 @@ class Settings(BaseModel):
             
         if not path:
             raise ValueError(f"Database path cannot be empty for company '{company_id}'")
+        if ";" in path:
+            raise ValueError(f"Database path contains invalid character ';' for company '{company_id}'")
         
         return (
             f"DRIVER={{{self.ODBC_DRIVER}}};"
             f"DBQ={path};"
             f"PWD={pwd};"
+            "Mode=Read;"
+            "Exclusive=0;"
             f"ExtendedAnsiSQL=1;"
         )
 

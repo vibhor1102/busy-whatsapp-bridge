@@ -1,5 +1,6 @@
 import structlog
 import re
+import asyncio
 from typing import Optional, Tuple
 from app.config import get_settings
 from app.database.connection import db
@@ -90,7 +91,9 @@ class BusyHandler:
             )
             
             # Optional: Fetch additional party details from database
-            party_data = db.get_party_by_phone(notification.phone)
+            party_data = await asyncio.to_thread(
+                db.get_party_by_phone, notification.phone
+            )
             
             if party_data:
                 # Enhance message with party details if available
@@ -167,7 +170,7 @@ class BusyHandler:
     async def get_party_details(self, phone: str) -> Optional[PartyDetails]:
         """Fetch party details from database by phone number."""
         try:
-            party_data = db.get_party_by_phone(phone)
+            party_data = await asyncio.to_thread(db.get_party_by_phone, phone)
             if party_data:
                 return PartyDetails(**party_data)
             return None

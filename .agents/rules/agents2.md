@@ -39,8 +39,8 @@ Configuration stored in `%APPDATA%\BusyWhatsappBridge\conf.json`:
 ## Version Management
 
 - **Source of Truth:** `version.json` (root).
-- **Access:** `app/version.py` reads it dynamically.
-- **Builds:** Scripts use `app.version.get_version()`.
+- **Access:** `app/version.py` reads it dynamically. Fallback: `0.0.0.0` (Inno Setup compatible).
+- **Builds:** `build-all.bat` reads `version.json` via Python temp-file redirect, passes to Inno Setup via `/DMyAppVersion=X.X.X`.
 
 ## Baileys (WhatsApp Web)
 

@@ -218,7 +218,9 @@ class ReminderService:
     async def get_party_info(self, party_code: str, company_id: str = "default") -> PartyReminderInfo:
         """Get a single party reminder info payload by party code."""
         calculation = await self.calculator.calculate_for_party(party_code, company_id=company_id)
-        customer = ledger_data_service.get_customer_info(party_code, company_id=company_id)
+        customer = await asyncio.to_thread(
+            ledger_data_service.get_customer_info, party_code, company_id
+        )
 
         config = self.config_service.get_config(scope_key=company_id)
         currency = config.currency_symbol
@@ -340,14 +342,17 @@ class ReminderService:
         
         try:
             # Generate ledger report
-            report = ledger_data_service.generate_ledger_report(party_code, company_id=company_id)
+            report = await asyncio.to_thread(
+                ledger_data_service.generate_ledger_report, party_code, company_id
+            )
             
             # Generate PDF to disk, then read bytes for API response.
             pdf_path = self._ledger_dir / f"ledger_{party_code}_preview.pdf"
-            ledger_pdf_service.generate(report=report, output_path=str(pdf_path))
+            await asyncio.to_thread(
+                ledger_pdf_service.generate, report=report, output_path=str(pdf_path)
+            )
 
-            with open(pdf_path, 'rb') as f:
-                pdf_bytes = f.read()
+            pdf_bytes = await asyncio.to_thread(pdf_path.read_bytes)
 
             logger.info(
                 "ledger_pdf_generated",
@@ -512,7 +517,9 @@ class ReminderService:
                         with open(pdf_path, 'wb') as f:
                             f.write(pdf_bytes)
 
-                    party_info = ledger_data_service.get_customer_info(party_code, company_id=company_id)
+                    party_info = await asyncio.to_thread(
+                        ledger_data_service.get_customer_info, party_code, company_id
+                    )
 
                     variables = self.template_svc.get_template_variables(
                         party_code=party_code,
@@ -813,7 +820,12 @@ class ReminderService:
         )
 
         try:
-            total_parties = int(snap.get("row_count") or self.calculator.get_debtor_party_count())
+            if snap.get("row_count"):
+                total_parties = int(snap.get("row_count"))
+            else:
+                total_parties = int(
+                    await asyncio.to_thread(self.calculator.get_debtor_party_count, company_id)
+                )
         except Exception:
             total_parties = 0
 
