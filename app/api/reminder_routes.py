@@ -40,14 +40,26 @@ from app.services.reminder_config_service import reminder_config_service
 from app.services.template_service import template_service
 from app.services.amount_due_calculator import amount_due_calculator
 from app.services.anti_spam_service import anti_spam_service
+from app.config import get_settings
 
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1/reminders", tags=["Payment Reminders"])
 
 
-def get_company_id(x_company_id: str = Header("default")) -> str:
-    """Dependency to extract company ID from headers."""
+def get_company_id(x_company_id: Optional[str] = Header(None)) -> str:
+    """Dependency to extract and validate company ID from headers."""
+    if not x_company_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing required header: X-Company-Id"
+        )
+    settings = get_settings()
+    if x_company_id not in settings.database.companies:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown company id '{x_company_id}'. Please select a configured company."
+        )
     return x_company_id
 
 # ============================================
@@ -584,7 +596,7 @@ async def preview_template(
     """Preview a template with sample data"""
     try:
         # Use provided variables or defaults
-        variables = request.variables or template_service.get_default_variables()
+        variables = request.variables or template_service.get_default_variables(company_id=company_id)
         
         template = reminder_config_service.get_template(template_id, scope_key=company_id)
         if not template:

@@ -133,7 +133,7 @@ class LimitsConfig(BaseModel):
 
 class CompanySettings(BaseModel):
     """Company information for reminders"""
-    name: str = Field(default="Your Company Name", description="Company name used in templates")
+    name: str = Field(default="Company", description="Company name used in templates")
     contact_phone: str = Field(default="", description="Contact phone number for customer queries")
     address: Optional[str] = Field(None, description="Company address")
 

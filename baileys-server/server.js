@@ -9,6 +9,7 @@ const app = express();
 const PORT = process.env.BAILEYS_PORT || 3001;
 const AUTH_DIR = process.env.BAILEYS_AUTH_DIR || path.join(__dirname, 'auth', 'baileys_session');
 const DELIVERY_WEBHOOK_URL = process.env.BWB_DELIVERY_WEBHOOK_URL || 'http://localhost:8000/api/v1/baileys/delivery-status';
+const PROCESS_STARTED_AT = Date.now();
 
 app.use(express.json());
 
@@ -42,10 +43,20 @@ async function postDeliveryUpdate(payload) {
         });
         if (!response.ok) {
             const body = await response.text();
-            console.error('[DELIVERY] Callback failed:', response.status, body);
+            const startupWindow = (Date.now() - PROCESS_STARTED_AT) < 30000;
+            if (response.status >= 500 || startupWindow) {
+                console.warn('[DELIVERY] Callback unavailable (startup/transient):', response.status, body);
+            } else {
+                console.error('[DELIVERY] Callback failed:', response.status, body);
+            }
         }
     } catch (error) {
-        console.error('[DELIVERY] Callback error:', error.message);
+        const startupWindow = (Date.now() - PROCESS_STARTED_AT) < 30000;
+        if (startupWindow) {
+            console.warn('[DELIVERY] Callback not ready yet (startup race):', error.message);
+        } else {
+            console.warn('[DELIVERY] Callback temporary error:', error.message);
+        }
     }
 }
 

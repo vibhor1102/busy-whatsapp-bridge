@@ -58,6 +58,11 @@ const RefreshGate: React.FC<RefreshGateProps> = ({ refreshStats, onRefreshComple
 
         try {
             await api.refreshReminderSnapshotWithSignal(controller.signal);
+            const snapshot = await api.getReminderSnapshotStatus();
+            await api.getEligibleParties({ limit: 1, filter_by: 'all' });
+            if (!snapshot?.has_snapshot || !snapshot?.last_refreshed_at) {
+                throw new Error('Refresh finished but snapshot metadata is not available. Please retry.');
+            }
             setCompleted(true);
             // Wait a tick for the 100% animation
             setTimeout(() => {

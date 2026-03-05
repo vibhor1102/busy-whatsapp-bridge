@@ -40,6 +40,8 @@ from app.database.reminder_snapshot import reminder_snapshot_db
 from app.config import get_roaming_appdata_path, get_settings
 from app.services.reminder_snapshot_service import reminder_snapshot_service
 from app.utils.file_naming import build_pdf_filename
+from app.utils.number_format import format_indian_currency
+from app.utils.phone import normalize_phone_e164
 from app.constants.reminder_constants import (
     REMINDER_STATUS_COMPLETED,
     REMINDER_STATUS_FAILED,
@@ -98,6 +100,14 @@ class ReminderService:
         
         return provider
 
+    def _get_company_db_path(self, company_id: str) -> str:
+        settings = self.calculator.db.settings
+        if company_id in settings.database.companies:
+            return settings.database.companies[company_id].bds_file_path or ""
+        if company_id == "default":
+            return settings.database.bds_file_path or ""
+        return ""
+
     def get_snapshot_status(self, company_id: str = "default") -> Dict[str, Any]:
         """Return current snapshot metadata."""
         return self.snapshot_db.get_status(company_id=company_id)
@@ -121,9 +131,7 @@ class ReminderService:
     ) -> Dict[str, Any]:
         """Get paginated parties from snapshot with server-side filters/sorting."""
         snap_status = self.snapshot_db.get_status(company_id=company_id)
-        current_hash = hashlib.sha256(
-            ((self.calculator.db.settings.BDS_FILE_PATH or "").encode("utf-8"))
-        ).hexdigest()
+        current_hash = hashlib.sha256((self._get_company_db_path(company_id).encode("utf-8"))).hexdigest()
         snap_hash = snap_status.get("source_db_path_hash")
 
         # Snapshot must be explicitly refreshed if data source path changed.
@@ -164,9 +172,13 @@ class ReminderService:
                     print_name=r.get("print_name"),
                     phone=r.get("phone"),
                     closing_balance=Decimal(str(r.get("closing_balance") or 0)),
-                    closing_balance_formatted=f"{currency}{Decimal(str(r.get('closing_balance') or 0)):,.2f}",
+                    closing_balance_formatted=format_indian_currency(
+                        Decimal(str(r.get("closing_balance") or 0)), symbol=currency
+                    ),
                     amount_due=Decimal(str(r.get("amount_due") or 0)),
-                    amount_due_formatted=f"{currency}{Decimal(str(r.get('amount_due') or 0)):,.2f}",
+                    amount_due_formatted=format_indian_currency(
+                        Decimal(str(r.get("amount_due") or 0)), symbol=currency
+                    ),
                     sales_credit_days=int(r.get("sales_credit_days") or self.calculator.default_credit_days),
                     credit_days_source=str(r.get("credit_days_source") or "config_default"),
                     permanent_enabled=bool(r.get("permanent_enabled")),
@@ -246,9 +258,9 @@ class ReminderService:
             print_name=customer.print_name,
             phone=customer.phone,
             closing_balance=calculation.closing_balance,
-            closing_balance_formatted=f"{currency}{calculation.closing_balance:,.2f}",
+            closing_balance_formatted=format_indian_currency(calculation.closing_balance, symbol=currency),
             amount_due=calculation.amount_due,
-            amount_due_formatted=f"{currency}{calculation.amount_due:,.2f}",
+            amount_due_formatted=format_indian_currency(calculation.amount_due, symbol=currency),
             sales_credit_days=calculation.credit_days_used,
             credit_days_source=calculation.credit_days_source,
             permanent_enabled=bool(party_config.enabled) if party_config else False,
@@ -577,14 +589,44 @@ class ReminderService:
 
                     variables = self.template_svc.get_template_variables(
                         party_code=party_code,
-                        amount_due=float(calculation.amount_due)
+                        amount_due=float(calculation.amount_due),
+                        company_id=company_id,
                     )
                     message = self.template_svc.render_template(effective_template, variables)
 
                     if message_inflation_service._enabled:
                         message = message_inflation_service.inject_invisible_chars(message, target_multiplier=5.0)
 
-                    if party_info.phone:
+                    raw_phone = (party_info.phone or "").strip()
+                    if raw_phone:
+                        try:
+                            normalized_phone = normalize_phone_e164(
+                                raw_phone,
+                                self._settings.WHATSAPP_DEFAULT_COUNTRY_CODE,
+                            )
+                        except ValueError as phone_err:
+                            reason = str(phone_err)
+                            results[party_code] = {
+                                "status": "failed",
+                                "reason": "invalid_phone",
+                                "error": reason,
+                            }
+                            session.metrics.failed_count += 1
+                            message_db.upsert_reminder_batch_recipient(
+                                batch_id=batch_id,
+                                party_code=party_code,
+                                recipient_name=(getattr(party_info, "name", None)),
+                                phone=raw_phone,
+                                status="failed",
+                                queue_status="failed",
+                                failure_stage="validation",
+                                failure_code="invalid_phone",
+                                failure_message=reason,
+                                amount_due=str(calculation.amount_due),
+                            )
+                            session.current_index = i + 1
+                            continue
+
                         provider_name = self._resolve_delivery_provider(config.default_provider)
                         media_ref = pdf_path if provider_name == "baileys" else None
                         file_name = build_pdf_filename(
@@ -599,20 +641,43 @@ class ReminderService:
                                 party_code=party_code,
                             )
 
-                        queue_id = message_db.enqueue_message(
-                            phone=party_info.phone,
-                            message=message,
-                            pdf_url=media_ref,
-                            file_name=file_name,
-                            provider=provider_name,
-                            source="payment_reminder",
-                            batch_id=batch_id,
-                            party_code=party_code,
-                        )
+                        try:
+                            queue_id = message_db.enqueue_message(
+                                phone=normalized_phone,
+                                message=message,
+                                pdf_url=media_ref,
+                                file_name=file_name,
+                                provider=provider_name,
+                                source="payment_reminder",
+                                batch_id=batch_id,
+                                party_code=party_code,
+                            )
+                        except ValueError as enqueue_err:
+                            reason = str(enqueue_err)
+                            results[party_code] = {
+                                "status": "failed",
+                                "reason": "invalid_phone",
+                                "error": reason,
+                            }
+                            session.metrics.failed_count += 1
+                            message_db.upsert_reminder_batch_recipient(
+                                batch_id=batch_id,
+                                party_code=party_code,
+                                recipient_name=(getattr(party_info, "name", None)),
+                                phone=raw_phone,
+                                status="failed",
+                                queue_status="failed",
+                                failure_stage="validation",
+                                failure_code="invalid_phone",
+                                failure_message=reason,
+                                amount_due=str(calculation.amount_due),
+                            )
+                            session.current_index = i + 1
+                            continue
 
                         results[party_code] = {
                             "status": "queued",
-                            "phone": party_info.phone,
+                            "phone": normalized_phone,
                             "amount_due": str(calculation.amount_due),
                             "media_attached": bool(media_ref),
                         }
@@ -627,7 +692,7 @@ class ReminderService:
                             batch_id=batch_id,
                             party_code=party_code,
                             recipient_name=(getattr(party_info, "name", None)),
-                            phone=party_info.phone,
+                            phone=normalized_phone,
                             queue_id=queue_id,
                             status="queued",
                             queue_status="queued",

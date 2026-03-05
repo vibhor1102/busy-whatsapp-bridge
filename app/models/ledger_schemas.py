@@ -6,6 +6,8 @@ from typing import List, Optional
 from datetime import date, datetime
 from decimal import Decimal
 
+from app.utils.number_format import format_indian_number
+
 
 class FinancialYearInfo(BaseModel):
     """Financial year information from database."""
@@ -54,7 +56,7 @@ class LedgerEntry(BaseModel):
     def amount_formatted(self) -> str:
         """Format amount with Dr/Cr suffix."""
         suffix = " Dr" if self.is_debit else " Cr"
-        return f"{self.amount:,.2f}{suffix}"
+        return f"{format_indian_number(self.amount)}{suffix}"
     
     @property
     def balance_formatted(self) -> str:
@@ -63,7 +65,7 @@ class LedgerEntry(BaseModel):
         # Negative balance = Cr (we owe customer - payable)
         amount = abs(self.balance)
         suffix = " Dr" if self.balance >= 0 else " Cr"
-        return f"{amount:,.2f}{suffix}"
+        return f"{format_indian_number(amount)}{suffix}"
     
     @property
     def date_formatted(self) -> str:
@@ -89,7 +91,7 @@ class LedgerReport(BaseModel):
         # Positive = Dr (customer owes us), Negative = Cr (we owe customer)
         amount = abs(self.opening_balance)
         suffix = " Dr" if self.opening_balance >= 0 else " Cr"
-        return f"{amount:,.2f}{suffix}"
+        return f"{format_indian_number(amount)}{suffix}"
     
     @property
     def closing_balance_formatted(self) -> str:
@@ -97,15 +99,15 @@ class LedgerReport(BaseModel):
         # Positive = Dr (customer owes us), Negative = Cr (we owe customer)
         amount = abs(self.closing_balance)
         suffix = " Dr" if self.closing_balance >= 0 else " Cr"
-        return f"{amount:,.2f}{suffix}"
+        return f"{format_indian_number(amount)}{suffix}"
     
     @property
     def total_debits_formatted(self) -> str:
-        return f"{self.total_debits:,.2f}"
+        return format_indian_number(self.total_debits)
     
     @property
     def total_credits_formatted(self) -> str:
-        return f"{self.total_credits:,.2f}"
+        return format_indian_number(self.total_credits)
 
 
 class LedgerGenerationRequest(BaseModel):

@@ -19,6 +19,16 @@ class BusyDatabase:
         self._active_connections: set[pyodbc.Connection] = set()
         self._lock = RLock()
         self._last_test_errors: Dict[str, Optional[str]] = {}
+        self._last_test_results: Dict[str, Tuple[float, bool, Optional[str]]] = {}
+        self._test_locks: Dict[str, RLock] = {}
+
+    def _get_test_lock(self, company_id: str) -> RLock:
+        with self._lock:
+            lock = self._test_locks.get(company_id)
+            if lock is None:
+                lock = RLock()
+                self._test_locks[company_id] = lock
+            return lock
     
     def refresh_settings(self):
         """Refresh settings from config file."""
@@ -57,7 +67,24 @@ class BusyDatabase:
             except pyodbc.Error as e:
                 last_error = e
                 error_text = str(e)
-                logger.error("database_connection_failed", company_id=company_id, error=error_text, attempt=attempt)
+                lowered = error_text.lower()
+                if "too many client tasks" in lowered or "could not lock file" in lowered or "file already in use" in lowered:
+                    error_kind = "lock_contention"
+                elif "invalid connection string attribute" in lowered:
+                    error_kind = "invalid_connection_string"
+                elif "password" in lowered or "not a valid password" in lowered:
+                    error_kind = "invalid_password"
+                elif "timeout" in lowered or "timed out" in lowered or "hyt00" in lowered:
+                    error_kind = "timeout"
+                else:
+                    error_kind = "other"
+                logger.error(
+                    "database_connection_failed",
+                    company_id=company_id,
+                    error=error_text,
+                    error_kind=error_kind,
+                    attempt=attempt,
+                )
                 if any(sig in error_text for sig in transient_error_signatures) and attempt < 3:
                     time.sleep(0.4 * attempt)
                     continue
@@ -105,29 +132,75 @@ class BusyDatabase:
                 with self._lock:
                     self._active_connections.discard(conn)
     
-    def test_connection_with_error(self, company_id: str = "default", retries: int = 2, delay_seconds: float = 0.35) -> Tuple[bool, Optional[str]]:
+    def test_connection_with_error(
+        self,
+        company_id: str = "default",
+        retries: int = 1,
+        delay_seconds: float = 0.25,
+        cache_ttl_success: float = 20.0,
+        cache_ttl_failure: float = 8.0,
+    ) -> Tuple[bool, Optional[str]]:
         """Test database connectivity with retry and return error context."""
-        attempts = max(1, retries + 1)
-        last_error: Optional[str] = None
+        now = time.time()
+        with self._lock:
+            cached = self._last_test_results.get(company_id)
+        if cached:
+            ts, ok, err = cached
+            ttl = cache_ttl_success if ok else cache_ttl_failure
+            if now - ts < ttl:
+                return ok, err
 
-        for attempt in range(1, attempts + 1):
-            try:
-                with self.get_cursor(company_id=company_id) as cursor:
-                    cursor.execute("SELECT COUNT(*) FROM Master1")
-                    result = cursor.fetchone()
-                    self._last_test_errors[company_id] = None
-                    logger.info("database_test_successful", company_id=company_id, master1_count=result[0], attempt=attempt)
-                    return True, None
-            except Exception as e:
-                last_error = str(e)
-                if attempt < attempts:
-                    logger.warning("database_test_retry", company_id=company_id, attempt=attempt, error=last_error)
-                    time.sleep(delay_seconds)
-                else:
-                    logger.error("database_test_failed", company_id=company_id, error=last_error, attempts=attempts)
+        test_lock = self._get_test_lock(company_id)
+        with test_lock:
+            now = time.time()
+            with self._lock:
+                cached = self._last_test_results.get(company_id)
+            if cached:
+                ts, ok, err = cached
+                ttl = cache_ttl_success if ok else cache_ttl_failure
+                if now - ts < ttl:
+                    return ok, err
 
-        self._last_test_errors[company_id] = last_error
-        return False, last_error
+            attempts = max(1, retries + 1)
+            last_error: Optional[str] = None
+
+            for attempt in range(1, attempts + 1):
+                try:
+                    with self.get_cursor(company_id=company_id) as cursor:
+                        cursor.execute("SELECT COUNT(*) FROM Master1")
+                        result = cursor.fetchone()
+                        self._last_test_errors[company_id] = None
+                        with self._lock:
+                            self._last_test_results[company_id] = (time.time(), True, None)
+                        logger.info(
+                            "database_test_successful",
+                            company_id=company_id,
+                            master1_count=result[0],
+                            attempt=attempt,
+                        )
+                        return True, None
+                except Exception as e:
+                    last_error = str(e)
+                    if attempt < attempts:
+                        logger.warning(
+                            "database_test_retry",
+                            company_id=company_id,
+                            attempt=attempt,
+                            error=last_error,
+                        )
+                        time.sleep(delay_seconds)
+                    else:
+                        logger.error(
+                            "database_test_failed",
+                            company_id=company_id,
+                            error=last_error,
+                            attempts=attempts,
+                        )
+
+            self._last_test_errors[company_id] = last_error
+            with self._lock:
+                self._last_test_results[company_id] = (time.time(), False, last_error)
+            return False, last_error
 
     def test_connection(self, company_id: str = "default") -> bool:
         """Backward-compatible boolean connectivity check."""

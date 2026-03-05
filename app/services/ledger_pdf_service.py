@@ -15,6 +15,7 @@ from app.models.ledger_schemas import (
     LedgerEntry
 )
 from app.exceptions.ledger_exceptions import PDFGenerationError
+from app.utils.number_format import format_indian_number
 
 logger = structlog.get_logger()
 
@@ -63,7 +64,7 @@ class LedgerPDFService:
         
         # Format with Indian separators
         try:
-            formatted = f"{float(amount):,.2f}"
+            formatted = format_indian_number(amount)
         except (ValueError, TypeError):
             return str(amount)
         

@@ -17,6 +17,7 @@ def test_get_database_connection_string_falls_back_from_default_to_first_company
 
     assert "DBQ=C:\\data\\company_ahf.bds;" in conn_str
     assert "PWD=secret;" in conn_str
+    assert "Mode=Read;" not in conn_str
 
 
 def test_resolve_company_id_prefers_existing_requested_company():

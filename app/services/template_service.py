@@ -8,9 +8,11 @@ from typing import Dict, Any, Optional
 
 import structlog
 
+from app.config import get_settings
 from app.models.reminder_schemas import MessageTemplate
 from app.services.reminder_config_service import reminder_config_service
 from app.services.ledger_data_service import ledger_data_service
+from app.utils.number_format import format_indian_number
 
 logger = structlog.get_logger()
 
@@ -23,6 +25,39 @@ class TemplateService:
     
     def __init__(self):
         self.config_service = reminder_config_service
+
+    def _resolve_company_display_name(
+        self,
+        company_id: str,
+        config_company_name: Optional[str] = None,
+        company_info_name: Optional[str] = None,
+    ) -> str:
+        """Resolve company display name with settings company_name as top priority."""
+        settings = get_settings()
+        companies = settings.database.companies or {}
+
+        if company_id in companies:
+            configured_name = (companies[company_id].company_name or "").strip()
+            if configured_name:
+                return configured_name
+
+        # Avoid surfacing generic placeholder names when a real one is available elsewhere.
+        if company_info_name and company_info_name not in ("Unknown Company", "Company"):
+            return company_info_name
+
+        if config_company_name and config_company_name not in ("Your Company Name", "Company"):
+            return config_company_name
+
+        try:
+            effective_default = settings.resolve_company_id("default")
+            if effective_default in companies:
+                default_name = (companies[effective_default].company_name or "").strip()
+                if default_name:
+                    return default_name
+        except Exception:
+            pass
+
+        return "Company"
     
     def extract_variables(self, template_content: str) -> list:
         """Extract all variables from template content"""
@@ -86,7 +121,8 @@ class TemplateService:
         self,
         party_code: str,
         amount_due: float,
-        company_name: Optional[str] = None
+        company_name: Optional[str] = None,
+        company_id: str = "default",
     ) -> Dict[str, str]:
         """
         Get all available variables for a party
@@ -94,24 +130,30 @@ class TemplateService:
         Args:
             party_code: Party code
             amount_due: Amount due value
-            company_name: Company name (optional, fetched from config if not provided)
+        company_name: Company name (optional, fetched from config if not provided)
+        company_id: Company scope key
             
         Returns:
             Dictionary of variable names and values
         """
         # Get config for company settings and currency
-        config = self.config_service.get_config()
+        config = self.config_service.get_config(scope_key=company_id)
         currency_symbol = config.currency_symbol
+        party_info = ledger_data_service.get_customer_info(party_code, company_id)
         # Get company info first, since that will contain our new DB-specific contact details
-        company_info = ledger_data_service.get_company_info()
+        company_info = ledger_data_service.get_company_info(company_id)
         contact_phone = company_info.phone or config.company.contact_phone
-        company_name = company_name or company_info.name or config.company.name
+        company_name = company_name or self._resolve_company_display_name(
+            company_id=company_id,
+            config_company_name=config.company.name,
+            company_info_name=company_info.name,
+        )
         
         # Get credit days
-        credit_days, _ = ledger_data_service.get_credit_days(party_code)
+        credit_days, _ = ledger_data_service.get_credit_days(party_code, company_id)
         
         # Format amount
-        amount_formatted = f"{amount_due:,.2f}"
+        amount_formatted = format_indian_number(amount_due)
         
         return {
             "customer_name": party_info.name or party_info.print_name or "Valued Customer",
@@ -149,14 +191,19 @@ class TemplateService:
         variables = self.get_template_variables(party_code, amount_due)
         return self.render_template(template, variables)
     
-    def get_default_variables(self) -> Dict[str, str]:
+    def get_default_variables(self, company_id: str = "default") -> Dict[str, str]:
         """Get sample variables for template preview/testing"""
-        config = self.config_service.get_config()
-        company_info = ledger_data_service.get_company_info()
+        config = self.config_service.get_config(scope_key=company_id)
+        company_info = ledger_data_service.get_company_info(company_id)
+        company_name = self._resolve_company_display_name(
+            company_id=company_id,
+            config_company_name=config.company.name,
+            company_info_name=company_info.name,
+        )
         
         return {
             "customer_name": "ABC Textiles",
-            "company_name": company_info.name or config.company.name,
+            "company_name": company_name,
             "amount_due": "50,000.00",
             "currency_symbol": config.currency_symbol,
             "credit_days": "30",

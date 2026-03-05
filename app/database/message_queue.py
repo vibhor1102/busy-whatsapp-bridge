@@ -606,6 +606,18 @@ class MessageQueueDB:
         party_code: Optional[str] = None,
     ) -> int:
         """Add a message to the queue."""
+        normalized_phone = (phone or "").strip()
+        if not normalized_phone:
+            logger.warning(
+                "message_enqueue_validation_failed",
+                reason="phone_empty",
+                source=source,
+                provider=provider,
+                batch_id=batch_id,
+                party_code=party_code,
+            )
+            raise ValueError("phone_validation_failed: phone is empty")
+
         with self._get_connection() as conn:
             cursor = conn.execute(
                 """
@@ -613,14 +625,24 @@ class MessageQueueDB:
                 (phone, message, pdf_url, file_name, provider, status, source, next_retry_at, batch_id, party_code)
                 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
                 """,
-                (phone, message, pdf_url, file_name, provider, source, datetime.now(), batch_id, party_code)
+                (
+                    normalized_phone,
+                    message,
+                    pdf_url,
+                    file_name,
+                    provider,
+                    source,
+                    datetime.now(),
+                    batch_id,
+                    party_code,
+                )
             )
             conn.commit()
             message_id = cursor.lastrowid
             logger.info(
                 "message_enqueued",
                 queue_id=message_id,
-                phone=phone,
+                phone=normalized_phone,
                 provider=provider,
                 source=source
             )
@@ -770,6 +792,17 @@ class MessageQueueDB:
     ):
         """Mark message as failed and schedule retry or move to dead letter."""
         now = datetime.now()
+        lowered_error = (error_message or "").strip().lower()
+        non_retryable_phone_error = any(
+            token in lowered_error
+            for token in (
+                "phone_validation_failed",
+                "phone is empty",
+                "phone is required",
+                "phone has no digits",
+                "phone length invalid",
+            )
+        )
         
         with self._get_connection() as conn:
             # Get current retry count
@@ -782,7 +815,10 @@ class MessageQueueDB:
             if not row:
                 return
             
-            new_retry_count = row['retry_count'] + 1
+            if non_retryable_phone_error:
+                new_retry_count = row['max_retries']
+            else:
+                new_retry_count = row['retry_count'] + 1
             
             if new_retry_count >= row['max_retries']:
                 # Move to dead letter queue
@@ -814,14 +850,16 @@ class MessageQueueDB:
                     and msg_row["batch_id"]
                     and msg_row["party_code"]
                 ):
+                    failure_stage = "validation" if non_retryable_phone_error else "dead_letter"
+                    failure_code = "invalid_phone" if non_retryable_phone_error else "retry_exhausted"
                     conn.execute(
                         """
                         UPDATE reminder_batch_recipients
                         SET status = 'failed',
                             queue_status = 'failed',
                             delivery_status = 'failed',
-                            failure_stage = 'dead_letter',
-                            failure_code = 'retry_exhausted',
+                            failure_stage = ?,
+                            failure_code = ?,
                             failure_message = ?,
                             retry_count = ?,
                             is_dead_letter = 1,
@@ -829,6 +867,8 @@ class MessageQueueDB:
                         WHERE batch_id = ? AND party_code = ?
                         """,
                         (
+                            failure_stage,
+                            failure_code,
                             error_message,
                             new_retry_count,
                             now,
@@ -849,7 +889,8 @@ class MessageQueueDB:
                     "message_dead_letter",
                     queue_id=queue_id,
                     retry_count=new_retry_count,
-                    error=error_message
+                    error=error_message,
+                    non_retryable=non_retryable_phone_error,
                 )
             else:
                 # Schedule retry with exponential backoff

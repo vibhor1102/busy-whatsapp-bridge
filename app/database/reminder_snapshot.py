@@ -289,6 +289,28 @@ class ReminderSnapshotDB:
 
             return int(total), [dict(r) for r in rows]
 
+    def delete_scope(self, company_id: str) -> None:
+        """Delete on-disk snapshot data for a company scope."""
+        if company_id == "default":
+            return
+        db_path = self._instances.pop(company_id, None)
+        if db_path is None:
+            appdata = get_roaming_appdata_path()
+            db_path = appdata / "data" / "scopes" / company_id / "reminder_snapshot.db"
+        try:
+            if db_path.exists():
+                db_path.unlink()
+                logger.info("reminder_snapshot_scope_removed", company_id=company_id, db_path=str(db_path))
+            scope_dir = db_path.parent
+            if scope_dir.exists():
+                # Remove the scope directory if empty.
+                try:
+                    scope_dir.rmdir()
+                except OSError:
+                    pass
+        except Exception as e:
+            logger.warning("reminder_snapshot_scope_remove_failed", company_id=company_id, error=str(e))
+
 
 reminder_snapshot_db = ReminderSnapshotDB()
 

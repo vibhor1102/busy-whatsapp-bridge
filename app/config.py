@@ -246,7 +246,6 @@ class Settings(BaseModel):
             f"DRIVER={{{self.ODBC_DRIVER}}};"
             f"DBQ={path};"
             f"PWD={pwd};"
-            "Mode=Read;"
             "Exclusive=0;"
             f"ExtendedAnsiSQL=1;"
         )

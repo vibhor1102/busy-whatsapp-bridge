@@ -55,15 +55,9 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
         onChange(newCompanies);
     };
 
-    const getNextDatabaseId = () => {
-        let maxId = 0;
-        Object.keys(companies).forEach(id => {
-            const match = id.match(/^database_(\d+)$/);
-            if (match) {
-                maxId = Math.max(maxId, parseInt(match[1], 10));
-            }
-        });
-        return `database_${maxId + 1}`;
+    const fetchNextDatabaseId = async () => {
+        const response = await api.getNextCompanyId();
+        return response.company_id;
     };
 
     const handleAutoDetect = async () => {
@@ -75,7 +69,7 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
                 const identify = await api.identifyDatabase(response.path, 'ILoveMyINDIA');
 
                 if (identify.success) {
-                    const newId = getNextDatabaseId();
+                    const newId = identify.company_id || await fetchNextDatabaseId();
 
                     onChange({
                         ...companies,
@@ -90,7 +84,7 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
                     toast.success(successMsg, { id: toastId });
                 } else {
                     toast.error(`Auto-detect failed: ${identify.message}. Adding manually.`, { id: toastId });
-                    handleAddBlank(response.path);
+                    await handleAddBlank(response.path);
                 }
             } else if (response.message !== "No file selected") {
                 toast.error(`File browser failed: ${response.message}`);
@@ -102,8 +96,8 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
         }
     };
 
-    const handleAddBlank = (defaultPath: string = '') => {
-        const id = getNextDatabaseId();
+    const handleAddBlank = async (defaultPath: string = '') => {
+        const id = await fetchNextDatabaseId();
         onChange({
             ...companies,
             [id]: {
@@ -150,7 +144,7 @@ export function DatabaseSettingsManager({ companies, onChange }: DatabaseSetting
 
                 <div className="flex items-center gap-2">
                     <button
-                        onClick={() => handleAddBlank()}
+                        onClick={() => { void handleAddBlank(); }}
                         className="btn-secondary text-xs py-1.5 px-3"
                         type="button"
                         disabled={isAutoDetecting}

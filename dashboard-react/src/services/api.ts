@@ -65,9 +65,15 @@ export interface CompanyInfo {
 class ApiService {
   private client: AxiosInstance;
   private companyId: string;
+  private companyBootstrapPromise: Promise<void> | null;
+  private companyValidationTtlMs: number;
+  private lastCompanyValidationAt: number;
 
   constructor() {
-    this.companyId = localStorage.getItem('busy_whatsapp_bridge_company_id') || 'default';
+    this.companyId = localStorage.getItem('busy_whatsapp_bridge_company_id') || '';
+    this.companyBootstrapPromise = null;
+    this.companyValidationTtlMs = 60000;
+    this.lastCompanyValidationAt = 0;
 
     this.client = axios.create({
       baseURL: API_BASE,
@@ -79,8 +85,13 @@ class ApiService {
 
     // Request interceptor for error logging
     this.client.interceptors.request.use(
-      (config: InternalAxiosRequestConfig) => {
-        config.headers['X-Company-Id'] = this.companyId;
+      async (config: InternalAxiosRequestConfig) => {
+        if (this.isCompanyScopedEndpoint(config.url)) {
+          await this.ensureCompanyContext();
+          config.headers['X-Company-Id'] = this.companyId;
+        } else if (this.companyId) {
+          config.headers['X-Company-Id'] = this.companyId;
+        }
         console.log(`[API Request] ${config.method?.toUpperCase()} ${config.url}`);
         return config;
       },
@@ -101,6 +112,66 @@ class ApiService {
     );
   }
 
+  private async ensureCompanyContext(): Promise<void> {
+    if (this.companyId) {
+      await this.ensurePersistedCompanyStillValid();
+      return;
+    }
+    if (!this.companyBootstrapPromise) {
+      this.companyBootstrapPromise = this.bootstrapCompanyContext();
+    }
+    await this.companyBootstrapPromise;
+  }
+
+  private isCompanyScopedEndpoint(url?: string): boolean {
+    if (!url) return false;
+    return url.startsWith('/reminders') || url.startsWith('/dashboard/stats');
+  }
+
+  private async bootstrapCompanyContext(): Promise<void> {
+    try {
+      const response = await axios.get<{ companies: CompanyInfo[] }>(`${API_BASE}/companies`, {
+        timeout: DEFAULT_TIMEOUT,
+      });
+      const companies = response.data?.companies || [];
+      if (companies.length === 0) {
+        throw new ApiErrorException('No database companies are configured. Add one in Settings.', 412);
+      }
+
+      const persisted = localStorage.getItem('busy_whatsapp_bridge_company_id') || '';
+      const chosen = companies.find((c) => c.id === persisted) ? persisted : companies[0].id;
+      this.setCompanyId(chosen);
+    } finally {
+      this.companyBootstrapPromise = null;
+    }
+  }
+
+  private async ensurePersistedCompanyStillValid(): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastCompanyValidationAt < this.companyValidationTtlMs) {
+      return;
+    }
+
+    try {
+      const response = await axios.get<{ companies: CompanyInfo[] }>(`${API_BASE}/companies`, {
+        timeout: DEFAULT_TIMEOUT,
+      });
+      const companies = response.data?.companies || [];
+      if (companies.length === 0) {
+        this.setCompanyId('');
+        return;
+      }
+      const exists = companies.some((c) => c.id === this.companyId);
+      if (!exists) {
+        this.setCompanyId(companies[0].id);
+      }
+      this.lastCompanyValidationAt = Date.now();
+    } catch {
+      this.lastCompanyValidationAt = Date.now();
+      // Best-effort validation; request-level errors are handled downstream.
+    }
+  }
+
   private transformError(error: AxiosError): ApiErrorException {
     if (error.response) {
       const status = error.response.status;
@@ -117,6 +188,12 @@ class ApiService {
           break;
         case 404:
           message = 'The requested resource was not found.';
+          break;
+        case 408:
+          message = data?.message || 'Request timed out while waiting for the server.';
+          break;
+        case 412:
+          message = data?.message || 'A required application precondition is not met.';
           break;
         case 422:
           message = data?.message || 'Invalid request data. Please check your input.';
@@ -168,8 +245,13 @@ class ApiService {
 
   // System/Company
   public setCompanyId(id: string) {
-    this.companyId = id;
-    localStorage.setItem('busy_whatsapp_bridge_company_id', id);
+    this.companyId = (id || '').trim();
+    this.lastCompanyValidationAt = 0;
+    if (this.companyId) {
+      localStorage.setItem('busy_whatsapp_bridge_company_id', this.companyId);
+    } else {
+      localStorage.removeItem('busy_whatsapp_bridge_company_id');
+    }
   }
 
   public getCompanyId(): string {
@@ -178,6 +260,10 @@ class ApiService {
 
   async getCompanies(): Promise<{ companies: CompanyInfo[] }> {
     return this.fetch('/companies');
+  }
+
+  async getNextCompanyId(): Promise<{ company_id: string }> {
+    return this.fetch('/system/next-company-id');
   }
 
   // Dashboard

@@ -1,12 +1,43 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { useQuery } from '@tanstack/react-query';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
+import { api } from '../../services/api';
+import { useDashboardStore } from '../../stores/dashboardStore';
+import { useSystemStore } from '../../stores/systemStore';
+import { REFETCH_INTERVALS } from '../../constants';
 
 export function Layout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
+  const setDashboardStats = useDashboardStore((state) => state.setStats);
+  const setBaileysStatus = useSystemStore((state) => state.setBaileysStatus);
+
+  const { data: dashboardStats } = useQuery({
+    queryKey: ['dashboard-stats'],
+    queryFn: () => api.getDashboardStats(),
+    refetchInterval: REFETCH_INTERVALS.DASHBOARD_STATS,
+  });
+
+  const { data: baileysStatus } = useQuery({
+    queryKey: ['baileys-status'],
+    queryFn: () => api.getBaileysStatus(),
+    refetchInterval: REFETCH_INTERVALS.BAILEYS_STATUS,
+  });
+
+  useEffect(() => {
+    if (dashboardStats) {
+      setDashboardStats(dashboardStats);
+    }
+  }, [dashboardStats, setDashboardStats]);
+
+  useEffect(() => {
+    if (baileysStatus) {
+      setBaileysStatus(baileysStatus);
+    }
+  }, [baileysStatus, setBaileysStatus]);
 
   const handleSkipToContent = () => {
     mainRef.current?.focus();

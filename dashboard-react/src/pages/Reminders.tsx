@@ -302,7 +302,7 @@ export function Reminders() {
   const [failureStage, setFailureStage] = useState('');
   const [isTemplateEditorOpen, setIsTemplateEditorOpen] = useState(false);
   const [companies, setCompanies] = useState<CompanyInfo[]>([]);
-  const activeCompanyId = api.getCompanyId();
+  const [activeCompanyId, setActiveCompanyId] = useState(api.getCompanyId());
 
   // --- Refresh Gate State ---
   // 'select' = only company selector visible
@@ -313,7 +313,17 @@ export function Reminders() {
 
   // Load available companies
   useEffect(() => {
-    api.getCompanies().then(res => setCompanies(res.companies)).catch(console.error);
+    api.getCompanies().then(res => {
+      setCompanies(res.companies);
+      if (res.companies.length > 0) {
+        const current = api.getCompanyId();
+        const chosen = res.companies.find(c => c.id === current)?.id || res.companies[0].id;
+        if (chosen !== current) {
+          api.setCompanyId(chosen);
+        }
+        setActiveCompanyId(chosen);
+      }
+    }).catch(console.error);
   }, []);
 
   // Check refresh stats after companies are loaded to decide phase
@@ -484,19 +494,6 @@ export function Reminders() {
   }, [activeSessionId]);
 
   // Mutations
-  const refreshSnapshotMutation = useMutation({
-    mutationFn: () => api.refreshReminderSnapshot(),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['reminder-snapshot'] });
-      queryClient.invalidateQueries({ queryKey: ['reminder-stats'] });
-      queryClient.invalidateQueries({ queryKey: ['reminder-parties'] });
-      toast.success('Data refreshed successfully');
-    },
-    onError: (error: Error) => {
-      toast.error(`Failed to refresh data: ${error.message}`);
-    },
-  });
-
   const sendRemindersMutation = useMutation({
     mutationFn: (data: { partyCodes: string[]; templateId: string; partyTemplates?: Record<string, string> }) =>
       api.sendReminders(data.partyCodes, data.templateId, data.partyTemplates),
@@ -660,7 +657,12 @@ export function Reminders() {
             <div className="relative max-w-2xl mx-auto">
               <select
                 value={activeCompanyId}
-                onChange={(e) => { api.setCompanyId(e.target.value); window.location.reload(); }}
+                onChange={(e) => {
+                  const selected = e.target.value;
+                  setActiveCompanyId(selected);
+                  api.setCompanyId(selected);
+                  window.location.reload();
+                }}
                 className="w-full appearance-none bg-white dark:bg-black text-xl sm:text-2xl md:text-3xl font-black py-4 sm:py-6 pl-6 sm:pl-8 pr-12 rounded-xl shadow-inner cursor-pointer hover:ring-2 hover:ring-opacity-50 transition-all focus:outline-none focus:ring-4 text-center"
                 style={{
                   color: 'var(--text-primary)',
@@ -738,11 +740,10 @@ export function Reminders() {
             </div>
 
             <button
-              onClick={() => refreshSnapshotMutation.mutate()}
-              disabled={refreshSnapshotMutation.isPending}
+              onClick={() => setPagePhase('gate')}
               className="btn-secondary"
             >
-              <RefreshCw className={`w-4 h-4 ${refreshSnapshotMutation.isPending && 'animate-spin'}`} />
+              <RefreshCw className="w-4 h-4" />
               Refresh Data
             </button>
           </div>

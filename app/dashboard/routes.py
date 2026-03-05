@@ -2,7 +2,7 @@
 Dashboard API routes for the web interface.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from datetime import datetime, timedelta
 from typing import Optional
 import asyncio
@@ -18,10 +18,23 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/api/v1/dashboard", tags=["Dashboard"])
 
 
+def _validate_company_id(x_company_id: Optional[str]) -> str:
+    if not x_company_id:
+        raise HTTPException(status_code=400, detail="Missing required header: X-Company-Id")
+    settings = get_settings()
+    if x_company_id not in settings.database.companies:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown company id '{x_company_id}'. Please select a configured company."
+        )
+    return x_company_id
+
+
 @router.get("/stats")
-async def get_dashboard_stats():
+async def get_dashboard_stats(x_company_id: Optional[str] = Header(None)):
     """Get aggregated dashboard statistics."""
     settings = get_settings()
+    company_id = _validate_company_id(x_company_id)
     
     # Get queue stats
     queue_stats = queue_service.get_status()
@@ -41,7 +54,14 @@ async def get_dashboard_stats():
     sent_this_week = week_counts['sent']
     
     # Check database connection with retry and explicit error context.
-    db_connected, db_error = await asyncio.to_thread(db.test_connection_with_error)
+    db_connected, db_error = await asyncio.to_thread(
+        db.test_connection_with_error,
+        company_id,
+        0,      # retries
+        0.25,   # delay_seconds (unused when retries=0)
+        20.0,   # cache_ttl_success
+        10.0,   # cache_ttl_failure
+    )
     
     return {
         "system": {
@@ -51,6 +71,7 @@ async def get_dashboard_stats():
         },
         "database_connected": db_connected,
         "database_error": db_error,
+        "company_id": company_id,
         "queue": queue_stats,
         "whatsapp": whatsapp_status,
         "messages": {

@@ -14,6 +14,7 @@ export function Header({ onMenuClick }: HeaderProps) {
   const location = useLocation();
   const stats = useDashboardStore((state) => state.stats);
   const baileysConnected = useSystemStore(selectIsBaileysConnected);
+  const setBaileysStatus = useSystemStore((state) => state.setBaileysStatus);
   const queueStats = useQueueStore((state) => state.stats);
 
   const getPageTitle = () => {
@@ -36,22 +37,32 @@ export function Header({ onMenuClick }: HeaderProps) {
   useEffect(() => {
     api.getCompanies().then(res => {
       setCompanies(res.companies);
-      if (res.companies.length > 0 && !res.companies.find(c => c.id === activeCompany)) {
-        api.setCompanyId(res.companies[0].id);
-        setActiveCompany(res.companies[0].id);
+      if (res.companies.length > 0) {
+        const current = api.getCompanyId();
+        const chosen = res.companies.find(c => c.id === current)?.id || res.companies[0].id;
+        if (chosen !== current) {
+          api.setCompanyId(chosen);
+        }
+        setActiveCompany(chosen);
       }
     }).catch(console.error);
   }, []);
 
   const handleCompanyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    api.setCompanyId(e.target.value);
+    const selected = e.target.value;
+    setActiveCompany(selected);
+    api.setCompanyId(selected);
     window.location.reload();
   };
 
   const handleRefresh = async () => {
     try {
-      const newStats = await api.getDashboardStats();
+      const [newStats, newBaileysStatus] = await Promise.all([
+        api.getDashboardStats(),
+        api.getBaileysStatus(),
+      ]);
       useDashboardStore.getState().setStats(newStats);
+      setBaileysStatus(newBaileysStatus);
     } catch (error) {
       console.error('Failed to refresh:', error);
     }

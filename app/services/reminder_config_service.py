@@ -78,6 +78,31 @@ class ReminderConfigService:
         """Get current scope key"""
         return self._current_scope or "default"
 
+    def clear_scope_cache(self, company_id: Optional[str]) -> str:
+        """Remove a scope from in-memory cache and return normalized scope key."""
+        scope_key = compute_scope_key(company_id)
+        self._configs.pop(scope_key, None)
+        if self._current_scope == scope_key:
+            self._current_scope = None
+        return scope_key
+
+    def remove_scope(self, company_id: Optional[str]) -> str:
+        """
+        Remove persisted scoped reminder config directory and in-memory cache.
+        Default scope is never deleted.
+        """
+        scope_key = self.clear_scope_cache(company_id)
+        if scope_key == "default":
+            return scope_key
+        scope_dir = self._base_config_dir / "scopes" / scope_key
+        try:
+            if scope_dir.exists():
+                shutil.rmtree(scope_dir, ignore_errors=True)
+                logger.info("reminder_scope_removed", scope=scope_key, path=str(scope_dir))
+        except Exception as e:
+            logger.warning("reminder_scope_remove_failed", scope=scope_key, error=str(e))
+        return scope_key
+
     def _ensure_config_file(self, scope_key: str):
         """Ensure config file exists with defaults for given scope"""
         config_path = self._get_config_path(scope_key)
@@ -86,7 +111,7 @@ class ReminderConfigService:
             migrated = self._attempt_migration(config_path, scope_key)
             if not migrated:
                 logger.info("creating_default_config_file", path=str(config_path), scope=scope_key)
-                default_config = self._create_default_config()
+                default_config = self._create_default_config(scope_key)
                 self._save_config_to_file(default_config, config_path)
 
     def ensure_scope_initialized(self, company_id: Optional[str]) -> str:
@@ -132,7 +157,41 @@ class ReminderConfigService:
                         
         return False
 
-    def _create_default_config(self) -> ReminderConfig:
+    def _resolve_default_company_name(self, scope_key: Optional[str] = None) -> str:
+        """
+        Resolve best default company display name for a scope.
+        Priority:
+        1) Exact scoped company settings (database.companies[scope_key].company_name)
+        2) Effective default company via resolve_company_id("default")
+        3) Single configured company name (if only one exists)
+        4) Generic fallback
+        """
+        candidate_scope = scope_key or "default"
+        companies = self.settings.database.companies or {}
+
+        if candidate_scope in companies:
+            scoped_name = (companies[candidate_scope].company_name or "").strip()
+            if scoped_name:
+                return scoped_name
+
+        try:
+            effective_default_id = self.settings.resolve_company_id("default")
+            if effective_default_id in companies:
+                default_name = (companies[effective_default_id].company_name or "").strip()
+                if default_name:
+                    return default_name
+        except Exception:
+            pass
+
+        if len(companies) == 1:
+            only_company = next(iter(companies.values()))
+            single_name = (only_company.company_name or "").strip()
+            if single_name:
+                return single_name
+
+        return "Company"
+
+    def _create_default_config(self, scope_key: str = "default") -> ReminderConfig:
         """Create default configuration"""
         from app.constants.reminder_constants import (
             DEFAULT_CREDIT_DAYS,
@@ -174,7 +233,7 @@ class ReminderConfigService:
             default_provider=self.settings.WHATSAPP_PROVIDER,
             currency_symbol="₹",
             company=CompanySettings(
-                name="Your Company Name",
+                name=self._resolve_default_company_name(scope_key),
                 contact_phone="",
                 address=None
             ),
@@ -211,9 +270,20 @@ class ReminderConfigService:
             with open(config_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
 
-            data = self._migrate_config(data)
+            data = self._migrate_config(data, scope_key)
 
             config = ReminderConfig(**data)
+            current_name = (config.company.name or "").strip()
+            if not current_name or current_name == "Your Company Name":
+                resolved_name = self._resolve_default_company_name(scope_key)
+                if resolved_name and resolved_name != current_name:
+                    config.company.name = resolved_name
+                    self._save_config_to_file(config, config_path)
+                    logger.info(
+                        "config_migration_replaced_company_name_placeholder",
+                        scope=scope_key,
+                        company_name=resolved_name
+                    )
             logger.debug("config_loaded_from_file", path=str(config_path), scope=scope_key)
             return config
 
@@ -224,9 +294,9 @@ class ReminderConfigService:
                 scope=scope_key,
                 error=str(e)
             )
-            return self._create_default_config()
+            return self._create_default_config(scope_key)
 
-    def _migrate_config(self, data: dict) -> dict:
+    def _migrate_config(self, data: dict, scope_key: str = "default") -> dict:
         """
         Migrate old config format to new format.
         Handles adding new fields that didn't exist in older versions.
@@ -245,7 +315,7 @@ class ReminderConfigService:
 
         if "company" not in data:
             data["company"] = {
-                "name": "Your Company Name",
+                "name": self._resolve_default_company_name(scope_key),
                 "contact_phone": "",
                 "address": None
             }

@@ -17,7 +17,7 @@ import re
 import uuid
 import asyncio
 
-from app.config import get_settings, get_config_path, get_config_details, get_roaming_appdata_path, load_settings, save_settings, Settings
+from app.config import get_settings, get_config_path, get_config_details, get_roaming_appdata_path, load_settings, save_settings, Settings, CompanyDatabase
 from app.models.schemas import (
     InvoiceNotification,
     PartyDetails,
@@ -26,6 +26,7 @@ from app.models.schemas import (
 )
 from app.database.connection import db
 from app.database.message_queue import message_db
+from app.database.reminder_snapshot import reminder_snapshot_db
 from app.services.busy_handler import busy_handler
 from app.services.queue_service import queue_service
 from app.services.reminder_config_service import reminder_config_service
@@ -70,6 +71,16 @@ structlog.configure(
 )
 
 logger = structlog.get_logger()
+
+
+def _next_database_company_id(companies: dict[str, CompanyDatabase]) -> str:
+    """Return next monotonic database_N id based on current configured companies."""
+    max_id = 0
+    for cid in companies.keys():
+        match = re.match(r"^database_(\d+)$", cid or "")
+        if match:
+            max_id = max(max_id, int(match.group(1)))
+    return f"database_{max_id + 1}"
 
 class BaileysDeliveryUpdate(BaseModel):
     """Internal callback payload for Baileys delivery lifecycle updates."""
@@ -301,6 +312,13 @@ async def get_companies():
         })
         
     return {"companies": companies}
+
+
+@app.get("/api/v1/system/next-company-id", tags=["System"])
+async def get_next_company_id():
+    """Get the next monotonic company ID for database mappings."""
+    app_settings = get_settings()
+    return {"company_id": _next_database_company_id(app_settings.database.companies)}
 
 
 @app.get("/api/v1/health", response_model=HealthResponse, tags=["Health"])
@@ -1099,7 +1117,6 @@ async def identify_database(req: DatabaseIdentifyRequest):
             f"DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};"
             f"DBQ={path};"
             f"PWD={req.bds_password};"
-            "Mode=Read;"
             "Exclusive=0;"
             f"ExtendedAnsiSQL=1;"
         )
@@ -1135,11 +1152,22 @@ async def identify_database(req: DatabaseIdentifyRequest):
                     cursor.close()
             
         except pyodbc.Error as e:
-            logger.warning("identify_database_connection_failed", path=path, error=str(e))
-            return {"success": False, "message": "Database connection failed. Please verify file path and password."}
+            error_text = str(e)
+            logger.warning("identify_database_connection_failed", path=path, error=error_text)
+            lowered = error_text.lower()
+            if "timeout" in lowered or "timed out" in lowered or "hyt00" in lowered:
+                return {
+                    "success": False,
+                    "message": "Database connection timed out. Verify the file path is local/reachable and not locked."
+                }
+            return {"success": False, "message": f"Database connection failed: {error_text}"}
             
+        current_settings = get_settings()
+        next_company_id = _next_database_company_id(current_settings.database.companies)
+
         return {
             "success": True, 
+            "company_id": next_company_id,
             "company_name": company_name,
             "financial_year": fy_name
         }
@@ -1175,6 +1203,7 @@ async def update_config_file(request: ConfigUpdateRequest):
         current_settings = load_settings()
         existing_company_ids = set(current_settings.database.companies.keys())
         newly_added_company_ids = set()
+        removed_company_ids = set()
         
         # Update fields
         update_data = request.model_dump(exclude_unset=True)
@@ -1197,12 +1226,31 @@ async def update_config_file(request: ConfigUpdateRequest):
             current_settings.database.bds_file_path = path
 
         if 'companies' in update_data:
-            companies_data = update_data['companies']
+            companies_data = update_data['companies'] or {}
+            if not isinstance(companies_data, dict):
+                raise HTTPException(status_code=422, detail="`companies` must be an object mapping IDs to configs.")
+            if not companies_data:
+                raise HTTPException(status_code=422, detail="At least one company database configuration is required.")
+
+            typed_companies: dict[str, CompanyDatabase] = {}
             for cid, config in companies_data.items():
-                if config.get('bds_file_path'):
-                    config['bds_file_path'] = os.path.normpath(config['bds_file_path'])
-            newly_added_company_ids = set(companies_data.keys()) - existing_company_ids
-            current_settings.database.companies = companies_data
+                if not isinstance(cid, str) or not cid.strip():
+                    raise HTTPException(status_code=422, detail="Company id must be a non-empty string.")
+                if not isinstance(config, dict):
+                    raise HTTPException(status_code=422, detail=f"Configuration for company '{cid}' must be an object.")
+
+                raw_path = (config.get('bds_file_path') or "").strip()
+                if not raw_path:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Company '{cid}' is missing required field `bds_file_path`."
+                    )
+                config['bds_file_path'] = os.path.normpath(raw_path)
+                typed_companies[cid] = CompanyDatabase(**config)
+
+            newly_added_company_ids = set(typed_companies.keys()) - existing_company_ids
+            removed_company_ids = existing_company_ids - set(typed_companies.keys())
+            current_settings.database.companies = typed_companies
         
         # Create backup
         if config_path.exists():
@@ -1219,9 +1267,17 @@ async def update_config_file(request: ConfigUpdateRequest):
         # This guarantees starter templates are available immediately.
         for company_id in newly_added_company_ids:
             reminder_config_service.ensure_scope_initialized(company_id)
+
+        # Remove stale scoped data for deleted companies.
+        for company_id in removed_company_ids:
+            reminder_config_service.remove_scope(company_id)
+            reminder_snapshot_db.delete_scope(company_id)
         
         return {"success": True, "message": "Settings saved and applied successfully."}
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error("settings_config_update_failed", error=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to write conf.json: {str(e)}")
 
 

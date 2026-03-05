@@ -22,6 +22,7 @@ from app.exceptions.ledger_exceptions import NoTransactionsError
 from app.models.reminder_schemas import AmountDueCalculation, PartyReminderInfo
 from app.services.ledger_data_service import ledger_data_service
 from app.services.reminder_config_service import reminder_config_service
+from app.utils.number_format import format_indian_currency
 
 logger = structlog.get_logger()
 
@@ -440,9 +441,9 @@ class AmountDueCalculator:
                         print_name=print_name,
                         phone=phone,
                         closing_balance=closing_balance,
-                        closing_balance_formatted=f"{currency}{closing_balance:,.2f}",
+                        closing_balance_formatted=format_indian_currency(closing_balance, symbol=currency),
                         amount_due=amount_due,
-                        amount_due_formatted=f"{currency}{amount_due:,.2f}",
+                        amount_due_formatted=format_indian_currency(amount_due, symbol=currency),
                         sales_credit_days=sales_credit_days,
                         credit_days_source=credit_source,
                         permanent_enabled=False,
@@ -471,7 +472,7 @@ class AmountDueCalculator:
     def format_amount(self, amount: Decimal, company_id: str = "default") -> str:
         """Format amount with currency symbol"""
         config = self.config_service.get_config(scope_key=company_id)
-        return f"{config.currency_symbol}{amount:,.2f}"
+        return format_indian_currency(amount, symbol=config.currency_symbol)
 
 
 # Global instance
