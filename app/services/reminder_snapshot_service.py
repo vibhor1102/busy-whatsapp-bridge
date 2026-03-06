@@ -50,9 +50,9 @@ class ReminderSnapshotService:
         """
         if vch_type in (VoucherType.CONTRA, VoucherType.JOURNAL):
             return -value1
-        if vch_type in (VoucherType.SALES, VoucherType.PAYMENT_CASH, VoucherType.PAYMENT_BANK, VoucherType.DEBIT_NOTE):
+        if vch_type in (VoucherType.SALES, VoucherType.PAYMENT_CASH, VoucherType.PAYMENT_BANK, VoucherType.CREDIT_NOTE):
             return abs(value1)
-        if vch_type in (VoucherType.PURCHASE, VoucherType.RECEIPT, VoucherType.RECEIPT_ALT, VoucherType.CREDIT_NOTE):
+        if vch_type in (VoucherType.PURCHASE, VoucherType.RECEIPT, VoucherType.RECEIPT_ALT, VoucherType.DEBIT_NOTE):
             return -abs(value1)
         return -value1
 

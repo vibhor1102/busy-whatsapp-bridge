@@ -480,9 +480,11 @@ class LedgerDataService:
         
         Business Logic (from Business POV):
         - Sales (Type 9): Dr (customer owes us more)
-        - Purchase (Type 2): Cr (we owe supplier less)
-        - Receipt (Type 14): Cr (customer paid us)
-        - Payment (Type 3, 4): Dr (we paid them)
+        - Purchase (Type 2): Cr (purchase return / liability reduction)
+        - Receipt (Type 14, 15): Cr (customer paid us)
+        - Payment (Type 3, 4): Dr (we paid them / refund to customer)
+        - Debit Note (Type 1): Cr (reduces debtor balance)
+        - Credit Note (Type 10): Dr (increases debtor balance)
         - Contra/Journal (Type 16, 19): Use Value1 sign
         
         Args:
@@ -503,14 +505,14 @@ class LedgerDataService:
             return True  # Dr
         elif vch_type == VoucherType.PURCHASE:
             return False  # Cr
-        elif vch_type == VoucherType.RECEIPT:
+        elif vch_type in (VoucherType.RECEIPT, VoucherType.RECEIPT_ALT):
             return False  # Cr
         elif vch_type in (VoucherType.PAYMENT_CASH, VoucherType.PAYMENT_BANK):
             return True  # Dr
         elif vch_type == VoucherType.DEBIT_NOTE:
-            return True  # Dr
-        elif vch_type == VoucherType.CREDIT_NOTE:
             return False  # Cr
+        elif vch_type == VoucherType.CREDIT_NOTE:
+            return True  # Dr
         else:
             # Unknown type - try Value1 or default to Dr
             if value1 is not None:
