@@ -33,15 +33,16 @@ def test_determine_dr_cr_uses_value_sign_for_journal_like_vouchers():
 
 
 def test_snapshot_signed_contribution_matches_debtor_balance_effect():
-    assert reminder_snapshot_service._signed_contribution(VoucherType.SALES, Decimal("100")) == Decimal("100")
-    assert reminder_snapshot_service._signed_contribution(VoucherType.CREDIT_NOTE, Decimal("100")) == Decimal("100")
-    assert reminder_snapshot_service._signed_contribution(VoucherType.PAYMENT_CASH, Decimal("100")) == Decimal("100")
-    assert reminder_snapshot_service._signed_contribution(VoucherType.PAYMENT_CASH, Decimal("100"), vch_no="CN-60-AHF") == Decimal("-100")
+    assert ledger_data_service._signed_contribution(VoucherType.SALES, Decimal("-100")) == Decimal("100")
+    assert ledger_data_service._signed_contribution(VoucherType.SALES, Decimal("100")) == Decimal("-100")
+    assert ledger_data_service._signed_contribution(VoucherType.CREDIT_NOTE, Decimal("100")) == Decimal("100")
+    assert ledger_data_service._signed_contribution(VoucherType.PAYMENT_CASH, Decimal("100")) == Decimal("100")
+    assert ledger_data_service._signed_contribution(VoucherType.PAYMENT_CASH, Decimal("100"), vch_no="CN-60-AHF") == Decimal("-100")
 
-    assert reminder_snapshot_service._signed_contribution(VoucherType.RECEIPT, Decimal("100")) == Decimal("-100")
-    assert reminder_snapshot_service._signed_contribution(VoucherType.RECEIPT_ALT, Decimal("100")) == Decimal("-100")
-    assert reminder_snapshot_service._signed_contribution(VoucherType.PURCHASE, Decimal("100")) == Decimal("-100")
-    assert reminder_snapshot_service._signed_contribution(VoucherType.DEBIT_NOTE, Decimal("100")) == Decimal("-100")
+    assert ledger_data_service._signed_contribution(VoucherType.RECEIPT, Decimal("100")) == Decimal("-100")
+    assert ledger_data_service._signed_contribution(VoucherType.RECEIPT_ALT, Decimal("100")) == Decimal("-100")
+    assert ledger_data_service._signed_contribution(VoucherType.PURCHASE, Decimal("100")) == Decimal("-100")
+    assert ledger_data_service._signed_contribution(VoucherType.DEBIT_NOTE, Decimal("100")) == Decimal("-100")
 
 
 def test_classify_voucher_rows_aggregates_multirow_journal_deterministically():

@@ -19,6 +19,7 @@ from app.constants.reminder_constants import (
 )
 from app.database.connection import db
 from app.exceptions.ledger_exceptions import NoTransactionsError
+from app.models.ledger_schemas import LedgerEntry
 from app.models.reminder_schemas import AmountDueCalculation, PartyReminderInfo
 from app.services.ledger_data_service import ledger_data_service
 from app.services.reminder_config_service import reminder_config_service
@@ -125,46 +126,22 @@ class AmountDueCalculator:
         start_date = as_of_date - timedelta(days=days)
         
         try:
-            # Query Tran1 for sales transactions (VchType = 9)
-            # Note: Sales increase Dr balance (customer owes more)
-            query = """
-                SELECT
-                    SUM(IIF(ISNULL(q.VchAmtBaseCur), 0, q.VchAmtBaseCur)),
-                    COUNT(*)
-                FROM (
-                    SELECT DISTINCT t1.VchCode, t1.VchAmtBaseCur
-                    FROM Tran1 t1
-                    INNER JOIN Tran2 t2 ON t1.VchCode = t2.VchCode
-                    WHERE t2.MasterCode1 = ?
-                      AND t1.VchType = 9
-                      AND t1.Date >= ?
-                      AND t1.Date <= ?
-                      AND (t1.Cancelled = 0 OR t1.Cancelled IS NULL)
-                ) AS q
-            """
-            
-            with self.db.get_cursor(company_id=company_id) as cursor:
-                cursor.execute(query, (party_code_int, start_date, as_of_date))
-                row = cursor.fetchone()
-                
-                if row and row[0]:
-                    total_sales = Decimal(str(row[0]))
-                    count = int(row[1])
-                else:
-                    total_sales = Decimal("0")
-                    count = 0
-                
-                logger.debug(
-                    "recent_sales_calculated",
-                    party_code=party_code,
-                    days=days,
-                    start_date=start_date,
-                    end_date=as_of_date,
-                    total_sales=total_sales,
-                    count=count
-                )
-                
-                return total_sales, count, start_date, as_of_date
+            report = ledger_data_service.generate_ledger_report(party_code, company_id=company_id)
+            total_sales, count = self._calculate_recent_sales_from_entries(
+                report.entries,
+                start_date=start_date,
+                end_date=as_of_date,
+            )
+            logger.debug(
+                "recent_sales_calculated",
+                party_code=party_code,
+                days=days,
+                start_date=start_date,
+                end_date=as_of_date,
+                total_sales=total_sales,
+                count=count
+            )
+            return total_sales, count, start_date, as_of_date
                 
         except Exception as e:
             logger.error(
@@ -174,6 +151,31 @@ class AmountDueCalculator:
                 error=str(e)
             )
             return Decimal("0"), 0, start_date, as_of_date
+
+    def _calculate_recent_sales_from_entries(
+        self,
+        entries: List[LedgerEntry],
+        *,
+        start_date: date,
+        end_date: date,
+    ) -> Tuple[Decimal, int]:
+        """Derive recent sales from canonical normalized ledger entries."""
+        total = Decimal("0")
+        count = 0
+        seen_vouchers: Set[Tuple[date, str, Decimal]] = set()
+        for entry in entries:
+            voucher_no = (entry.voucher_no or "").strip()
+            sale_key = (entry.date, voucher_no, entry.amount)
+            if entry.voucher_type != "SupO" or not entry.is_debit:
+                continue
+            if not (start_date <= entry.date <= end_date):
+                continue
+            if sale_key in seen_vouchers:
+                continue
+            seen_vouchers.add(sale_key)
+            total += entry.amount
+            count += 1
+        return total, count
 
     def _get_debtor_group_codes(self, force_refresh: bool = False, company_id: str = "default") -> List[int]:
         """
@@ -293,13 +295,17 @@ class AmountDueCalculator:
             # Get credit days
             credit_days_used, credit_days_source = self.get_credit_days(party_code, credit_days, company_id=company_id)
             
-            # Get ledger for closing balance
+            # Get canonical ledger once and derive all calculations from it.
             ledger = ledger_data_service.generate_ledger_report(party_code, company_id=company_id)
             closing_balance = ledger.closing_balance
-            
-            # Get recent sales
-            recent_sales, sales_count, start_date, end_date = self.get_recent_sales(
-                party_code, credit_days_used, as_of_date, company_id=company_id
+
+            if as_of_date is None:
+                as_of_date = date.today()
+            start_date = as_of_date - timedelta(days=credit_days_used)
+            recent_sales, sales_count = self._calculate_recent_sales_from_entries(
+                ledger.entries,
+                start_date=start_date,
+                end_date=as_of_date,
             )
             
             # Calculate amount due
@@ -323,7 +329,7 @@ class AmountDueCalculator:
                 credit_days_source=credit_days_source,
                 recent_sales_total=recent_sales,
                 recent_sales_count=sales_count,
-                recent_sales_date_range=(start_date, end_date),
+                recent_sales_date_range=(start_date, as_of_date),
                 amount_due=amount_due,
                 calculation_timestamp=datetime.now()
             )

@@ -3,10 +3,10 @@ Service to fetch ledger data from Busy Accounting database.
 Refactored for universality - works with any Busy database configuration.
 """
 import structlog
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, List, Optional, Dict, Tuple
+from typing import Any, List, Optional, Dict, Set, Tuple
 
 from app.database.connection import db
 from app.models.ledger_schemas import (
@@ -409,6 +409,14 @@ class LedgerDataService:
         ledger model uses negative values for Cr/payable balances.
         """
         parent_group = self._get_party_parent_group(party_code_int, company_id=company_id)
+        return self._normalize_opening_balance_for_parent_group(raw_balance, parent_group)
+
+    def _normalize_opening_balance_for_parent_group(
+        self,
+        raw_balance: Decimal,
+        parent_group: Optional[int],
+    ) -> Decimal:
+        """Normalize Folio1 opening balance when parent group is already known."""
         if parent_group == 117:
             return -abs(raw_balance)
         return raw_balance
@@ -1184,6 +1192,122 @@ class LedgerDataService:
             total_debits=total_debits,
             total_credits=total_credits
         )
+
+    def compute_party_balances_and_recent_sales(
+        self,
+        *,
+        party_credit_days: Dict[int, int],
+        as_of_date: Optional[date] = None,
+        company_id: str = "default",
+    ) -> Dict[int, Dict[str, Decimal]]:
+        """
+        Compute closing balances and recent-sales totals for many parties at once.
+
+        This uses the same canonical sign rules as ledger reconstruction while
+        avoiding one full ODBC connection cycle per party.
+        """
+        if as_of_date is None:
+            as_of_date = date.today()
+        if not party_credit_days:
+            return {}
+
+        party_codes = sorted(party_credit_days.keys())
+        party_code_set = set(party_codes)
+        cutoff_map = {
+            code: as_of_date - timedelta(days=int(party_credit_days[code]))
+            for code in party_codes
+        }
+        closing_map: Dict[int, Decimal] = {code: Decimal("0") for code in party_codes}
+        recent_sales_map: Dict[int, Decimal] = {code: Decimal("0") for code in party_codes}
+        seen_sales_vouchers: Set[Tuple[int, int]] = set()
+
+        # Parent groups for opening-balance normalization.
+        for i in range(0, len(party_codes), 500):
+            chunk = party_codes[i:i + 500]
+            in_clause = ",".join(str(c) for c in chunk)
+            with self.db.get_cursor(company_id=company_id) as cursor:
+                cursor.execute(f"""
+                    SELECT Code, ParentGrp
+                    FROM Master1
+                    WHERE MasterType = {MasterType.PARTY}
+                      AND Code IN ({in_clause})
+                """)
+                parent_groups = {int(row[0]): int(row[1] or 0) for row in cursor.fetchall()}
+
+                cursor.execute(f"""
+                    SELECT MasterCode, D1
+                    FROM Folio1
+                    WHERE MasterType = {MasterType.PARTY}
+                      AND MasterCode IN ({in_clause})
+                """)
+                for row in cursor.fetchall():
+                    code = int(row[0])
+                    raw = Decimal(str(row[1] or 0))
+                    closing_map[code] = self._normalize_opening_balance_for_parent_group(
+                        raw,
+                        parent_groups.get(code),
+                    )
+
+        fy = self.get_financial_year(company_id=company_id)
+        start_s = fy.start_date.strftime("%m/%d/%Y")
+        end_s = fy.end_date.strftime("%m/%d/%Y")
+
+        for i in range(0, len(party_codes), 500):
+            chunk = party_codes[i:i + 500]
+            chunk_set = set(chunk)
+            in_clause = ",".join(str(c) for c in chunk)
+            with self.db.get_cursor(company_id=company_id) as cursor:
+                cursor.execute(f"""
+                    SELECT
+                        t2.VchCode,
+                        t2.MasterCode1,
+                        t2.MasterCode2,
+                        t2.Value1,
+                        t1.VchType,
+                        t1.VchNo,
+                        t1.Date,
+                        t1.VchAmtBaseCur
+                    FROM Tran2 t2
+                    INNER JOIN Tran1 t1 ON t1.VchCode = t2.VchCode
+                    WHERE t2.RecType = {RecType.MAIN_ACCOUNTING}
+                      AND t1.Date >= #{start_s}#
+                      AND t1.Date <= #{end_s}#
+                      AND (t1.Cancelled = 0 OR t1.Cancelled IS NULL)
+                      AND (t2.MasterCode1 IN ({in_clause}) OR t2.MasterCode2 IN ({in_clause}))
+                    ORDER BY t1.Date, t2.VchCode, t2.SrNo
+                """)
+
+                for row in cursor.fetchall():
+                    vch_code = int(row[0] or 0)
+                    mc1 = int(row[1] or 0)
+                    mc2 = int(row[2] or 0)
+                    value1 = Decimal(str(row[3] or 0))
+                    vch_type = int(row[4] or 0)
+                    vch_no = row[5]
+                    vdate = self._parse_date(row[6])
+                    vamt = Decimal(str(row[7] or 0))
+
+                    party_code = mc1 if mc1 in chunk_set else (mc2 if mc2 in chunk_set else 0)
+                    if not party_code or party_code not in party_code_set:
+                        continue
+
+                    signed = self._signed_contribution(vch_type, value1, vch_no=vch_no)
+                    closing_map[party_code] += signed
+
+                    if vch_type == VoucherType.SALES and signed > 0:
+                        sale_key = (party_code, vch_code)
+                        if sale_key not in seen_sales_vouchers and cutoff_map[party_code] <= vdate <= as_of_date:
+                            seen_sales_vouchers.add(sale_key)
+                            recent_sales_map[party_code] += vamt
+
+        return {
+            code: {
+                "closing_balance": closing_map.get(code, Decimal("0")),
+                "recent_sales_total": recent_sales_map.get(code, Decimal("0")),
+                "amount_due": closing_map.get(code, Decimal("0")) - recent_sales_map.get(code, Decimal("0")),
+            }
+            for code in party_codes
+        }
 
 
 # Global instance for convenience
