@@ -128,14 +128,19 @@ class AmountDueCalculator:
             # Query Tran1 for sales transactions (VchType = 9)
             # Note: Sales increase Dr balance (customer owes more)
             query = """
-                SELECT SUM(IIF(ISNULL(t1.VchAmtBaseCur), 0, t1.VchAmtBaseCur)), COUNT(*)
-                FROM Tran1 t1
-                INNER JOIN Tran2 t2 ON t1.VchCode = t2.VchCode
-                WHERE t2.MasterCode1 = ?
-                AND t1.VchType = 9
-                AND t1.Date >= ?
-                AND t1.Date <= ?
-                AND (t1.Cancelled = 0 OR t1.Cancelled IS NULL)
+                SELECT
+                    SUM(IIF(ISNULL(q.VchAmtBaseCur), 0, q.VchAmtBaseCur)),
+                    COUNT(*)
+                FROM (
+                    SELECT DISTINCT t1.VchCode, t1.VchAmtBaseCur
+                    FROM Tran1 t1
+                    INNER JOIN Tran2 t2 ON t1.VchCode = t2.VchCode
+                    WHERE t2.MasterCode1 = ?
+                      AND t1.VchType = 9
+                      AND t1.Date >= ?
+                      AND t1.Date <= ?
+                      AND (t1.Cancelled = 0 OR t1.Cancelled IS NULL)
+                ) AS q
             """
             
             with self.db.get_cursor(company_id=company_id) as cursor:

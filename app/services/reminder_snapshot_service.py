@@ -43,12 +43,12 @@ class ReminderSnapshotService:
         return dt.strftime("%m/%d/%Y")
 
     @staticmethod
-    def _signed_contribution(vch_type: int, value1: Decimal) -> Decimal:
+    def _signed_contribution(vch_type: int, value1: Decimal, vch_no: Optional[str] = None) -> Decimal:
         """
         Mirror ledger_data_service debit/credit effect as signed contribution.
         Positive contribution increases closing balance, negative decreases.
         """
-        return ledger_data_service._signed_contribution(vch_type, value1)
+        return ledger_data_service._signed_contribution(vch_type, value1, vch_no=vch_no)
 
     def _fetch_debtor_roster(self, company_id: str = "default") -> List[Dict[str, Any]]:
         debtor_groups = self.calculator._get_debtor_group_codes(company_id=company_id)  # intentionally shared canonical resolver
@@ -116,6 +116,7 @@ class ReminderSnapshotService:
         closing_map: Dict[int, Decimal] = {c: Decimal("0") for c in party_codes_int}
         recent_sales_map: Dict[int, Decimal] = {c: Decimal("0") for c in party_codes_int}
         recent_sales_count: Dict[int, int] = {c: 0 for c in party_codes_int}
+        seen_sales_vouchers = set()
 
         # per-party sales cutoff based on credit days
         cutoff_map: Dict[int, date] = {}
@@ -128,7 +129,7 @@ class ReminderSnapshotService:
             chunk = party_codes_int[i : i + self._chunk_size]
             in_clause = ",".join(str(c) for c in chunk)
             query = f"""
-                SELECT MasterCode, D1, D4
+                SELECT MasterCode, D1
                 FROM Folio1
                 WHERE MasterType = 2
                   AND MasterCode IN ({in_clause})
@@ -136,7 +137,7 @@ class ReminderSnapshotService:
             with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute(query)
                 for row in cursor.fetchall():
-                    closing_map[int(row[0])] = self._to_decimal(row[1]) + self._to_decimal(row[2])
+                    closing_map[int(row[0])] = self._to_decimal(row[1])
 
         fy = ledger_data_service.get_financial_year(company_id=company_id)
         start_s = self._fmt_access_date(fy.start_date)
@@ -149,10 +150,12 @@ class ReminderSnapshotService:
             in_clause = ",".join(str(c) for c in chunk)
             query = f"""
                 SELECT
+                    t2.VchCode,
                     t2.MasterCode1,
                     t2.MasterCode2,
                     t2.Value1,
                     t1.VchType,
+                    t1.VchNo,
                     t1.Date,
                     t1.VchAmtBaseCur
                 FROM Tran2 t2
@@ -166,19 +169,24 @@ class ReminderSnapshotService:
             with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute(query)
                 for row in cursor.fetchall():
-                    mc1 = int(row[0] or 0)
-                    mc2 = int(row[1] or 0)
-                    v1 = self._to_decimal(row[2])
-                    vtype = int(row[3] or 0)
-                    vdate = row[4]
-                    vamt = self._to_decimal(row[5])
+                    vch_code = int(row[0] or 0)
+                    mc1 = int(row[1] or 0)
+                    mc2 = int(row[2] or 0)
+                    v1 = self._to_decimal(row[3])
+                    vtype = int(row[4] or 0)
+                    vno = row[5]
+                    vdate = row[6]
+                    vamt = self._to_decimal(row[7])
 
                     party_code = mc1 if mc1 in chunk_set else (mc2 if mc2 in chunk_set else 0)
                     if party_code and party_code in party_code_set:
-                        closing_map[party_code] += self._signed_contribution(vtype, v1)
+                        closing_map[party_code] += self._signed_contribution(vtype, v1, vch_no=vno)
 
                     # recent sales: only when debtor is MasterCode1 (same as existing logic)
                     if vtype == VoucherType.SALES and mc1 in chunk_set and mc1 in party_code_set:
+                        sale_key = (mc1, vch_code)
+                        if sale_key in seen_sales_vouchers:
+                            continue
                         if isinstance(vdate, datetime):
                             txn_date = vdate.date()
                         elif isinstance(vdate, date):
@@ -186,6 +194,7 @@ class ReminderSnapshotService:
                         else:
                             txn_date = as_of_date
                         if cutoff_map[mc1] <= txn_date <= as_of_date:
+                            seen_sales_vouchers.add(sale_key)
                             recent_sales_map[mc1] += vamt
                             recent_sales_count[mc1] += 1
 

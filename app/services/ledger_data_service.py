@@ -378,6 +378,40 @@ class LedgerDataService:
         except Exception as e:
             logger.error("get_customer_info_error", company_id=company_id, party_code=party_code, error=str(e))
             raise PartyNotFoundError(party_code, f"Database error: {str(e)}") from e
+
+    def _get_party_parent_group(self, party_code_int: int, company_id: str = "default") -> Optional[int]:
+        """Return parent group code for a party master."""
+        try:
+            with self.db.get_cursor(company_id=company_id) as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT ParentGrp
+                    FROM Master1
+                    WHERE Code = {party_code_int} AND MasterType = {MasterType.PARTY}
+                    """
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row and row[0] is not None else None
+        except Exception as e:
+            logger.debug("get_party_parent_group_failed", party_code=party_code_int, error=str(e))
+            return None
+
+    def _normalize_opening_balance(
+        self,
+        raw_balance: Decimal,
+        party_code_int: int,
+        company_id: str = "default",
+    ) -> Decimal:
+        """
+        Normalize Folio1 opening balance to ledger sign convention.
+
+        Busy stores creditor balances as positive values in Folio1, but our
+        ledger model uses negative values for Cr/payable balances.
+        """
+        parent_group = self._get_party_parent_group(party_code_int, company_id=company_id)
+        if parent_group == 117:
+            return -abs(raw_balance)
+        return raw_balance
     
     def get_opening_balance(self, party_code: str, as_of_date: date, company_id: str = "default") -> Decimal:
         """
@@ -398,8 +432,12 @@ class LedgerDataService:
                 cursor.execute(query)
                 row = cursor.fetchone()
                 
-                if row and (row[0] is not None or row[1] is not None):
-                    balance = Decimal(str(row[0] or 0)) + Decimal(str(row[1] or 0))
+                if row and row[0] is not None:
+                    balance = self._normalize_opening_balance(
+                        Decimal(str(row[0] or 0)),
+                        party_code_int,
+                        company_id=company_id,
+                    )
                     logger.info(
                         "opening_balance_fetched", 
                         party_code=party_code, 
@@ -470,11 +508,26 @@ class LedgerDataService:
             )
             return DEFAULT_CREDIT_DAYS, "default"
     
-    def _get_voucher_type_name(self, vch_type: int) -> str:
+    def _get_voucher_type_name(self, vch_type: int, vch_no: Optional[str] = None) -> str:
         """Get human-readable voucher type abbreviation."""
+        if self._is_credit_note_series(vch_type, vch_no):
+            return VOUCHER_TYPE_NAMES[VoucherType.CREDIT_NOTE]
         return VOUCHER_TYPE_NAMES.get(vch_type, "Jrnl")
     
-    def _determine_dr_cr(self, vch_type: int, value1: Optional[float]) -> bool:
+    def _normalize_vch_no(self, vch_no: Optional[str]) -> str:
+        """Normalize voucher number for subtype checks."""
+        return (vch_no or "").strip().upper()
+
+    def _is_credit_note_series(self, vch_type: int, vch_no: Optional[str]) -> bool:
+        """
+        Busy stores this credit-note series under type 3 in some datasets.
+
+        Restrict the override to the document-number family so real payments
+        of the same numeric type are not flipped accidentally.
+        """
+        return vch_type == VoucherType.PAYMENT_CASH and self._normalize_vch_no(vch_no).startswith("CN-")
+
+    def _determine_dr_cr(self, vch_type: int, value1: Optional[float], vch_no: Optional[str] = None) -> bool:
         """
         Determine if entry is Dr or Cr based on voucher type and Value1 sign.
         
@@ -494,6 +547,9 @@ class LedgerDataService:
         Returns:
             True for Dr, False for Cr
         """
+        if self._is_credit_note_series(vch_type, vch_no):
+            return False  # Cr
+
         # For Contra and Journal, use Value1 sign
         if vch_type in (VoucherType.CONTRA, VoucherType.JOURNAL):
             if value1 is not None:
@@ -519,16 +575,19 @@ class LedgerDataService:
                 return value1 < 0
             return True
 
-    def _signed_contribution(self, vch_type: int, value1: Decimal) -> Decimal:
+    def _signed_contribution(self, vch_type: int, value1: Decimal, vch_no: Optional[str] = None) -> Decimal:
         """
         Convert a Tran2 row into signed debtor-balance movement.
 
         Positive increases Dr/receivable, negative increases Cr/payable.
         """
+        if self._is_credit_note_series(vch_type, vch_no):
+            return -abs(value1)
         if vch_type in (VoucherType.CONTRA, VoucherType.JOURNAL):
             return -value1
+        if vch_type == VoucherType.SALES:
+            return -value1
         if vch_type in (
-            VoucherType.SALES,
             VoucherType.PAYMENT_CASH,
             VoucherType.PAYMENT_BANK,
             VoucherType.CREDIT_NOTE,
@@ -547,6 +606,7 @@ class LedgerDataService:
         self,
         vch_type: int,
         values: List[Decimal],
+        vch_no: Optional[str] = None,
     ) -> Tuple[Decimal, bool]:
         """
         Collapse all party-linked Tran2 rows for a voucher into one effect.
@@ -558,7 +618,7 @@ class LedgerDataService:
             return Decimal("0"), True
 
         net_effect = sum(
-            (self._signed_contribution(vch_type, value) for value in values),
+            (self._signed_contribution(vch_type, value, vch_no=vch_no) for value in values),
             Decimal("0"),
         )
         return abs(net_effect), net_effect >= 0
@@ -697,6 +757,136 @@ class LedgerDataService:
         except Exception as e:
             logger.error("build_counter_lookup_error", error=str(e))
             return {vch: DEFAULT_COUNTER_ACCOUNT for vch in vch_codes}
+
+    def _build_voucher_rows_lookup(
+        self,
+        vch_codes: List[int],
+        cursor,
+    ) -> Dict[int, List[Dict[str, Any]]]:
+        """Fetch all main accounting rows for the provided vouchers."""
+        if not vch_codes:
+            return {}
+
+        try:
+            vch_list = ",".join(str(v) for v in vch_codes)
+            cursor.execute(f"""
+                SELECT VchCode, SrNo, MasterCode1, MasterCode2, Value1
+                FROM Tran2
+                WHERE VchCode IN ({vch_list})
+                  AND RecType = {RecType.MAIN_ACCOUNTING}
+                ORDER BY VchCode, SrNo
+            """)
+
+            result: Dict[int, List[Dict[str, Any]]] = {}
+            for row in cursor.fetchall():
+                result.setdefault(int(row[0]), []).append(
+                    {
+                        "sr_no": int(row[1] or 0),
+                        "master_code1": int(row[2] or 0),
+                        "master_code2": int(row[3] or 0),
+                        "value1": Decimal(str(row[4] or 0)),
+                    }
+                )
+            return result
+        except Exception as e:
+            logger.error("build_voucher_rows_lookup_error", error=str(e))
+            return {}
+
+    def _build_master_name_lookup(
+        self,
+        master_codes: List[int],
+        cursor,
+    ) -> Dict[int, str]:
+        """Resolve master codes to names in one batch."""
+        codes = sorted({code for code in master_codes if code})
+        if not codes:
+            return {}
+
+        try:
+            code_list = ",".join(str(c) for c in codes)
+            cursor.execute(f"""
+                SELECT Code, Name
+                FROM Master1
+                WHERE Code IN ({code_list})
+            """)
+            return {int(row[0]): str(row[1]) for row in cursor.fetchall() if row[1]}
+        except Exception as e:
+            logger.error("build_master_name_lookup_error", error=str(e))
+            return {}
+
+    def _build_split_entries_for_voucher(
+        self,
+        *,
+        vch_code: int,
+        vch_date: date,
+        vch_no: str,
+        vch_type: int,
+        party_code: int,
+        voucher_rows_lookup: Dict[int, List[Dict[str, Any]]],
+        master_name_lookup: Dict[int, str],
+    ) -> Optional[List[LedgerEntry]]:
+        """
+        Split vouchers that contain multiple party-impact rows with mixed signs.
+
+        Busy can encode a sale and an immediate settlement inside one voucher.
+        Those vouchers must be expanded into separate ledger entries rather than
+        collapsed into one absolute total.
+        """
+        detail_rows = voucher_rows_lookup.get(vch_code, [])
+        if not detail_rows:
+            return None
+
+        party_rows = [
+            row for row in detail_rows
+            if row["value1"] != 0
+            and (row["master_code1"] == party_code or row["master_code2"] == party_code)
+        ]
+        if len(party_rows) < 2:
+            return None
+
+        signs = {1 if row["value1"] > 0 else -1 for row in party_rows if row["value1"] != 0}
+        if len(signs) < 2:
+            return None
+
+        split_entries: List[LedgerEntry] = []
+        for party_row in party_rows:
+            is_debit = party_row["value1"] < 0
+            opposite_names: List[str] = []
+            for row in detail_rows:
+                if row["value1"] == 0:
+                    continue
+                is_party_row = row["master_code1"] == party_code or row["master_code2"] == party_code
+                if is_party_row:
+                    continue
+                if row["value1"] * party_row["value1"] >= 0:
+                    continue
+                code = row["master_code1"] or row["master_code2"]
+                name = master_name_lookup.get(code, "")
+                if name:
+                    opposite_names.append(name)
+
+            particulars = self._select_best_counter_account(opposite_names)
+            if vch_no:
+                particulars = f"{particulars}-{vch_no.strip()}"
+
+            split_voucher_type = self._get_voucher_type_name(vch_type, vch_no=vch_no)
+            if vch_type == VoucherType.SALES and not is_debit:
+                split_voucher_type = VOUCHER_TYPE_NAMES[VoucherType.RECEIPT]
+
+            split_entries.append(
+                LedgerEntry(
+                    date=vch_date,
+                    particulars=particulars,
+                    voucher_no=vch_no,
+                    voucher_type=split_voucher_type,
+                    amount=abs(party_row["value1"]),
+                    is_debit=is_debit,
+                    balance=Decimal("0"),
+                    narration=None,
+                )
+            )
+
+        return split_entries or None
     
     def _build_voucher_effect_lookup(
         self,
@@ -715,24 +905,28 @@ class LedgerDataService:
             
             cursor.execute(f"""
                 SELECT 
-                    VchCode,
-                    VchType,
-                    Value1
+                    Tran2.VchCode,
+                    Tran1.VchType,
+                    Tran1.VchNo,
+                    Tran2.Value1
                 FROM Tran2
-                WHERE VchCode IN ({vch_list})
-                    AND (MasterCode1 = {party_code} OR MasterCode2 = {party_code})
-                    AND RecType = {RecType.MAIN_ACCOUNTING}
+                INNER JOIN Tran1 ON Tran1.VchCode = Tran2.VchCode
+                WHERE Tran2.VchCode IN ({vch_list})
+                    AND (Tran2.MasterCode1 = {party_code} OR Tran2.MasterCode2 = {party_code})
+                    AND Tran2.RecType = {RecType.MAIN_ACCOUNTING}
+                    AND (Tran1.Cancelled = 0 OR Tran1.Cancelled IS NULL)
             """)
             
             rows_by_voucher: Dict[int, Dict[str, Any]] = {}
             for row in cursor.fetchall():
                 vch_code = row[0]
                 vch_type = int(row[1] or 0)
-                value1 = row[2]
+                vch_no = row[2]
+                value1 = row[3]
                 if value1 is not None:
                     bucket = rows_by_voucher.setdefault(
                         vch_code,
-                        {"vch_type": vch_type, "values": []},
+                        {"vch_type": vch_type, "vch_no": vch_no, "values": []},
                     )
                     bucket["values"].append(Decimal(str(value1)))
 
@@ -741,6 +935,7 @@ class LedgerDataService:
                 result[vch_code] = self._classify_voucher_rows(
                     payload["vch_type"],
                     payload["values"],
+                    vch_no=payload.get("vch_no"),
                 )
 
             return result
@@ -821,6 +1016,15 @@ class LedgerDataService:
                 counter_lookup = self._build_counter_account_lookup(
                     vch_codes_list, party_code_int, cursor
                 )
+                voucher_rows_lookup = self._build_voucher_rows_lookup(vch_codes_list, cursor)
+                master_codes: List[int] = []
+                for rows_for_voucher in voucher_rows_lookup.values():
+                    for detail_row in rows_for_voucher:
+                        if detail_row["master_code1"] != party_code_int:
+                            master_codes.append(detail_row["master_code1"])
+                        if detail_row["master_code2"] != party_code_int:
+                            master_codes.append(detail_row["master_code2"])
+                master_name_lookup = self._build_master_name_lookup(master_codes, cursor)
                 effect_lookup = self._build_voucher_effect_lookup(
                     vch_codes_list, party_code_int, cursor
                 )
@@ -833,9 +1037,24 @@ class LedgerDataService:
                     vch_date = self._parse_date(row[1])
                     vch_no = row[2]
                     vch_type = row[3]
+                    split_entries = self._build_split_entries_for_voucher(
+                        vch_code=vch_code,
+                        vch_date=vch_date,
+                        vch_no=vch_no,
+                        vch_type=vch_type,
+                        party_code=party_code_int,
+                        voucher_rows_lookup=voucher_rows_lookup,
+                        master_name_lookup=master_name_lookup,
+                    )
+                    if split_entries:
+                        entries.extend(split_entries)
+                        continue
                     amount, is_debit = effect_lookup.get(
                         vch_code,
-                        (Decimal(str(abs(row[4] or 0))), self._determine_dr_cr(vch_type, None)),
+                        (
+                            Decimal(str(abs(row[4] or 0))),
+                            self._determine_dr_cr(vch_type, None, vch_no=vch_no),
+                        ),
                     )
                     particulars = counter_lookup.get(vch_code, DEFAULT_COUNTER_ACCOUNT)
                     
@@ -847,7 +1066,7 @@ class LedgerDataService:
                         date=vch_date,
                         particulars=particulars,
                         voucher_no=vch_no,
-                        voucher_type=self._get_voucher_type_name(vch_type),
+                        voucher_type=self._get_voucher_type_name(vch_type, vch_no=vch_no),
                         amount=amount,
                         is_debit=is_debit,
                         balance=Decimal('0'),  # Will be calculated later
