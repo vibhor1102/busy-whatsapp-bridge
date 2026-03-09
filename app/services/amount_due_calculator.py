@@ -135,6 +135,7 @@ class AmountDueCalculator:
                 AND t1.VchType = 9
                 AND t1.Date >= ?
                 AND t1.Date <= ?
+                AND (t1.Cancelled = 0 OR t1.Cancelled IS NULL)
             """
             
             with self.db.get_cursor(company_id=company_id) as cursor:
@@ -360,104 +361,59 @@ class AmountDueCalculator:
         eligible_parties: List[PartyReminderInfo] = []
 
         try:
-            # Use a single roster query for list view to avoid per-party deep scans
-            # that can overwhelm MS Access ODBC and trigger intermittent auth errors.
-            debtor_groups = self._get_debtor_group_codes(company_id=company_id)
-            if not debtor_groups:
-                logger.warning("no_debtor_group_found")
-                return []
+            from app.services.reminder_snapshot_service import reminder_snapshot_service
 
-            in_clause = ",".join(str(c) for c in debtor_groups)
-            top_clause = f"TOP {int(max_parties)} " if max_parties else ""
-            # MS Access SQL can reject certain JOIN predicates depending on
-            # driver/version. Use a correlated subquery for Folio1 balance to
-            # keep this query broadly compatible.
-            query = f"""
-                SELECT {top_clause}
-                    m.Code,
-                    m.Name,
-                    m.PrintName,
-                    m.C3 as Phone,
-                    m.I2 as SalesCreditDays,
-                    IIF(
-                        ISNULL(
-                            (
-                                SELECT TOP 1 f.D1
-                                FROM Folio1 f
-                                WHERE f.MasterCode = m.Code
-                                  AND f.MasterType = 2
-                            )
-                        ),
-                        0,
-                        (
-                            SELECT TOP 1 f2.D1
-                            FROM Folio1 f2
-                            WHERE f2.MasterCode = m.Code
-                              AND f2.MasterType = 2
-                        )
-                    ) as LedgerBalance
-                FROM Master1 m
-                WHERE m.MasterType = 2
-                  AND m.ParentGrp IN ({in_clause})
-                ORDER BY m.Code
-            """
-
-            with self.db.get_cursor(company_id=company_id) as cursor:
-                cursor.execute(query)
-                parties = cursor.fetchall()
+            snapshot_status = await asyncio.to_thread(
+                reminder_snapshot_service.refresh_snapshot,
+                as_of_date=as_of_date,
+                company_id=company_id,
+            )
+            logger.info(
+                "eligible_parties_calculated",
+                eligible_count=int(snapshot_status.get("nonzero_count") or 0),
+                mode="snapshot",
+            )
 
             config = self.config_service.get_config(scope_key=company_id)
             currency = config.currency_symbol
+            total, rows = reminder_snapshot_service.snapshot_db.query_parties(
+                search=None,
+                filter_by="all",
+                min_amount=float(min_amount_due),
+                include_zero=False,
+                sort_by="amount_due",
+                sort_order="desc",
+                offset=0,
+                limit=int(max_parties) if max_parties else 100000,
+                company_id=company_id,
+            )
 
-            for row in parties:
-                party_code = str(row[0])
-                party_name = row[1]
-                print_name = row[2]
-                phone = row[3]
-                sales_credit_days_raw = row[4]
-                balance_raw = row[5]
-
-                sales_credit_days = (
-                    int(sales_credit_days_raw)
-                    if sales_credit_days_raw and int(sales_credit_days_raw) > 0
-                    else self.default_credit_days
-                )
-                credit_source = (
-                    "master1_i2"
-                    if sales_credit_days_raw and int(sales_credit_days_raw) > 0
-                    else "config_default"
-                )
-
-                closing_balance = Decimal(str(balance_raw or 0))
-                amount_due = closing_balance
-
-                if amount_due < min_amount_due:
-                    continue
-
+            for row in rows:
                 eligible_parties.append(
                     PartyReminderInfo(
-                        code=party_code,
-                        name=party_name,
-                        print_name=print_name,
-                        phone=phone,
-                        closing_balance=closing_balance,
-                        closing_balance_formatted=format_indian_currency(closing_balance, symbol=currency),
-                        amount_due=amount_due,
-                        amount_due_formatted=format_indian_currency(amount_due, symbol=currency),
-                        sales_credit_days=sales_credit_days,
-                        credit_days_source=credit_source,
-                        permanent_enabled=False,
+                        code=str(row["party_code"]),
+                        name=row["name"],
+                        print_name=row.get("print_name"),
+                        phone=row.get("phone"),
+                        closing_balance=Decimal(str(row.get("closing_balance") or 0)),
+                        closing_balance_formatted=format_indian_currency(
+                            Decimal(str(row.get("closing_balance") or 0)), symbol=currency
+                        ),
+                        amount_due=Decimal(str(row.get("amount_due") or 0)),
+                        amount_due_formatted=format_indian_currency(
+                            Decimal(str(row.get("amount_due") or 0)), symbol=currency
+                        ),
+                        sales_credit_days=int(row.get("sales_credit_days") or self.default_credit_days),
+                        credit_days_source=str(row.get("credit_days_source") or "config_default"),
+                        permanent_enabled=bool(row.get("permanent_enabled")),
                         temp_enabled=False,
                     )
                 )
 
-            eligible_parties.sort(key=lambda x: x.amount_due, reverse=True)
-
             logger.info(
-                "eligible_parties_calculated",
-                total_parties=len(parties),
-                eligible_count=len(eligible_parties),
-                mode="roster_fast",
+                "eligible_parties_loaded_from_snapshot",
+                total=total,
+                returned=len(eligible_parties),
             )
             return eligible_parties
 

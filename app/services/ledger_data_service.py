@@ -6,7 +6,7 @@ import structlog
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import List, Optional, Dict, Tuple
+from typing import Any, List, Optional, Dict, Tuple
 
 from app.database.connection import db
 from app.models.ledger_schemas import (
@@ -398,8 +398,8 @@ class LedgerDataService:
                 cursor.execute(query)
                 row = cursor.fetchone()
                 
-                if row and row[0] is not None:
-                    balance = Decimal(str(row[0]))
+                if row and (row[0] is not None or row[1] is not None):
+                    balance = Decimal(str(row[0] or 0)) + Decimal(str(row[1] or 0))
                     logger.info(
                         "opening_balance_fetched", 
                         party_code=party_code, 
@@ -518,6 +518,50 @@ class LedgerDataService:
             if value1 is not None:
                 return value1 < 0
             return True
+
+    def _signed_contribution(self, vch_type: int, value1: Decimal) -> Decimal:
+        """
+        Convert a Tran2 row into signed debtor-balance movement.
+
+        Positive increases Dr/receivable, negative increases Cr/payable.
+        """
+        if vch_type in (VoucherType.CONTRA, VoucherType.JOURNAL):
+            return -value1
+        if vch_type in (
+            VoucherType.SALES,
+            VoucherType.PAYMENT_CASH,
+            VoucherType.PAYMENT_BANK,
+            VoucherType.CREDIT_NOTE,
+        ):
+            return abs(value1)
+        if vch_type in (
+            VoucherType.PURCHASE,
+            VoucherType.RECEIPT,
+            VoucherType.RECEIPT_ALT,
+            VoucherType.DEBIT_NOTE,
+        ):
+            return -abs(value1)
+        return -value1
+
+    def _classify_voucher_rows(
+        self,
+        vch_type: int,
+        values: List[Decimal],
+    ) -> Tuple[Decimal, bool]:
+        """
+        Collapse all party-linked Tran2 rows for a voucher into one effect.
+
+        This keeps amount and Dr/Cr derived from the same canonical movement
+        instead of an arbitrary fetch-one row.
+        """
+        if not values:
+            return Decimal("0"), True
+
+        net_effect = sum(
+            (self._signed_contribution(vch_type, value) for value in values),
+            Decimal("0"),
+        )
+        return abs(net_effect), net_effect >= 0
     
     def _select_best_counter_account(self, account_names: List[str]) -> str:
         """
@@ -654,16 +698,14 @@ class LedgerDataService:
             logger.error("build_counter_lookup_error", error=str(e))
             return {vch: DEFAULT_COUNTER_ACCOUNT for vch in vch_codes}
     
-    def _build_amount_lookup(
+    def _build_voucher_effect_lookup(
         self,
         vch_codes: List[int],
         party_code: int,
         cursor
-    ) -> Dict[int, Decimal]:
+    ) -> Dict[int, Tuple[Decimal, bool]]:
         """
-        Build lookup mapping voucher codes to actual amounts from Tran2.
-        
-        Uses absolute Value1 for amount and returns Dr/Cr flag separately.
+        Build lookup mapping voucher codes to canonical amount and Dr/Cr.
         """
         if not vch_codes:
             return {}
@@ -674,6 +716,7 @@ class LedgerDataService:
             cursor.execute(f"""
                 SELECT 
                     VchCode,
+                    VchType,
                     Value1
                 FROM Tran2
                 WHERE VchCode IN ({vch_list})
@@ -681,18 +724,29 @@ class LedgerDataService:
                     AND RecType = {RecType.MAIN_ACCOUNTING}
             """)
             
-            result: Dict[int, Decimal] = {}
+            rows_by_voucher: Dict[int, Dict[str, Any]] = {}
             for row in cursor.fetchall():
                 vch_code = row[0]
-                value1 = row[1]
+                vch_type = int(row[1] or 0)
+                value1 = row[2]
                 if value1 is not None:
-                    # Store absolute value
-                    result[vch_code] = Decimal(str(abs(value1)))
-            
+                    bucket = rows_by_voucher.setdefault(
+                        vch_code,
+                        {"vch_type": vch_type, "values": []},
+                    )
+                    bucket["values"].append(Decimal(str(value1)))
+
+            result: Dict[int, Tuple[Decimal, bool]] = {}
+            for vch_code, payload in rows_by_voucher.items():
+                result[vch_code] = self._classify_voucher_rows(
+                    payload["vch_type"],
+                    payload["values"],
+                )
+
             return result
             
         except Exception as e:
-            logger.error("build_amount_lookup_error", error=str(e))
+            logger.error("build_voucher_effect_lookup_error", error=str(e))
             return {}
     
     def get_transactions(
@@ -748,6 +802,7 @@ class LedgerDataService:
                     WHERE VchCode IN ({vch_list})
                         AND Date >= #{start_date.strftime('%m/%d/%Y')}#
                         AND Date <= #{end_date.strftime('%m/%d/%Y')}#
+                        AND (Cancelled = 0 OR Cancelled IS NULL)
                     ORDER BY Date, VchCode
                 """
                 
@@ -766,27 +821,9 @@ class LedgerDataService:
                 counter_lookup = self._build_counter_account_lookup(
                     vch_codes_list, party_code_int, cursor
                 )
-                amount_lookup = self._build_amount_lookup(
+                effect_lookup = self._build_voucher_effect_lookup(
                     vch_codes_list, party_code_int, cursor
                 )
-                
-                # Build Dr/Cr lookup
-                dr_cr_lookup: Dict[int, bool] = {}
-                for vch_code in vch_codes_list:
-                    cursor.execute(f"""
-                        SELECT VchType, Value1
-                        FROM Tran2
-                        WHERE VchCode = {vch_code}
-                            AND (MasterCode1 = {party_code_int} OR MasterCode2 = {party_code_int})
-                            AND RecType = {RecType.MAIN_ACCOUNTING}
-                    """)
-                    t_row = cursor.fetchone()
-                    if t_row:
-                        vch_type = t_row[0]
-                        value1 = t_row[1]
-                        dr_cr_lookup[vch_code] = self._determine_dr_cr(vch_type, value1)
-                    else:
-                        dr_cr_lookup[vch_code] = True  # Default to Dr
                 
                 # Build entries
                 entries: List[LedgerEntry] = []
@@ -796,9 +833,10 @@ class LedgerDataService:
                     vch_date = self._parse_date(row[1])
                     vch_no = row[2]
                     vch_type = row[3]
-                    amount = amount_lookup.get(vch_code, Decimal(str(row[4] or 0)))
-                    
-                    is_debit = dr_cr_lookup.get(vch_code, True)
+                    amount, is_debit = effect_lookup.get(
+                        vch_code,
+                        (Decimal(str(abs(row[4] or 0))), self._determine_dr_cr(vch_type, None)),
+                    )
                     particulars = counter_lookup.get(vch_code, DEFAULT_COUNTER_ACCOUNT)
                     
                     # Append voucher number for sales invoices using dash to prevent wrapping

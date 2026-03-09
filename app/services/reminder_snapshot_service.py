@@ -48,13 +48,7 @@ class ReminderSnapshotService:
         Mirror ledger_data_service debit/credit effect as signed contribution.
         Positive contribution increases closing balance, negative decreases.
         """
-        if vch_type in (VoucherType.CONTRA, VoucherType.JOURNAL):
-            return -value1
-        if vch_type in (VoucherType.SALES, VoucherType.PAYMENT_CASH, VoucherType.PAYMENT_BANK, VoucherType.CREDIT_NOTE):
-            return abs(value1)
-        if vch_type in (VoucherType.PURCHASE, VoucherType.RECEIPT, VoucherType.RECEIPT_ALT, VoucherType.DEBIT_NOTE):
-            return -abs(value1)
-        return -value1
+        return ledger_data_service._signed_contribution(vch_type, value1)
 
     def _fetch_debtor_roster(self, company_id: str = "default") -> List[Dict[str, Any]]:
         debtor_groups = self.calculator._get_debtor_group_codes(company_id=company_id)  # intentionally shared canonical resolver
@@ -134,7 +128,7 @@ class ReminderSnapshotService:
             chunk = party_codes_int[i : i + self._chunk_size]
             in_clause = ",".join(str(c) for c in chunk)
             query = f"""
-                SELECT MasterCode, D1
+                SELECT MasterCode, D1, D4
                 FROM Folio1
                 WHERE MasterType = 2
                   AND MasterCode IN ({in_clause})
@@ -142,7 +136,7 @@ class ReminderSnapshotService:
             with self.db.get_cursor(company_id=company_id) as cursor:
                 cursor.execute(query)
                 for row in cursor.fetchall():
-                    closing_map[int(row[0])] = self._to_decimal(row[1])
+                    closing_map[int(row[0])] = self._to_decimal(row[1]) + self._to_decimal(row[2])
 
         fy = ledger_data_service.get_financial_year(company_id=company_id)
         start_s = self._fmt_access_date(fy.start_date)
@@ -166,6 +160,7 @@ class ReminderSnapshotService:
                 WHERE t2.RecType = 1
                   AND t1.Date >= #{start_s}#
                   AND t1.Date <= #{end_s}#
+                  AND (t1.Cancelled = 0 OR t1.Cancelled IS NULL)
                   AND (t2.MasterCode1 IN ({in_clause}) OR t2.MasterCode2 IN ({in_clause}))
             """
             with self.db.get_cursor(company_id=company_id) as cursor:
