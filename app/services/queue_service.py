@@ -15,6 +15,9 @@ from app.models.schemas import WhatsAppMessage, WhatsAppResponse
 from app.services.whatsapp import get_whatsapp_provider
 import random
 import structlog
+from app.config import get_settings
+from app.services.dispatch_engine_service import dispatch_engine_service
+from app.services.dispatch_incident_service import dispatch_incident_service
 from app.services.dispatch_policy_service import dispatch_policy_service
 
 logger = structlog.get_logger()
@@ -92,9 +95,32 @@ class MessageQueueService:
             )
             
             if source == "payment_reminder":
-                can_dispatch, reason = dispatch_policy_service.can_dispatch_non_transactional("default")
+                company_id = message_db.get_reminder_batch_company_id(message.get("batch_id"))
+                can_dispatch, reason = dispatch_policy_service.can_dispatch_non_transactional(company_id)
                 if not can_dispatch:
-                    logger.info("queue_non_transactional_dispatch_blocked", queue_id=queue_id, reason=reason)
+                    message_db.defer_message(
+                        queue_id,
+                        delay_seconds=300,
+                        reason=f"dispatch_blocked:{reason}",
+                    )
+                    logger.info(
+                        "queue_non_transactional_dispatch_blocked",
+                        queue_id=queue_id,
+                        company_id=company_id,
+                        reason=reason,
+                    )
+                    return False
+                if dispatch_incident_service.is_dispatch_blocked():
+                    message_db.defer_message(
+                        queue_id,
+                        delay_seconds=300,
+                        reason="dispatch_blocked:incident_active",
+                    )
+                    logger.info(
+                        "queue_dispatch_blocked_by_incident",
+                        queue_id=queue_id,
+                        company_id=company_id,
+                    )
                     return False
 
             # Get the appropriate provider
@@ -294,7 +320,10 @@ class MessageQueueService:
                 # 1. Prune history once a day
                 await self._check_prune_history()
 
-                # 2. Process batch of messages
+                # 2. Keep planner, bridge health, and reminder release in sync.
+                await dispatch_engine_service.run_periodic_maintenance()
+
+                # 3. Process batch of messages
                 processed = await self.process_queue_batch(batch_size=10)
                 
                 if processed == 0:
@@ -348,8 +377,10 @@ class MessageQueueService:
     def get_status(self) -> dict:
         """Get current queue status."""
         stats = message_db.get_queue_stats()
+        company_count = len(get_settings().database.companies)
         return {
             "worker_running": self._processing,
+            "company_count": company_count,
             **stats
         }
     

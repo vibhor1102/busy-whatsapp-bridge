@@ -14,6 +14,7 @@ from app.database.connection import db
 from app.database.message_queue import message_db
 from app.services.queue_service import queue_service
 from app.services.baileys_bridge import baileys_bridge
+from app.services.dispatch_incident_service import dispatch_incident_service
 from app.services.dispatch_policy_service import dispatch_policy_service
 
 logger = structlog.get_logger()
@@ -101,7 +102,10 @@ async def get_whatsapp_provider_status():
     
     if settings.WHATSAPP_PROVIDER == "baileys":
         data = await baileys_bridge.get_status()
+        incident = dispatch_incident_service.sync_bridge_status(data)
         data["dispatch_mode"] = dispatch_policy_service.get_dispatch_mode("default")
+        data["incident"] = incident
+        data["dispatch_blocked"] = dispatch_incident_service.is_dispatch_blocked()
         return data
     
     return {"state": "configured"}

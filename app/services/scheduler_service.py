@@ -155,8 +155,7 @@ class ReminderSchedulerService:
         logger.info("running_scheduled_reminders", company_id=company_id)
         
         try:
-            # Import here to avoid circular dependency
-            from app.services.reminder_service import reminder_service
+            from app.services.dispatch_engine_service import dispatch_engine_service
             
             # Check if bi-weekly and correct week
             config = reminder_config_service.get_config(scope_key=company_id)
@@ -168,34 +167,22 @@ class ReminderSchedulerService:
                 
                 # Record this run time
                 self._set_last_run_time(datetime.now(), company_id)
-            
-            # Get all enabled parties
-            eligible_parties = await reminder_service.get_eligible_parties(company_id=company_id)
-            enabled_parties = [p for p in eligible_parties if p.permanent_enabled]
-            
-            if not enabled_parties:
-                logger.info("no_enabled_parties_for_scheduled_reminders", company_id=company_id)
-                return
-            
-            party_codes = [p.code for p in enabled_parties]
-            
-            # Get active template
-            template = reminder_config_service.get_active_template(scope_key=company_id)
-            
-            # Send reminders
-            await reminder_service.send_reminders_to_parties(
-                party_codes=party_codes,
-                template_id=template.id,
+
+            await dispatch_engine_service.ensure_current_plan(
+                company_id,
+                force_replan=True,
+                reason="scheduler_run",
+            )
+            result = await dispatch_engine_service.release_due_reminders(
+                company_id,
                 sent_by="scheduler",
-                company_id=company_id
             )
             self._set_last_run_time(datetime.now(), company_id)
             
             logger.info(
                 "scheduled_reminders_completed",
                 company_id=company_id,
-                party_count=len(party_codes),
-                template_id=template.id
+                result=result,
             )
             
         except Exception as e:
@@ -254,36 +241,27 @@ class ReminderSchedulerService:
         logger.info("manual_reminder_run_triggered", company_id=company_id)
         
         try:
-            from app.services.reminder_service import reminder_service
-            
-            # Get all enabled parties
-            eligible_parties = await reminder_service.get_eligible_parties(company_id=company_id)
-            enabled_parties = [p for p in eligible_parties if p.permanent_enabled]
-            
-            if not enabled_parties:
-                logger.warning("no_enabled_parties_for_manual_run", company_id=company_id)
-                raise ValueError("No parties are enabled for reminders")
-            
-            party_codes = [p.code for p in enabled_parties]
-            template = reminder_config_service.get_active_template(scope_key=company_id)
-            
-            # Send reminders
-            batch_id = await reminder_service.send_reminders_to_parties(
-                party_codes=party_codes,
-                template_id=template.id,
-                sent_by="manual",
-                company_id=company_id
+            from app.services.dispatch_engine_service import dispatch_engine_service
+
+            await dispatch_engine_service.ensure_current_plan(
+                company_id,
+                force_replan=True,
+                reason="manual_trigger",
+            )
+            result = await dispatch_engine_service.release_due_reminders(
+                company_id,
+                force_replan=False,
+                sent_by="manual_trigger",
             )
             self._set_last_run_time(datetime.now(), company_id)
             
             logger.info(
                 "manual_reminders_completed",
                 company_id=company_id,
-                batch_id=batch_id,
-                party_count=len(party_codes)
+                result=result,
             )
             
-            return batch_id
+            return result.get("batch_id") or result.get("status", "idle")
             
         except Exception as e:
             logger.error(

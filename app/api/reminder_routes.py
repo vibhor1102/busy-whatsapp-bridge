@@ -40,6 +40,7 @@ from app.services.reminder_config_service import reminder_config_service
 from app.services.template_service import template_service
 from app.services.amount_due_calculator import amount_due_calculator
 from app.services.anti_spam_service import anti_spam_service
+from app.services.dispatch_engine_service import dispatch_engine_service
 from app.services.dispatch_policy_service import dispatch_policy_service
 from app.config import get_settings
 
@@ -153,6 +154,11 @@ async def refresh_snapshot(company_id: str = Depends(get_company_id)):
         status = await asyncio.to_thread(
             reminder_service.refresh_snapshot, company_id=company_id
         )
+        await dispatch_engine_service.ensure_current_plan(
+            company_id,
+            force_replan=True,
+            reason="snapshot_refresh",
+        )
         return ReminderSnapshotStatus(**status)
     except Exception as e:
         logger.error("refresh_snapshot_error", error=str(e), exc_info=True)
@@ -222,6 +228,14 @@ async def update_party_config(
             notes=request.notes,
             company_id=company_id,
         )
+
+        if request.permanent_enabled is not None:
+            weekly_reason = "party_enabled_changed"
+            await dispatch_engine_service.ensure_current_plan(
+                company_id,
+                force_replan=True,
+                reason=weekly_reason,
+            )
 
         return {
             "status": "success",
@@ -440,6 +454,58 @@ async def get_dispatch_policy(company_id: str = Depends(get_company_id)):
 async def update_dispatch_policy(policy_update: dict, company_id: str = Depends(get_company_id)):
     policy = dispatch_policy_service.update_policy(company_id, policy_update)
     return {"status": "success", "policy": policy.model_dump(), "dispatch_mode": dispatch_policy_service.get_dispatch_mode(company_id)}
+
+
+@router.get("/ops/status")
+async def get_ops_status(company_id: str = Depends(get_company_id)):
+    return await dispatch_engine_service.get_operations_status(company_id)
+
+
+@router.post("/ops/replan")
+async def replan_current_week(company_id: str = Depends(get_company_id)):
+    plan = await dispatch_engine_service.ensure_current_plan(
+        company_id,
+        force_replan=True,
+        reason="operator_replan",
+    )
+    return {"status": "success", "plan": plan}
+
+
+@router.post("/ops/release")
+async def release_due_reminders(company_id: str = Depends(get_company_id)):
+    result = await dispatch_engine_service.release_due_reminders(
+        company_id,
+        force_replan=False,
+        sent_by="admin_release",
+    )
+    return {"status": "success", "result": result}
+
+
+@router.post("/ops/incidents/acknowledge")
+async def acknowledge_incident(company_id: str = Depends(get_company_id)):
+    del company_id
+    from app.services.dispatch_incident_service import dispatch_incident_service
+
+    incident = dispatch_incident_service.acknowledge_incident()
+    return {"status": "success", "incident": incident}
+
+
+@router.post("/ops/incidents/ignore")
+async def ignore_incident(company_id: str = Depends(get_company_id)):
+    del company_id
+    from app.services.dispatch_incident_service import dispatch_incident_service
+
+    incident = dispatch_incident_service.ignore_incident()
+    return {"status": "success", "incident": incident}
+
+
+@router.post("/ops/incidents/resolve")
+async def resolve_incident(company_id: str = Depends(get_company_id)):
+    del company_id
+    from app.services.dispatch_incident_service import dispatch_incident_service
+
+    incident = dispatch_incident_service.resolve_incident()
+    return {"status": "success", "incident": incident}
 
 
 @router.get("/batches/pending-approval")

@@ -31,6 +31,8 @@ from app.database.reminder_snapshot import reminder_snapshot_db
 from app.services.busy_handler import busy_handler
 from app.services.queue_service import queue_service
 from app.services.baileys_bridge import baileys_bridge
+from app.services.dispatch_engine_service import dispatch_engine_service
+from app.services.dispatch_incident_service import dispatch_incident_service
 from app.services.dispatch_policy_service import dispatch_policy_service
 from app.services.reminder_config_service import reminder_config_service
 from app.services.ledger_data_service import ledger_data_service
@@ -586,6 +588,7 @@ async def get_baileys_status():
     Returns connection state, QR availability, and user info if connected.
     """
     data = await baileys_bridge.get_status()
+    incident = dispatch_incident_service.sync_bridge_status(data)
     if data.get("state") == "unreachable":
         return {
             "success": False,
@@ -598,6 +601,8 @@ async def get_baileys_status():
         "data": {
             **data,
             "dispatch_mode": dispatch_policy_service.get_dispatch_mode("default"),
+            "incident": incident,
+            "dispatch_blocked": dispatch_incident_service.is_dispatch_blocked(),
         }
     }
 

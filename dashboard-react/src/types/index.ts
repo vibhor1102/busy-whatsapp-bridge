@@ -72,6 +72,85 @@ export interface BaileysStatus {
   lastDisconnectReason?: string;
   reconnectAttempts?: number;
   dispatch_mode?: 'automatic_invoice' | 'supervised_batch' | 'paused';
+  dispatch_blocked?: boolean;
+  incident?: DispatchIncident | null;
+}
+
+export interface DispatchIncident {
+  kind: string;
+  title: string;
+  message: string;
+  severity: 'medium' | 'high' | 'critical';
+  created_at: string;
+  updated_at: string;
+  acknowledged_at?: string | null;
+  ignored_at?: string | null;
+  resolved_at?: string | null;
+  requires_manual_resolution: boolean;
+  blocked: boolean;
+  recovery_ready?: boolean;
+  bridge_state?: string;
+  session_state?: string;
+}
+
+export interface DispatchIncidentStatus {
+  incident: DispatchIncident | null;
+  attention_required: boolean;
+  dispatch_blocked: boolean;
+  last_bridge_status?: BaileysStatus | null;
+  last_updated?: string | null;
+}
+
+export interface PlannerSummaryDay {
+  day: string;
+  planned_count: number;
+  released_count: number;
+  forfeited_count: number;
+  party_codes: string[];
+}
+
+export interface PlannerSummary {
+  week_key: string;
+  snapshot_date?: string;
+  days: PlannerSummaryDay[];
+  totals: {
+    planned: number;
+    released: number;
+    forfeited: number;
+  };
+}
+
+export interface DispatchOpsStatus {
+  company_id: string;
+  bridge: BaileysStatus;
+  incident: DispatchIncidentStatus;
+  dispatch_mode: 'automatic_invoice' | 'supervised_batch' | 'paused';
+  policy: DispatchPolicy & {
+    can_dispatch_reminders: boolean;
+    blocked_reason?: string | null;
+  };
+  snapshot: RefreshStats & {
+    same_day_ready: boolean;
+  };
+  planner: {
+    current_plan?: {
+      week_key: string;
+      snapshot_date?: string;
+      capacities?: Record<string, number>;
+      entries: Array<{
+        party_code: string;
+        recipient_name?: string;
+        phone?: string;
+        amount_due: number;
+        planned_for?: string | null;
+        state: 'planned' | 'released' | 'forfeited' | 'completed';
+        released_at?: string | null;
+        batch_id?: string | null;
+      }>;
+    } | null;
+    summary: PlannerSummary;
+    due_today: string[];
+  };
 }
 
 // System Types

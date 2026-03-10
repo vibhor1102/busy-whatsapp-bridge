@@ -9,6 +9,7 @@ const Overview = lazy(() => import('../pages/Overview').then(m => ({ default: m.
 const WhatsAppManager = lazy(() => import('../pages/WhatsAppManager').then(m => ({ default: m.WhatsAppManager })));
 const MessageQueue = lazy(() => import('../pages/MessageQueue').then(m => ({ default: m.MessageQueue })));
 const Reminders = lazy(() => import('../pages/Reminders').then(m => ({ default: m.Reminders })));
+const AdminOps = lazy(() => import('../pages/AdminOps').then(m => ({ default: m.AdminOps })));
 const LiveLogs = lazy(() => import('../pages/LiveLogs').then(m => ({ default: m.LiveLogs })));
 const SystemControl = lazy(() => import('../pages/SystemControl').then(m => ({ default: m.SystemControl })));
 const Settings = lazy(() => import('../pages/Settings').then(m => ({ default: m.Settings })));
@@ -47,6 +48,14 @@ export const router = createBrowserRouter([
         element: (
           <LazyPage>
             <Reminders />
+          </LazyPage>
+        ),
+      },
+      {
+        path: 'ops-admin',
+        element: (
+          <LazyPage>
+            <AdminOps />
           </LazyPage>
         ),
       },

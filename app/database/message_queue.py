@@ -658,6 +658,22 @@ class MessageQueueDB:
                 (session_id,),
             ).fetchone()
             return str(row["batch_id"]) if row else None
+
+    def get_reminder_batch_company_id(self, batch_id: Optional[str]) -> str:
+        """Resolve company id for a reminder batch."""
+        if not batch_id:
+            return "default"
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT company_id
+                FROM reminder_batches
+                WHERE batch_id = ?
+                LIMIT 1
+                """,
+                (batch_id,),
+            ).fetchone()
+            return str((row["company_id"] if row else None) or "default")
     
     def enqueue_message(
         self,
@@ -1055,6 +1071,66 @@ class MessageQueueDB:
                     delay_seconds=delay,
                     recoverable_bridge_error=recoverable_bridge_error,
                 )
+
+    def defer_message(
+        self,
+        queue_id: int,
+        *,
+        delay_seconds: int,
+        reason: str,
+    ) -> None:
+        """Defer a queued message without consuming a retry attempt."""
+        now = datetime.now()
+        next_retry = now + timedelta(seconds=max(1, int(delay_seconds)))
+
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT source, batch_id, party_code FROM message_queue WHERE id = ?",
+                (queue_id,),
+            ).fetchone()
+            if not row:
+                return
+
+            conn.execute(
+                """
+                UPDATE message_queue
+                SET status = 'retrying',
+                    error_message = ?,
+                    next_retry_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (reason, next_retry, now, queue_id),
+            )
+
+            if (
+                row["source"] == "payment_reminder"
+                and row["batch_id"]
+                and row["party_code"]
+            ):
+                conn.execute(
+                    """
+                    UPDATE reminder_batch_recipients
+                    SET status = 'held',
+                        queue_status = 'retrying',
+                        failure_stage = 'dispatch_hold',
+                        failure_code = 'dispatch_held',
+                        failure_message = ?,
+                        updated_at = ?
+                    WHERE batch_id = ? AND party_code = ?
+                    """,
+                    (reason, now, row["batch_id"], row["party_code"]),
+                )
+                self._refresh_reminder_batch_aggregates(conn, row["batch_id"])
+
+            conn.commit()
+            logger.info(
+                "message_deferred",
+                queue_id=queue_id,
+                delay_seconds=delay_seconds,
+                next_retry=next_retry.isoformat(),
+                reason=reason,
+            )
 
     def update_delivery_status(
         self,

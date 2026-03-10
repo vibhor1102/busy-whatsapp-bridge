@@ -26,6 +26,8 @@ import type {
   BaileysUserInfo,
   DispatchPolicy,
   PendingApprovalBatch,
+  DispatchOpsStatus,
+  DispatchIncidentStatus,
 } from '../types';
 
 // Type for reminder history counts
@@ -558,6 +560,30 @@ class ApiService {
 
   async getRefreshStats(): Promise<RefreshStats> {
     return this.fetch('/reminders/refresh-stats');
+  }
+
+  async getDispatchOpsStatus(): Promise<DispatchOpsStatus> {
+    return this.fetch('/reminders/ops/status');
+  }
+
+  async replanCurrentWeek(): Promise<{ status: string; plan: DispatchOpsStatus['planner']['current_plan'] }> {
+    return this.fetch('/reminders/ops/replan', { method: 'POST' });
+  }
+
+  async releaseDueReminders(): Promise<{ status: string; result: Record<string, unknown> }> {
+    return this.fetch('/reminders/ops/release', { method: 'POST' });
+  }
+
+  async acknowledgeDispatchIncident(): Promise<{ status: string; incident: DispatchIncidentStatus['incident'] }> {
+    return this.fetch('/reminders/ops/incidents/acknowledge', { method: 'POST' });
+  }
+
+  async ignoreDispatchIncident(): Promise<{ status: string; incident: DispatchIncidentStatus['incident'] }> {
+    return this.fetch('/reminders/ops/incidents/ignore', { method: 'POST' });
+  }
+
+  async resolveDispatchIncident(): Promise<{ status: string; incident: DispatchIncidentStatus['incident'] }> {
+    return this.fetch('/reminders/ops/incidents/resolve', { method: 'POST' });
   }
 
   // Payment Reminders - Batch/Session
