@@ -195,7 +195,10 @@ async def get_party_ledger_pdf(party_code: str, company_id: str = Depends(get_co
             content=pdf_bytes,
             media_type="application/pdf",
             headers={
-                "Content-Disposition": f"attachment; filename=ledger_{party_code}.pdf"
+                "Content-Disposition": f"attachment; filename=ledger_{party_code}.pdf",
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
             }
         )
         

@@ -498,6 +498,11 @@ class ApiService {
   async generateLedgerPdf(partyCode: string): Promise<Blob> {
     const response = await this.client.get(`/reminders/parties/${partyCode}/ledger`, {
       responseType: 'blob',
+      params: { _ts: Date.now() },
+      headers: {
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+      },
     });
     return response.data;
   }

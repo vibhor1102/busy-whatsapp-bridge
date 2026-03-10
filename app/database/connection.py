@@ -22,6 +22,7 @@ class BusyDatabase:
         self._last_test_errors: Dict[str, Optional[str]] = {}
         self._last_test_results: Dict[str, Tuple[float, bool, Optional[str]]] = {}
         self._test_locks: Dict[str, RLock] = {}
+        self._company_locks: Dict[str, RLock] = {}
 
     def _get_test_lock(self, company_id: str) -> RLock:
         with self._lock:
@@ -29,6 +30,14 @@ class BusyDatabase:
             if lock is None:
                 lock = RLock()
                 self._test_locks[company_id] = lock
+            return lock
+
+    def _get_company_lock(self, company_id: str) -> RLock:
+        with self._lock:
+            lock = self._company_locks.get(company_id)
+            if lock is None:
+                lock = RLock()
+                self._company_locks[company_id] = lock
             return lock
     
     def refresh_settings(self):
@@ -114,10 +123,12 @@ class BusyDatabase:
         """Context manager for database cursor."""
         conn = None
         cursor = None
+        company_lock = self._get_company_lock(company_id)
         try:
-            conn = self.connect(company_id=company_id)
-            cursor = conn.cursor()
-            yield cursor
+            with company_lock:
+                conn = self.connect(company_id=company_id)
+                cursor = conn.cursor()
+                yield cursor
         except pyodbc.Error as e:
             logger.error("database_error", company_id=company_id, error=str(e))
             raise

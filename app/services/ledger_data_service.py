@@ -165,7 +165,12 @@ class LedgerDataService:
         self._financial_year_cache[company_id] = info
         return info
     
-    def get_company_info(self, force_refresh: bool = False, company_id: str = "default") -> CompanyInfo:
+    def get_company_info(
+        self,
+        force_refresh: bool = False,
+        company_id: str = "default",
+        cursor=None,
+    ) -> CompanyInfo:
         """
         Fetch company info.
         
@@ -230,15 +235,19 @@ class LedgerDataService:
         
         # Second try: Locks.CompanyName from database
         try:
-            with self.db.get_cursor(company_id=company_id) as cursor:
+            if cursor is None:
+                with self.db.get_cursor(company_id=company_id) as company_cursor:
+                    company_cursor.execute("SELECT TOP 1 CompanyName FROM Locks")
+                    row = company_cursor.fetchone()
+            else:
                 cursor.execute("SELECT TOP 1 CompanyName FROM Locks")
                 row = cursor.fetchone()
-                if row and row[0] and str(row[0]).strip():
-                    company_name = str(row[0]).strip()
-                    logger.debug("company_name_from_locks", company_name=company_name)
-                    info = CompanyInfo(name=company_name)
-                    self._company_info_cache[company_id] = info
-                    return info
+            if row and row[0] and str(row[0]).strip():
+                company_name = str(row[0]).strip()
+                logger.debug("company_name_from_locks", company_name=company_name)
+                info = CompanyInfo(name=company_name)
+                self._company_info_cache[company_id] = info
+                return info
         except Exception as e:
             logger.debug("locks_company_name_failed", company_id=company_id, error=str(e))
         
@@ -250,33 +259,37 @@ class LedgerDataService:
                 WHERE RecType = {ConfigRecType.COMPANY_INFO}
             """
             
-            with self.db.get_cursor(company_id=company_id) as cursor:
+            if cursor is None:
+                with self.db.get_cursor(company_id=company_id) as company_cursor:
+                    company_cursor.execute(query)
+                    row = company_cursor.fetchone()
+            else:
                 cursor.execute(query)
                 row = cursor.fetchone()
-                
-                if row and row[0]:
-                    info = CompanyInfo(
-                        name=row[0],
-                        address_line1=row[1],
-                        address_line2=row[2],
-                        address_line3=row[3],
-                        address_line4=row[4],
-                        gst_no=row[5]
-                    )
-                    self._company_info_cache[company_id] = info
-                    return info
+
+            if row and row[0]:
+                info = CompanyInfo(
+                    name=row[0],
+                    address_line1=row[1],
+                    address_line2=row[2],
+                    address_line3=row[3],
+                    address_line4=row[4],
+                    gst_no=row[5]
+                )
+                self._company_info_cache[company_id] = info
+                return info
                     
         except Exception as e:
             logger.debug("config_company_info_failed", company_id=company_id, error=str(e))
         
         # Fallback: Use database filename or generic name
-        fallback_name = self._detect_company_name_fallback(company_id=company_id)
+        fallback_name = self._detect_company_name_fallback(company_id=company_id, cursor=cursor)
         logger.info("company_info_using_fallback", fallback_name=fallback_name)
         info = CompanyInfo(name=fallback_name)
         self._company_info_cache[company_id] = info
         return info
 
-    def _detect_company_name_fallback(self, company_id: str = "default") -> str:
+    def _detect_company_name_fallback(self, company_id: str = "default", cursor=None) -> str:
         """
         Best-effort company name when Config rec-type mapping is unavailable.
         Priority:
@@ -285,11 +298,15 @@ class LedgerDataService:
         3) Generic fallback
         """
         try:
-            with self.db.get_cursor(company_id=company_id) as cursor:
+            if cursor is None:
+                with self.db.get_cursor(company_id=company_id) as company_cursor:
+                    company_cursor.execute("SELECT TOP 1 CompanyName FROM Locks")
+                    row = company_cursor.fetchone()
+            else:
                 cursor.execute("SELECT TOP 1 CompanyName FROM Locks")
                 row = cursor.fetchone()
-                if row and row[0] and str(row[0]).strip():
-                    return str(row[0]).strip()
+            if row and row[0] and str(row[0]).strip():
+                return str(row[0]).strip()
         except Exception:
             pass
 
@@ -307,7 +324,7 @@ class LedgerDataService:
                 return stem
         return "Company"
     
-    def get_customer_info(self, party_code: str, company_id: str = "default") -> CustomerInfo:
+    def get_customer_info(self, party_code: str, company_id: str = "default", cursor=None) -> CustomerInfo:
         """
         Fetch customer details from Master1.
         
@@ -330,48 +347,51 @@ class LedgerDataService:
                 WHERE Code = {party_code_int} AND MasterType = {MasterType.PARTY}
             """
             
-            with self.db.get_cursor(company_id=company_id) as cursor:
-                cursor.execute(master_query)
-                row = cursor.fetchone()
-                
-                if not row:
-                    logger.error("party_not_found", party_code=party_code)
-                    raise PartyNotFoundError(party_code)
-                
-                code, name, print_name, gst_no, address1, phone = row
-                
-                # Get additional address info
-                address2 = address3 = address4 = None
-                try:
-                    addr_query = f"""
-                        SELECT Address1, Address2, Address3, Address4, Mobile
-                        FROM MasterAddressInfo
-                        WHERE MasterCode = {party_code_int}
-                    """
-                    cursor.execute(addr_query)
-                    addr_row = cursor.fetchone()
-                    if addr_row:
-                        if addr_row[0]:
-                            address1 = addr_row[0]
-                        address2 = addr_row[1]
-                        address3 = addr_row[2]
-                        address4 = addr_row[3]
-                        if addr_row[4]:
-                            phone = addr_row[4]
-                except Exception as e:
-                    logger.debug("master_address_info_query_failed", error=str(e))
-                
-                return CustomerInfo(
-                    code=str(code),
-                    name=name,
-                    print_name=print_name,
-                    gst_no=gst_no,
-                    address_line1=address1,
-                    address_line2=address2,
-                    address_line3=address3,
-                    address_line4=address4,
-                    phone=phone
-                )
+            if cursor is None:
+                with self.db.get_cursor(company_id=company_id) as customer_cursor:
+                    return self.get_customer_info(party_code, company_id=company_id, cursor=customer_cursor)
+
+            cursor.execute(master_query)
+            row = cursor.fetchone()
+
+            if not row:
+                logger.error("party_not_found", party_code=party_code)
+                raise PartyNotFoundError(party_code)
+
+            code, name, print_name, gst_no, address1, phone = row
+
+            # Get additional address info
+            address2 = address3 = address4 = None
+            try:
+                addr_query = f"""
+                    SELECT Address1, Address2, Address3, Address4, Mobile
+                    FROM MasterAddressInfo
+                    WHERE MasterCode = {party_code_int}
+                """
+                cursor.execute(addr_query)
+                addr_row = cursor.fetchone()
+                if addr_row:
+                    if addr_row[0]:
+                        address1 = addr_row[0]
+                    address2 = addr_row[1]
+                    address3 = addr_row[2]
+                    address4 = addr_row[3]
+                    if addr_row[4]:
+                        phone = addr_row[4]
+            except Exception as e:
+                logger.debug("master_address_info_query_failed", error=str(e))
+
+            return CustomerInfo(
+                code=str(code),
+                name=name,
+                print_name=print_name,
+                gst_no=gst_no,
+                address_line1=address1,
+                address_line2=address2,
+                address_line3=address3,
+                address_line4=address4,
+                phone=phone
+            )
                 
         except PartyNotFoundError:
             raise
@@ -379,19 +399,21 @@ class LedgerDataService:
             logger.error("get_customer_info_error", company_id=company_id, party_code=party_code, error=str(e))
             raise PartyNotFoundError(party_code, f"Database error: {str(e)}") from e
 
-    def _get_party_parent_group(self, party_code_int: int, company_id: str = "default") -> Optional[int]:
+    def _get_party_parent_group(self, party_code_int: int, company_id: str = "default", cursor=None) -> Optional[int]:
         """Return parent group code for a party master."""
         try:
-            with self.db.get_cursor(company_id=company_id) as cursor:
-                cursor.execute(
-                    f"""
-                    SELECT ParentGrp
-                    FROM Master1
-                    WHERE Code = {party_code_int} AND MasterType = {MasterType.PARTY}
-                    """
-                )
-                row = cursor.fetchone()
-                return int(row[0]) if row and row[0] is not None else None
+            if cursor is None:
+                with self.db.get_cursor(company_id=company_id) as group_cursor:
+                    return self._get_party_parent_group(party_code_int, company_id=company_id, cursor=group_cursor)
+            cursor.execute(
+                f"""
+                SELECT ParentGrp
+                FROM Master1
+                WHERE Code = {party_code_int} AND MasterType = {MasterType.PARTY}
+                """
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row and row[0] is not None else None
         except Exception as e:
             logger.debug("get_party_parent_group_failed", party_code=party_code_int, error=str(e))
             return None
@@ -401,6 +423,7 @@ class LedgerDataService:
         raw_balance: Decimal,
         party_code_int: int,
         company_id: str = "default",
+        cursor=None,
     ) -> Decimal:
         """
         Normalize Folio1 opening balance to ledger sign convention.
@@ -409,7 +432,7 @@ class LedgerDataService:
         database. Debtors should open on the Dr side and creditors on the Cr
         side regardless of the raw Folio1 sign.
         """
-        parent_group = self._get_party_parent_group(party_code_int, company_id=company_id)
+        parent_group = self._get_party_parent_group(party_code_int, company_id=company_id, cursor=cursor)
         return self._normalize_opening_balance_for_parent_group(raw_balance, parent_group)
 
     def _normalize_opening_balance_for_parent_group(
@@ -424,7 +447,7 @@ class LedgerDataService:
             return -abs(raw_balance)
         return raw_balance
     
-    def get_opening_balance(self, party_code: str, as_of_date: date, company_id: str = "default") -> Decimal:
+    def get_opening_balance(self, party_code: str, as_of_date: date, company_id: str = "default", cursor=None) -> Decimal:
         """
         Get opening balance for party as of specific date.
         
@@ -439,25 +462,34 @@ class LedgerDataService:
                 WHERE MasterCode = {party_code_int} AND MasterType = {MasterType.PARTY}
             """
             
-            with self.db.get_cursor(company_id=company_id) as cursor:
-                cursor.execute(query)
-                row = cursor.fetchone()
-                
-                if row and row[0] is not None:
-                    balance = self._normalize_opening_balance(
-                        Decimal(str(row[0] or 0)),
-                        party_code_int,
+            if cursor is None:
+                with self.db.get_cursor(company_id=company_id) as opening_cursor:
+                    return self.get_opening_balance(
+                        party_code,
+                        as_of_date,
                         company_id=company_id,
+                        cursor=opening_cursor,
                     )
-                    logger.info(
-                        "opening_balance_fetched", 
-                        party_code=party_code, 
-                        balance=balance
-                    )
-                    return balance
-                else:
-                    logger.debug("no_folio_record", party_code=party_code)
-                    return Decimal('0')
+
+            cursor.execute(query)
+            row = cursor.fetchone()
+
+            if row and row[0] is not None:
+                balance = self._normalize_opening_balance(
+                    Decimal(str(row[0] or 0)),
+                    party_code_int,
+                    company_id=company_id,
+                    cursor=cursor,
+                )
+                logger.info(
+                    "opening_balance_fetched",
+                    party_code=party_code,
+                    balance=balance
+                )
+                return balance
+
+            logger.debug("no_folio_record", party_code=party_code)
+            return Decimal('0')
                     
         except Exception as e:
             logger.warning("get_opening_balance_failed", company_id=company_id, party_code=party_code, error=str(e))
@@ -960,7 +992,8 @@ class LedgerDataService:
         party_code: str,
         start_date: date,
         end_date: date,
-        company_id: str = "default"
+        company_id: str = "default",
+        cursor=None,
     ) -> List[LedgerEntry]:
         """
         Fetch all transactions for a party within date range.
@@ -979,115 +1012,118 @@ class LedgerDataService:
         party_code_int = self._validate_party_code(party_code)
         
         try:
-            with self.db.get_cursor(company_id=company_id) as cursor:
-                # Find all voucher codes where party appears
-                cursor.execute(f"""
-                    SELECT DISTINCT VchCode 
-                    FROM Tran2 
-                    WHERE MasterCode1 = {party_code_int} OR MasterCode2 = {party_code_int}
-                """)
-                
-                vch_codes = [row[0] for row in cursor.fetchall()]
-                
-                if not vch_codes:
-                    logger.info(
-                        "transactions_fetched",
-                        party_code=party_code,
-                        count=0,
+            if cursor is None:
+                with self.db.get_cursor(company_id=company_id) as tx_cursor:
+                    return self.get_transactions(
+                        party_code,
+                        start_date,
+                        end_date,
+                        company_id=company_id,
+                        cursor=tx_cursor,
                     )
-                    return []
-                
-                logger.info("found_vouchers_in_tran2", party_code=party_code, count=len(vch_codes))
-                
-                # Get voucher headers
-                vch_list = ','.join(str(v) for v in vch_codes)
-                
-                query = f"""
-                    SELECT 
-                        VchCode, Date, VchNo, VchType, VchAmtBaseCur, MasterCode1, MasterCode2
-                    FROM Tran1
-                    WHERE VchCode IN ({vch_list})
-                        AND Date >= #{start_date.strftime('%m/%d/%Y')}#
-                        AND Date <= #{end_date.strftime('%m/%d/%Y')}#
-                        AND (Cancelled = 0 OR Cancelled IS NULL)
-                    ORDER BY Date, VchCode
-                """
-                
-                cursor.execute(query)
-                rows = cursor.fetchall()
-                
-                if not rows:
-                    logger.info(
-                        "transactions_fetched",
-                        party_code=party_code,
-                        count=0,
-                    )
-                    return []
-                
-                # Build batch lookups
-                vch_codes_list = [row[0] for row in rows]
-                counter_lookup = self._build_counter_account_lookup(
-                    vch_codes_list, party_code_int, cursor
+
+            cursor.execute(f"""
+                SELECT DISTINCT VchCode 
+                FROM Tran2 
+                WHERE MasterCode1 = {party_code_int} OR MasterCode2 = {party_code_int}
+            """)
+
+            vch_codes = [row[0] for row in cursor.fetchall()]
+
+            if not vch_codes:
+                logger.info(
+                    "transactions_fetched",
+                    party_code=party_code,
+                    count=0,
                 )
-                voucher_rows_lookup = self._build_voucher_rows_lookup(vch_codes_list, cursor)
-                master_codes: List[int] = []
-                for rows_for_voucher in voucher_rows_lookup.values():
-                    for detail_row in rows_for_voucher:
-                        if detail_row["master_code1"] != party_code_int:
-                            master_codes.append(detail_row["master_code1"])
-                        if detail_row["master_code2"] != party_code_int:
-                            master_codes.append(detail_row["master_code2"])
-                master_name_lookup = self._build_master_name_lookup(master_codes, cursor)
-                effect_lookup = self._build_voucher_effect_lookup(
-                    vch_codes_list, party_code_int, cursor
+                return []
+
+            logger.info("found_vouchers_in_tran2", party_code=party_code, count=len(vch_codes))
+
+            vch_list = ','.join(str(v) for v in vch_codes)
+            query = f"""
+                SELECT 
+                    VchCode, Date, VchNo, VchType, VchAmtBaseCur, MasterCode1, MasterCode2
+                FROM Tran1
+                WHERE VchCode IN ({vch_list})
+                    AND Date >= #{start_date.strftime('%m/%d/%Y')}#
+                    AND Date <= #{end_date.strftime('%m/%d/%Y')}#
+                    AND (Cancelled = 0 OR Cancelled IS NULL)
+                ORDER BY Date, VchCode
+            """
+
+            cursor.execute(query)
+            rows = cursor.fetchall()
+
+            if not rows:
+                logger.info(
+                    "transactions_fetched",
+                    party_code=party_code,
+                    count=0,
                 )
-                
-                # Build entries
-                entries: List[LedgerEntry] = []
-                
-                for row in rows:
-                    vch_code = row[0]
-                    vch_date = self._parse_date(row[1])
-                    vch_no = row[2]
-                    vch_type = row[3]
-                    split_entries = self._build_split_entries_for_voucher(
-                        vch_code=vch_code,
-                        vch_date=vch_date,
-                        vch_no=vch_no,
-                        vch_type=vch_type,
-                        party_code=party_code_int,
-                        voucher_rows_lookup=voucher_rows_lookup,
-                        master_name_lookup=master_name_lookup,
-                    )
-                    if split_entries:
-                        entries.extend(split_entries)
-                        continue
-                    amount, is_debit = effect_lookup.get(
-                        vch_code,
-                        (
-                            Decimal(str(abs(row[4] or 0))),
-                            self._determine_dr_cr(vch_type, None, vch_no=vch_no),
-                        ),
-                    )
-                    particulars = counter_lookup.get(vch_code, DEFAULT_COUNTER_ACCOUNT)
-                    
-                    # Append voucher number for sales invoices using dash to prevent wrapping
-                    if vch_type == VoucherType.SALES and vch_no:
-                        particulars = f"{particulars}-{vch_no}"
-                    
-                    entries.append(LedgerEntry(
-                        date=vch_date,
-                        particulars=particulars,
-                        voucher_no=vch_no,
-                        voucher_type=self._get_voucher_type_name(vch_type, vch_no=vch_no),
-                        amount=amount,
-                        is_debit=is_debit,
-                        balance=Decimal('0'),  # Will be calculated later
-                        narration=None
-                    ))
-                
-                logger.info("transactions_fetched", party_code=party_code, count=len(entries))
-                return entries
+                return []
+
+            vch_codes_list = [row[0] for row in rows]
+            counter_lookup = self._build_counter_account_lookup(
+                vch_codes_list, party_code_int, cursor
+            )
+            voucher_rows_lookup = self._build_voucher_rows_lookup(vch_codes_list, cursor)
+            master_codes: List[int] = []
+            for rows_for_voucher in voucher_rows_lookup.values():
+                for detail_row in rows_for_voucher:
+                    if detail_row["master_code1"] != party_code_int:
+                        master_codes.append(detail_row["master_code1"])
+                    if detail_row["master_code2"] != party_code_int:
+                        master_codes.append(detail_row["master_code2"])
+            master_name_lookup = self._build_master_name_lookup(master_codes, cursor)
+            effect_lookup = self._build_voucher_effect_lookup(
+                vch_codes_list, party_code_int, cursor
+            )
+
+            entries: List[LedgerEntry] = []
+
+            for row in rows:
+                vch_code = row[0]
+                vch_date = self._parse_date(row[1])
+                vch_no = row[2]
+                vch_type = row[3]
+                split_entries = self._build_split_entries_for_voucher(
+                    vch_code=vch_code,
+                    vch_date=vch_date,
+                    vch_no=vch_no,
+                    vch_type=vch_type,
+                    party_code=party_code_int,
+                    voucher_rows_lookup=voucher_rows_lookup,
+                    master_name_lookup=master_name_lookup,
+                )
+                if split_entries:
+                    entries.extend(split_entries)
+                    continue
+                amount, is_debit = effect_lookup.get(
+                    vch_code,
+                    (
+                        Decimal(str(abs(row[4] or 0))),
+                        self._determine_dr_cr(vch_type, None, vch_no=vch_no),
+                    ),
+                )
+                particulars = counter_lookup.get(vch_code, DEFAULT_COUNTER_ACCOUNT)
+
+                if vch_type == VoucherType.SALES and vch_no:
+                    particulars = f"{particulars}-{vch_no}"
+
+                entries.append(LedgerEntry(
+                    date=vch_date,
+                    particulars=particulars,
+                    voucher_no=vch_no,
+                    voucher_type=self._get_voucher_type_name(vch_type, vch_no=vch_no),
+                    amount=amount,
+                    is_debit=is_debit,
+                    balance=Decimal('0'),
+                    narration=None
+                ))
+
+            logger.info("transactions_fetched", party_code=party_code, count=len(entries))
+            return entries
                 
         except NoTransactionsError:
             raise
@@ -1162,16 +1198,22 @@ class LedgerDataService:
         logger.info("generating_ledger_report", company_id=company_id, party_code=party_code)
         
         fy_info = self.get_financial_year(company_id=company_id)
-        company = self.get_company_info(company_id=company_id)
-        customer = self.get_customer_info(party_code, company_id=company_id)
-        opening_balance = self.get_opening_balance(party_code, fy_info.start_date, company_id=company_id)
-        
-        entries = self.get_transactions(
-            party_code,
-            fy_info.start_date,
-            fy_info.end_date,
-            company_id=company_id
-        )
+        with self.db.get_cursor(company_id=company_id) as cursor:
+            company = self.get_company_info(company_id=company_id, cursor=cursor)
+            customer = self.get_customer_info(party_code, company_id=company_id, cursor=cursor)
+            opening_balance = self.get_opening_balance(
+                party_code,
+                fy_info.start_date,
+                company_id=company_id,
+                cursor=cursor,
+            )
+            entries = self.get_transactions(
+                party_code,
+                fy_info.start_date,
+                fy_info.end_date,
+                company_id=company_id,
+                cursor=cursor,
+            )
         
         total_debits, total_credits = self.calculate_balances(opening_balance, entries)
         
