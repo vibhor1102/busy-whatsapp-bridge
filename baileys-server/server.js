@@ -34,6 +34,29 @@ const client = new BaileysClient({
     logLevel: process.env.BAILEYS_LOG_LEVEL || 'info'
 });
 
+function attachLogInterceptor(stream) {
+    const originalWrite = stream.write.bind(stream);
+    let buffer = '';
+
+    stream.write = function patchedWrite(chunk, encoding, callback) {
+        try {
+            const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+            buffer += text;
+            const lines = buffer.split(/\r?\n/);
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+                client.observeProcessLogLine(line);
+            }
+        } catch (error) {
+            originalWrite(`[WARN] Failed to inspect process log line: ${error.message}\n`);
+        }
+        return originalWrite(chunk, encoding, callback);
+    };
+}
+
+attachLogInterceptor(process.stdout);
+attachLogInterceptor(process.stderr);
+
 async function postDeliveryUpdate(payload) {
     try {
         const response = await fetch(DELIVERY_WEBHOOK_URL, {
@@ -94,6 +117,14 @@ client.on('reconnecting', (data) => {
     console.log('[RECONNECTING]', data);
     broadcastSSE({
         type: 'reconnecting',
+        data: data
+    });
+});
+
+client.on('session_degraded', (data) => {
+    console.warn('[SESSION DEGRADED]', data);
+    broadcastSSE({
+        type: 'session_degraded',
         data: data
     });
 });

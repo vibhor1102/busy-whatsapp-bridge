@@ -4,6 +4,7 @@ import httpx
 import structlog
 from app.config import get_settings
 from app.models.schemas import WhatsAppMessage, WhatsAppResponse
+from app.services.baileys_bridge import baileys_bridge
 from app.utils.phone import normalize_phone_e164, to_wa_id
 
 logger = structlog.get_logger()
@@ -17,6 +18,9 @@ class WhatsAppProvider(ABC):
         """Send a WhatsApp message."""
         pass
 
+    async def get_status(self) -> dict:
+        raise NotImplementedError
+
 
 class BaileysProvider(WhatsAppProvider):
     """Baileys WhatsApp Web integration via Node.js bridge."""
@@ -27,26 +31,41 @@ class BaileysProvider(WhatsAppProvider):
         self.server_url = self.server_url.rstrip('/')
         self.default_country_code = self.settings.WHATSAPP_DEFAULT_COUNTRY_CODE
     
-    async def _check_connection(self) -> bool:
-        """Check if Baileys server is connected to WhatsApp."""
+    async def _get_connection_status(self) -> dict:
+        """Get current Baileys bridge health and connection status."""
+        return await baileys_bridge.get_status()
+
+    @staticmethod
+    def _is_send_ready(status: dict) -> bool:
+        return (
+            status.get("state") == "connected"
+            and not bool(status.get("isDegraded"))
+            and status.get("sessionState") != "degraded"
+        )
+
+    async def _request_recovery_if_safe(self, status: dict, reason: str) -> None:
+        state = (status.get("state") or "").strip().lower()
+        if state in {"logged_out", "qr_ready", "connecting"}:
+            return
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.server_url}/status",
-                    timeout=5.0
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    return data.get("data", {}).get("state") == "connected"
-        except Exception:
-            pass
-        return False
+            await baileys_bridge.restart()
+            logger.warning("baileys_recovery_requested", state=state or "unknown", reason=reason)
+        except Exception as exc:
+            logger.warning("baileys_recovery_request_failed", state=state or "unknown", reason=reason, error=str(exc))
+
+    async def get_status(self) -> dict:
+        return await baileys_bridge.get_status()
     
     async def send_message(self, message: WhatsAppMessage) -> WhatsAppResponse:
         """Send message via Baileys WhatsApp Web bridge."""
         try:
-            is_connected = await self._check_connection()
-            if not is_connected:
+            status = await self._get_connection_status()
+            if not self._is_send_ready(status):
+                if status.get("state") == "connected" and status.get("isDegraded"):
+                    await self._request_recovery_if_safe(status, "send_blocked_session_degraded")
+                    raise ValueError(
+                        "bridge_session_degraded_retryable: Baileys session crypto state is degraded and recovery was requested"
+                    )
                 raise ValueError(
                     "Baileys server not connected to WhatsApp. "
                     "Please scan QR code at /baileys/qr endpoint"
@@ -55,7 +74,6 @@ class BaileysProvider(WhatsAppProvider):
             to_number = to_wa_id(message.to, self.default_country_code)
             
             if message.media_url:
-                endpoint = f"{self.server_url}/send-media"
                 payload = {
                     "to": to_number,
                     "mediaUrl": message.media_url,
@@ -71,7 +89,6 @@ class BaileysProvider(WhatsAppProvider):
                     file_name=message.file_name,
                 )
             else:
-                endpoint = f"{self.server_url}/send"
                 payload = {
                     "to": to_number,
                     "message": message.body
@@ -81,40 +98,41 @@ class BaileysProvider(WhatsAppProvider):
                     to=message.to
                 )
             
+            endpoint = f"{self.server_url}/send-media" if message.media_url else f"{self.server_url}/send"
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     endpoint,
                     json=payload,
                     timeout=60.0
                 )
-                
                 if response.status_code != 200:
                     error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
                     raise ValueError(error_data.get('error', f'HTTP {response.status_code}'))
-                
                 result = response.json()
-                data = result.get("data", {}) if isinstance(result, dict) else {}
-                contact = data.get("contact", {}) if isinstance(data, dict) else {}
-                
-                logger.info(
-                    "baileys_message_sent",
-                    to=message.to,
-                    message_id=data.get("messageId")
-                )
-                
-                return WhatsAppResponse(
-                    success=True,
-                    message_id=data.get("messageId"),
-                    delivery_status="accepted",
-                    normalized_to=normalize_phone_e164(message.to, self.default_country_code),
-                    contact_name=contact.get("name"),
-                    contact_source=contact.get("source"),
-                    contact_is_saved=contact.get("isSaved"),
-                    contact_state=contact.get("state"),
-                    error=None
-                )
+            data = result.get("data", {}) if isinstance(result, dict) else {}
+            contact = data.get("contact", {}) if isinstance(data, dict) else {}
+            
+            logger.info(
+                "baileys_message_sent",
+                to=message.to,
+                message_id=data.get("messageId")
+            )
+            
+            return WhatsAppResponse(
+                success=True,
+                message_id=data.get("messageId"),
+                delivery_status="accepted",
+                normalized_to=normalize_phone_e164(message.to, self.default_country_code),
+                contact_name=contact.get("name"),
+                contact_source=contact.get("source"),
+                contact_is_saved=contact.get("isSaved"),
+                contact_state=contact.get("state"),
+                error=None
+            )
                 
         except httpx.HTTPError as e:
+            if "not connected" in str(e).lower():
+                await self._request_recovery_if_safe({"state": "disconnected"}, "http_error_not_connected")
             logger.error("baileys_http_error", to=message.to, error=str(e))
             return WhatsAppResponse(
                 success=False,
@@ -124,6 +142,9 @@ class BaileysProvider(WhatsAppProvider):
                 error=f"HTTP Error: {str(e)}"
             )
         except ValueError as e:
+            lowered = str(e).lower()
+            if "bridge_session_degraded_retryable" not in lowered and "not connected to whatsapp" in lowered:
+                await self._request_recovery_if_safe(status if 'status' in locals() else {"state": "disconnected"}, "value_error_send_retryable")
             logger.error("baileys_connection_error", to=message.to, error=str(e))
             return WhatsAppResponse(
                 success=False,
@@ -133,6 +154,9 @@ class BaileysProvider(WhatsAppProvider):
                 error=str(e)
             )
         except Exception as e:
+            lowered = str(e).lower()
+            if "bad mac" in lowered or "decrypt" in lowered or "not connected to whatsapp" in lowered:
+                await self._request_recovery_if_safe(status if 'status' in locals() else {"state": "disconnected"}, "exception_send_retryable")
             logger.error("baileys_send_error", to=message.to, error=str(e))
             return WhatsAppResponse(
                 success=False,
@@ -152,8 +176,8 @@ class BaileysProvider(WhatsAppProvider):
             True if successful
         """
         try:
-            is_connected = await self._check_connection()
-            if not is_connected:
+            status = await self._get_connection_status()
+            if not self._is_send_ready(status):
                 logger.warning("baileys_presence_not_connected")
                 return False
             
@@ -163,21 +187,12 @@ class BaileysProvider(WhatsAppProvider):
                     json={"online": online},
                     timeout=10.0
                 )
-                
                 if response.status_code == 200:
                     result = response.json()
-                    logger.info(
-                        "baileys_presence_set",
-                        online=online,
-                        success=result.get("success")
-                    )
+                    logger.info("baileys_presence_set", online=online, success=result.get("success"))
                     return result.get("success", False)
-                else:
-                    logger.error(
-                        "baileys_presence_failed",
-                        status=response.status_code
-                    )
-                    return False
+                logger.error("baileys_presence_failed", status=response.status_code)
+                return False
                     
         except Exception as e:
             logger.error("baileys_presence_error", error=str(e))
@@ -194,8 +209,8 @@ class BaileysProvider(WhatsAppProvider):
             True if successful
         """
         try:
-            is_connected = await self._check_connection()
-            if not is_connected:
+            status = await self._get_connection_status()
+            if not self._is_send_ready(status):
                 logger.warning("baileys_typing_not_connected")
                 return False
             
@@ -207,29 +222,15 @@ class BaileysProvider(WhatsAppProvider):
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     f"{self.server_url}/typing",
-                    json={
-                        "to": to_number,
-                        "duration": duration_ms
-                    },
-                    timeout=60.0  # Long timeout as this waits for duration
+                    json={"to": to_number, "duration": duration_ms},
+                    timeout=60.0
                 )
-                
                 if response.status_code == 200:
                     result = response.json()
-                    logger.info(
-                        "baileys_typing_sent",
-                        phone=phone,
-                        duration=duration_ms,
-                        success=result.get("success")
-                    )
+                    logger.info("baileys_typing_sent", phone=phone, duration=duration_ms, success=result.get("success"))
                     return result.get("success", False)
-                else:
-                    logger.error(
-                        "baileys_typing_failed",
-                        phone=phone,
-                        status=response.status_code
-                    )
-                    return False
+                logger.error("baileys_typing_failed", phone=phone, status=response.status_code)
+                return False
                     
         except Exception as e:
             logger.error("baileys_typing_error", phone=phone, error=str(e))

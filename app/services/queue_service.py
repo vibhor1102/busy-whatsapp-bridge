@@ -15,6 +15,7 @@ from app.models.schemas import WhatsAppMessage, WhatsAppResponse
 from app.services.whatsapp import get_whatsapp_provider
 import random
 import structlog
+from app.services.dispatch_policy_service import dispatch_policy_service
 
 logger = structlog.get_logger()
 
@@ -79,6 +80,7 @@ class MessageQueueService:
         pdf_url = message['pdf_url']
         file_name = message['file_name'] if 'file_name' in message else None
         provider_name = message['provider']
+        source = message.get('source')
         
         try:
             logger.info(
@@ -89,6 +91,12 @@ class MessageQueueService:
                 retry_count=message['retry_count']
             )
             
+            if source == "payment_reminder":
+                can_dispatch, reason = dispatch_policy_service.can_dispatch_non_transactional("default")
+                if not can_dispatch:
+                    logger.info("queue_non_transactional_dispatch_blocked", queue_id=queue_id, reason=reason)
+                    return False
+
             # Get the appropriate provider
             provider = get_whatsapp_provider(provider_name)
             

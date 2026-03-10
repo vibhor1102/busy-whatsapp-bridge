@@ -8,6 +8,7 @@ const {
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs/promises');
+const packageJson = require('./package.json');
 const EventEmitter = require('events');
 
 class BaileysClient extends EventEmitter {
@@ -44,6 +45,18 @@ class BaileysClient extends EventEmitter {
         this.reconnectTimer = null;
         this.socketGeneration = 0;
         this.contactCache = new Map();
+        this.connectedAt = null;
+        this.disconnectedAt = null;
+        this.lastDisconnectReason = null;
+        this.lastNegotiatedVersion = null;
+        this.badMacTimestamps = [];
+        this.lastBadMacAt = null;
+        this.cryptoDegraded = false;
+        this.cryptoDegradedReason = null;
+        this.cryptoDegradedAt = null;
+        this.lastCryptoRecoveryAt = null;
+        this.lastCryptoRestartAt = 0;
+        this.cryptoRestartCooldownMs = 15000;
     }
 
     async initialize() {
@@ -62,6 +75,7 @@ class BaileysClient extends EventEmitter {
             
             // Fetch latest WhatsApp web version
             const { version, isLatest } = await fetchLatestBaileysVersion();
+            this.lastNegotiatedVersion = Array.isArray(version) ? version.join('.') : null;
             this.logger.info({ version, isLatest }, 'Fetched latest Baileys version');
 
             // Ensure only one active socket exists before creating a new one.
@@ -253,6 +267,8 @@ class BaileysClient extends EventEmitter {
                     { statusCode, errorMessage, shouldReconnect, wasQRReady },
                     'Connection closed'
                 );
+                this.disconnectedAt = Date.now();
+                this.lastDisconnectReason = errorMessage;
 
                 if (this.isShuttingDown) {
                     this.logger.info('Shutdown in progress, not reconnecting');
@@ -302,8 +318,10 @@ class BaileysClient extends EventEmitter {
 
             if (connection === 'open') {
                 this.connectionState = 'connected';
+                this.connectedAt = Date.now();
                 this.qrCode = null;
                 this.reconnectAttempts = 0;
+                this.clearCryptoDegraded('connection_open');
                 this.cancelSessionRecovery();
                 this.cancelReconnectTimer();
                 
@@ -424,6 +442,102 @@ class BaileysClient extends EventEmitter {
         return 'accepted';
     }
 
+    observeProcessLogLine(line) {
+        const text = String(line || '').trim();
+        if (!text) {
+            return;
+        }
+
+        const lower = text.toLowerCase();
+        if (lower.includes('bad mac') || lower.includes('failed to decrypt message with any known session')) {
+            this.recordBadMacEvent(text);
+            return;
+        }
+
+        if (lower.includes('closing open session in favor of incoming prekey bundle')) {
+            this.lastCryptoRecoveryAt = Date.now();
+            this.logger.warn('Detected incoming prekey bundle while recovering crypto session');
+            if (this.cryptoDegraded) {
+                this.scheduleCryptoRecovery('incoming_prekey_bundle');
+            }
+        }
+    }
+
+    recordBadMacEvent(line) {
+        const now = Date.now();
+        this.lastBadMacAt = now;
+        this.badMacTimestamps.push(now);
+        this.badMacTimestamps = this.badMacTimestamps.filter((timestamp) => (now - timestamp) <= 60000);
+
+        if (this.badMacTimestamps.length >= 3) {
+            this.markCryptoDegraded('signal_bad_mac_storm', {
+                recentBadMacCount: this.badMacTimestamps.length,
+                sample: line,
+            });
+        }
+    }
+
+    markCryptoDegraded(reason, details = {}) {
+        const now = Date.now();
+        this.cryptoDegraded = true;
+        this.cryptoDegradedReason = reason;
+        if (!this.cryptoDegradedAt) {
+            this.cryptoDegradedAt = now;
+        }
+
+        this.logger.warn(
+            {
+                reason,
+                details,
+                recentBadMacCount: this.badMacTimestamps.length,
+            },
+            'Baileys crypto session marked degraded'
+        );
+        this.emit('session_degraded', {
+            reason,
+            details,
+            since: this.cryptoDegradedAt,
+            recentBadMacCount: this.badMacTimestamps.length,
+        });
+        this.scheduleCryptoRecovery(reason);
+    }
+
+    clearCryptoDegraded(reason = 'manual_clear') {
+        if (!this.cryptoDegraded && this.badMacTimestamps.length === 0) {
+            return;
+        }
+        this.cryptoDegraded = false;
+        this.cryptoDegradedReason = null;
+        this.cryptoDegradedAt = null;
+        this.badMacTimestamps = [];
+        this.logger.info({ reason }, 'Cleared degraded crypto session state');
+    }
+
+    scheduleCryptoRecovery(reason = 'crypto_degraded') {
+        if (this.isShuttingDown || this.isRestarting || this.isInitializing) {
+            return;
+        }
+
+        const now = Date.now();
+        if ((now - this.lastCryptoRestartAt) < this.cryptoRestartCooldownMs) {
+            this.logger.debug({ reason }, 'Crypto recovery restart throttled');
+            return;
+        }
+
+        this.lastCryptoRestartAt = now;
+        setTimeout(async () => {
+            if (this.isShuttingDown || this.isRestarting || this.isInitializing) {
+                return;
+            }
+            try {
+                this.lastCryptoRecoveryAt = Date.now();
+                await this.restart();
+            } catch (error) {
+                this.logger.error({ error: error.message, reason }, 'Crypto recovery restart failed');
+            }
+        }, 1000);
+    }
+
     getStatus() {
         const qrAge = this.qrTimestamp ? Date.now() - this.qrTimestamp : null;
         const qrExpired = qrAge && qrAge > 60000;
@@ -435,7 +549,20 @@ class BaileysClient extends EventEmitter {
             qrAge: qrAge,
             qrExpired: qrExpired,
             user: this.socket?.user || null,
-            reconnectAttempts: this.reconnectAttempts
+            reconnectAttempts: this.reconnectAttempts,
+            connectedAt: this.connectedAt,
+            disconnectedAt: this.disconnectedAt,
+            sessionStartedAt: this.connectedAt,
+            sessionState: this.cryptoDegraded && this.connectionState === 'connected' ? 'degraded' : this.connectionState,
+            lastDisconnectReason: this.lastDisconnectReason,
+            bridgeLibraryVersion: packageJson.dependencies?.['@whiskeysockets/baileys'] || null,
+            waProtocolVersion: this.lastNegotiatedVersion,
+            isDegraded: this.cryptoDegraded,
+            degradedReason: this.cryptoDegradedReason,
+            degradedSince: this.cryptoDegradedAt,
+            lastBadMacAt: this.lastBadMacAt,
+            recentBadMacCount: this.badMacTimestamps.length,
+            lastCryptoRecoveryAt: this.lastCryptoRecoveryAt,
         };
     }
 
@@ -705,7 +832,12 @@ class BaileysClient extends EventEmitter {
         }
         
         this.connectionState = 'disconnected';
+        this.disconnectedAt = Date.now();
+        this.lastDisconnectReason = forRestart ? 'Intentional Restart' : 'Intentional Logout';
         this.qrCode = null;
+        if (!forRestart) {
+            this.clearCryptoDegraded('disconnect');
+        }
     }
 
     async restart() {

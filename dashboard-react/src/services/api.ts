@@ -24,6 +24,8 @@ import type {
   ReminderBatchSummary,
   MetaWebhookStatus,
   BaileysUserInfo,
+  DispatchPolicy,
+  PendingApprovalBatch,
 } from '../types';
 
 // Type for reminder history counts
@@ -327,6 +329,13 @@ class ApiService {
         connectedAt: data?.connectedAt,
         disconnectedAt: data?.disconnectedAt,
         lastChecked: data?.lastChecked,
+        bridgeLibraryVersion: data?.bridgeLibraryVersion,
+        waProtocolVersion: data?.waProtocolVersion,
+        sessionStartedAt: data?.sessionStartedAt,
+        sessionState: data?.sessionState,
+        lastDisconnectReason: data?.lastDisconnectReason,
+        reconnectAttempts: data?.reconnectAttempts,
+        dispatch_mode: data?.dispatch_mode,
       } as BaileysStatus;
     }
     const status = response as BaileysStatus;
@@ -338,6 +347,13 @@ class ApiService {
       connectedAt: status?.connectedAt,
       disconnectedAt: status?.disconnectedAt,
       lastChecked: status?.lastChecked,
+      bridgeLibraryVersion: status?.bridgeLibraryVersion,
+      waProtocolVersion: status?.waProtocolVersion,
+      sessionStartedAt: status?.sessionStartedAt,
+      sessionState: status?.sessionState,
+      lastDisconnectReason: status?.lastDisconnectReason,
+      reconnectAttempts: status?.reconnectAttempts,
+      dispatch_mode: status?.dispatch_mode,
     } as BaileysStatus;
   }
 
@@ -428,6 +444,14 @@ class ApiService {
   // Payment Reminders - Configuration
   async getReminderConfig(): Promise<ReminderConfig> {
     return this.fetch('/reminders/config');
+  }
+
+  async getDispatchPolicy(): Promise<DispatchPolicy> {
+    return this.fetch('/reminders/dispatch-policy');
+  }
+
+  async updateDispatchPolicy(policy: Partial<DispatchPolicy>): Promise<{ status: string; policy: DispatchPolicy; dispatch_mode: string }> {
+    return this.fetch('/reminders/dispatch-policy', { method: 'PUT', body: policy });
   }
 
   async updateReminderConfig(config: Partial<ReminderConfig>): Promise<{ status: string; message: string }> {
@@ -541,7 +565,7 @@ class ApiService {
     partyCodes: string[],
     templateId: string,
     partyTemplateMap?: Record<string, string>
-  ): Promise<{ status: string; batch_id: string; session_id: string; message: string }> {
+  ): Promise<{ status: string; batch_id: string; session_id: string; message: string; approval?: PendingApprovalBatch }> {
     return this.fetch('/reminders/batch', {
       method: 'POST',
       body: {
@@ -570,6 +594,18 @@ class ApiService {
 
   async getBatchReport(batchId: string): Promise<ReminderBatchReport> {
     return this.fetch(`/reminders/batches/${batchId}/report`);
+  }
+
+  async getPendingApprovalBatches(): Promise<{ items: PendingApprovalBatch[] }> {
+    return this.fetch('/reminders/batches/pending-approval');
+  }
+
+  async approveBatch(batchId: string): Promise<{ status: string; batch_id: string; session_id: string }> {
+    return this.fetch(`/reminders/batches/${batchId}/approve`, { method: 'POST' });
+  }
+
+  async rejectBatch(batchId: string): Promise<{ status: string; batch_id: string }> {
+    return this.fetch(`/reminders/batches/${batchId}/reject`, { method: 'POST' });
   }
 
   async getBatchFailures(

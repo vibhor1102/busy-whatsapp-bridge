@@ -30,6 +30,8 @@ from app.database.message_queue import message_db
 from app.database.reminder_snapshot import reminder_snapshot_db
 from app.services.busy_handler import busy_handler
 from app.services.queue_service import queue_service
+from app.services.baileys_bridge import baileys_bridge
+from app.services.dispatch_policy_service import dispatch_policy_service
 from app.services.reminder_config_service import reminder_config_service
 from app.services.ledger_data_service import ledger_data_service
 from app.websocket import ws_manager, WebSocketMessage
@@ -583,35 +585,21 @@ async def get_baileys_status():
     
     Returns connection state, QR availability, and user info if connected.
     """
-    baileys_url = getattr(settings, 'BAILEYS_SERVER_URL', 'http://localhost:3001')
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{baileys_url}/status",
-                timeout=5.0
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            return {
-                "success": True,
-                "baileys_server": "running",
-                "data": data.get("data", {})
-            }
-    except httpx.ConnectError:
+    data = await baileys_bridge.get_status()
+    if data.get("state") == "unreachable":
         return {
             "success": False,
             "baileys_server": "not_running",
             "error": "Baileys server is not running. Start it with: cd baileys-server && npm start"
         }
-    except Exception as e:
-        logger.error("baileys_status_error", error=str(e))
-        return {
-            "success": False,
-            "baileys_server": "error",
-            "error": str(e)
+    return {
+        "success": True,
+        "baileys_server": "running",
+        "data": {
+            **data,
+            "dispatch_mode": dispatch_policy_service.get_dispatch_mode("default"),
         }
+    }
 
 
 @app.get("/baileys/qr", tags=["Baileys"])

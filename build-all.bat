@@ -132,6 +132,15 @@ IF NOT ERRORLEVEL 1 (
 echo [OK] Prerequisites met
 echo.
 
+echo [INFO] Running dependency audit...
+"%VENV_PYTHON%" "scripts\dependency_audit.py"
+IF ERRORLEVEL 1 (
+    echo [ERROR] Dependency audit failed!
+    call :maybe_pause
+    exit /b 1
+)
+echo.
+
 REM ============================================================================
 REM STEP 1: Build Dashboard
 REM ============================================================================

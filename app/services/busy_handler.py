@@ -64,6 +64,21 @@ class BusyHandler:
         # pdf_url is valid, just return as-is
         return msg, pdf_url
 
+    @staticmethod
+    def _is_demo_or_placeholder_url(pdf_url: Optional[str]) -> bool:
+        """Reject obvious sample/demo URLs from entering the live queue."""
+        if not pdf_url:
+            return False
+        normalized = pdf_url.strip().lower()
+        if not normalized:
+            return False
+        return (
+            "example.com/" in normalized
+            or "example.org/" in normalized
+            or "test-invoice" in normalized
+            or "{pdf_url}" in normalized
+        )
+
     async def process_invoice_notification(
         self, 
         notification: InvoiceNotification
@@ -83,6 +98,14 @@ class BusyHandler:
                 notification.msg, 
                 notification.pdf_url
             )
+
+            if self._is_demo_or_placeholder_url(extracted_pdf_url):
+                logger.warning(
+                    "placeholder_pdf_url_ignored",
+                    phone=notification.phone,
+                    pdf_url=extracted_pdf_url,
+                )
+                extracted_pdf_url = None
             
             logger.info(
                 "processing_invoice_notification",

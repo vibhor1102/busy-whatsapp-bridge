@@ -13,6 +13,8 @@ from app.config import get_settings
 from app.database.connection import db
 from app.database.message_queue import message_db
 from app.services.queue_service import queue_service
+from app.services.baileys_bridge import baileys_bridge
+from app.services.dispatch_policy_service import dispatch_policy_service
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/v1/dashboard", tags=["Dashboard"])
@@ -98,22 +100,8 @@ async def get_whatsapp_provider_status():
     settings = get_settings()
     
     if settings.WHATSAPP_PROVIDER == "baileys":
-        baileys_url = getattr(settings, 'BAILEYS_SERVER_URL', 'http://localhost:3001')
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{baileys_url}/status",
-                    timeout=5.0
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    return {
-                        "state": data.get("data", {}).get("state", "unknown"),
-                        "user": data.get("data", {}).get("user", {})
-                    }
-                else:
-                    return {"state": "error", "error": "Baileys returned error"}
-        except Exception as e:
-            return {"state": "unreachable", "error": str(e)}
+        data = await baileys_bridge.get_status()
+        data["dispatch_mode"] = dispatch_policy_service.get_dispatch_mode("default")
+        return data
     
     return {"state": "configured"}

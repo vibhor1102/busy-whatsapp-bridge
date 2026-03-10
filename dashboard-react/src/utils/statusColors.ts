@@ -8,6 +8,7 @@ export const statusColorMap: Record<string, string> = {
   disconnected: 'text-red-500 dark:text-red-400',
   logged_out: 'text-red-500 dark:text-red-400',
   unreachable: 'text-red-500 dark:text-red-400',
+  degraded: 'text-amber-500 dark:text-amber-400',
   unknown: 'text-gray-500 dark:text-gray-400',
 
   // Session states
@@ -39,6 +40,7 @@ export function getStatusStyle(status: string): { color: string; bg: string; bor
     case 'sent':
       return { color: 'var(--success)', bg: 'var(--success-soft)', border: 'var(--success-soft-border)' };
     case 'qr_ready':
+    case 'degraded':
     case 'paused':
     case 'retrying':
       return { color: 'var(--warning)', bg: 'var(--warning-soft)', border: 'var(--warning-soft-border)' };
@@ -67,6 +69,7 @@ export function getStatusDotColor(status: string): string {
     case 'sent':
       return '#10b981'; // emerald-500
     case 'qr_ready':
+    case 'degraded':
     case 'paused':
     case 'retrying':
       return '#f59e0b'; // amber-500

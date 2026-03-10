@@ -131,6 +131,27 @@ class LimitsConfig(BaseModel):
     max_delay_between_messages: int = Field(default=60, ge=10, le=300, description="Maximum seconds between messages")
 
 
+class DispatchPolicyConfig(BaseModel):
+    """Operator controls for supervised dispatch."""
+    paused: bool = Field(default=False, description="Pause non-transactional dispatch")
+    require_batch_approval: bool = Field(default=True, description="Require approval before reminder batches are dispatched")
+    business_hours_enabled: bool = Field(default=True, description="Restrict reminder dispatch to business hours")
+    business_hours_start: str = Field(default="09:00", description="Business hours start in HH:MM")
+    business_hours_end: str = Field(default="18:00", description="Business hours end in HH:MM")
+    timezone: str = Field(default="Asia/Kolkata", description="Timezone for business hours")
+    max_batch_size: int = Field(default=100, ge=1, le=500, description="Maximum reminder batch size allowed")
+    queue_throttle_per_minute: int = Field(default=20, ge=1, le=240, description="Max non-transactional sends per minute")
+
+    @field_validator('business_hours_start', 'business_hours_end')
+    @classmethod
+    def validate_business_time(cls, v: str) -> str:
+        try:
+            datetime.strptime(v, "%H:%M")
+        except ValueError:
+            raise ValueError('Time must be in HH:MM format')
+        return v
+
+
 class CompanySettings(BaseModel):
     """Company information for reminders"""
     name: str = Field(default="Company", description="Company name used in templates")
@@ -186,6 +207,7 @@ class ReminderConfig(BaseModel):
     
     # System limits
     limits: LimitsConfig = Field(default_factory=LimitsConfig, description="System limits")
+    dispatch_policy: DispatchPolicyConfig = Field(default_factory=DispatchPolicyConfig, description="Dispatch supervision policy")
     
     # Party overrides (only stored if different from default)
     parties: Dict[str, PartyConfig] = Field(

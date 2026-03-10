@@ -17,6 +17,9 @@ class _FakeResponse:
 def test_baileys_media_payload_includes_filename(monkeypatch):
     captured_posts = []
 
+    async def fake_get_status():
+        return {"state": "connected", "sessionState": "connected", "isDegraded": False}
+
     class _FakeAsyncClient:
         async def __aenter__(self):
             return self
@@ -24,14 +27,12 @@ def test_baileys_media_payload_includes_filename(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return None
 
-        async def get(self, url, timeout):
-            return _FakeResponse(200, {"data": {"state": "connected"}})
-
         async def post(self, url, json, timeout):
             captured_posts.append({"url": url, "json": json, "timeout": timeout})
             return _FakeResponse(200, {"data": {"messageId": "wamid.X1"}})
 
     monkeypatch.setattr("app.services.whatsapp.httpx.AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr("app.services.whatsapp.baileys_bridge.get_status", fake_get_status)
 
     provider = BaileysProvider()
     msg = WhatsAppMessage(

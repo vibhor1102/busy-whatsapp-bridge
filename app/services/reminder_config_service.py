@@ -25,6 +25,7 @@ from app.models.reminder_schemas import (
     LedgerSettings,
     HistorySettings,
     LimitsConfig,
+    DispatchPolicyConfig,
 )
 
 logger = structlog.get_logger()
@@ -258,6 +259,9 @@ class ReminderConfigService:
                 max_batch_size=500,
                 max_delay_between_messages=60
             ),
+            dispatch_policy=DispatchPolicyConfig(
+                timezone=self.settings.REMINDER_SCHEDULE_TIMEZONE
+            ),
             templates=default_templates,
             active_template_id=DEFAULT_TEMPLATE_ID,
             parties={}
@@ -320,6 +324,13 @@ class ReminderConfigService:
                 "address": None
             }
             migrated = True
+
+        if "dispatch_policy" not in data:
+            data["dispatch_policy"] = DispatchPolicyConfig(
+                timezone=self.settings.REMINDER_SCHEDULE_TIMEZONE
+            ).model_dump()
+            migrated = True
+            logger.debug("config_migration_added_dispatch_policy")
             logger.debug("config_migration_added_company_settings")
 
         if "ledger" not in data:

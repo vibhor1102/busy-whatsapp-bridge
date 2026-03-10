@@ -56,7 +56,7 @@ export interface BaileysUserInfo {
 }
 
 export interface BaileysStatus {
-  state: 'connected' | 'qr_ready' | 'disconnected' | 'connecting' | 'reconnecting' | 'logged_out' | 'unreachable' | 'unknown';
+  state: 'connected' | 'qr_ready' | 'disconnected' | 'connecting' | 'reconnecting' | 'logged_out' | 'unreachable' | 'unknown' | 'degraded';
   qrAvailable?: boolean;
   qrTimestamp?: string;
   user?: BaileysUserInfo;
@@ -65,6 +65,13 @@ export interface BaileysStatus {
   connectedAt?: string;
   disconnectedAt?: string;
   lastChecked?: string;
+  bridgeLibraryVersion?: string;
+  waProtocolVersion?: string;
+  sessionStartedAt?: string;
+  sessionState?: string;
+  lastDisconnectReason?: string;
+  reconnectAttempts?: number;
+  dispatch_mode?: 'automatic_invoice' | 'supervised_batch' | 'paused';
 }
 
 // System Types
@@ -238,6 +245,35 @@ export interface ReminderSession {
     duration_seconds: number;
     avg_delay_seconds?: number;
     typing_time_total?: number;
+  };
+  dispatch_mode?: 'automatic_invoice' | 'supervised_batch' | 'paused';
+}
+
+export interface DispatchPolicy {
+  paused: boolean;
+  require_batch_approval: boolean;
+  business_hours_enabled: boolean;
+  business_hours_start: string;
+  business_hours_end: string;
+  timezone: string;
+  max_batch_size: number;
+  queue_throttle_per_minute: number;
+  dispatch_mode: 'automatic_invoice' | 'supervised_batch' | 'paused';
+}
+
+export interface PendingApprovalBatch {
+  batch_id: string;
+  session_id: string;
+  company_id: string;
+  status: 'pending_approval' | 'approved' | 'rejected';
+  created_at: string;
+  approved_at?: string;
+  rejected_at?: string;
+  payload: {
+    party_codes: string[];
+    template_id: string;
+    party_templates?: Record<string, string>;
+    company_id: string;
   };
 }
 

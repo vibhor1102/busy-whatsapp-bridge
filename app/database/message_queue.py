@@ -262,19 +262,37 @@ class MessageQueueDB:
         )
 
     def _cleanup_legacy_test_data(self, conn: sqlite3.Connection) -> None:
-        marker = "cleanup_test_source_v1_done"
+        marker = "cleanup_test_source_v2_done"
         already_marked = self._get_app_state(conn, marker) == "1"
         queue_deleted = conn.execute(
-            "DELETE FROM message_queue WHERE source = ?",
-            ("test",),
+            """
+            DELETE FROM message_queue
+            WHERE source = ?
+               OR LOWER(COALESCE(pdf_url, '')) LIKE ?
+               OR LOWER(COALESCE(pdf_url, '')) LIKE ?
+               OR LOWER(COALESCE(pdf_url, '')) LIKE ?
+            """,
+            ("test", "%example.com/%", "%example.org/%", "%test-invoice%"),
         ).rowcount
         history_deleted = conn.execute(
-            "DELETE FROM message_history WHERE source = ?",
-            ("test",),
+            """
+            DELETE FROM message_history
+            WHERE source = ?
+               OR LOWER(COALESCE(pdf_url, '')) LIKE ?
+               OR LOWER(COALESCE(pdf_url, '')) LIKE ?
+               OR LOWER(COALESCE(pdf_url, '')) LIKE ?
+            """,
+            ("test", "%example.com/%", "%example.org/%", "%test-invoice%"),
         ).rowcount
         dead_letter_deleted = conn.execute(
-            "DELETE FROM dead_letter_queue WHERE source = ?",
-            ("test",),
+            """
+            DELETE FROM dead_letter_queue
+            WHERE source = ?
+               OR LOWER(COALESCE(pdf_url, '')) LIKE ?
+               OR LOWER(COALESCE(pdf_url, '')) LIKE ?
+               OR LOWER(COALESCE(pdf_url, '')) LIKE ?
+            """,
+            ("test", "%example.com/%", "%example.org/%", "%test-invoice%"),
         ).rowcount
         if not already_marked:
             self._set_app_state(conn, marker, "1")
@@ -882,6 +900,15 @@ class MessageQueueDB:
                 "not a valid indian mobile",
             )
         )
+        recoverable_bridge_error = any(
+            token in lowered_error
+            for token in (
+                "bridge_session_degraded_retryable",
+                "bad mac",
+                "failed to decrypt",
+                "not connected to whatsapp",
+            )
+        )
         
         with self._get_connection() as conn:
             # Get current retry count
@@ -975,7 +1002,10 @@ class MessageQueueDB:
                 # Schedule retry with exponential backoff
                 # Retry delays: immediate, 30s, 5min, 15min, 1hr
                 delays = [0, 30, 300, 900, 3600]
-                delay = delays[min(new_retry_count, len(delays) - 1)]
+                if recoverable_bridge_error:
+                    delay = 5 if new_retry_count <= 2 else 30
+                else:
+                    delay = delays[min(new_retry_count, len(delays) - 1)]
                 next_retry = now + timedelta(seconds=delay)
                 
                 conn.execute(
@@ -1022,7 +1052,8 @@ class MessageQueueDB:
                     queue_id=queue_id,
                     retry_count=new_retry_count,
                     next_retry=next_retry.isoformat(),
-                    delay_seconds=delay
+                    delay_seconds=delay,
+                    recoverable_bridge_error=recoverable_bridge_error,
                 )
 
     def update_delivery_status(

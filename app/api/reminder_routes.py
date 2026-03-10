@@ -40,6 +40,7 @@ from app.services.reminder_config_service import reminder_config_service
 from app.services.template_service import template_service
 from app.services.amount_due_calculator import amount_due_calculator
 from app.services.anti_spam_service import anti_spam_service
+from app.services.dispatch_policy_service import dispatch_policy_service
 from app.config import get_settings
 
 logger = structlog.get_logger()
@@ -332,6 +333,17 @@ async def send_reminders_batch(
                         }
                     )
 
+        policy = dispatch_policy_service.get_policy(company_id)
+        if len(request.party_codes) > policy.max_batch_size:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Batch size exceeds supervised limit of {policy.max_batch_size}"
+            )
+
+        allowed, reason = dispatch_policy_service.can_dispatch_non_transactional(company_id)
+        if not allowed and reason == "dispatch_paused":
+            raise HTTPException(status_code=409, detail="Reminder dispatch is paused by operator")
+
         # Pre-create identifiers and session so we can return them immediately
         batch_id = str(uuid.uuid4())
         session = await anti_spam_service.create_session(
@@ -348,6 +360,13 @@ async def send_reminders_batch(
             explicit_overrides=getattr(request, "party_templates", None),
             company_id=company_id,
         )
+
+        payload = {
+            "party_codes": request.party_codes,
+            "template_id": request.template_id,
+            "party_templates": getattr(request, "party_templates", None),
+            "company_id": company_id,
+        }
 
         # Define the background task wrapper
         async def _background_send():
@@ -374,6 +393,21 @@ async def send_reminders_batch(
             except Exception as e:
                 logger.error("background_batch_failed", batch_id=batch_id, error=str(e), exc_info=True)
 
+        if policy.require_batch_approval and len(request.party_codes) > 1:
+            pending = dispatch_policy_service.register_pending_batch(
+                company_id=company_id,
+                batch_id=batch_id,
+                session_id=session.session_id,
+                payload=payload,
+            )
+            return {
+                "status": "pending_approval",
+                "batch_id": batch_id,
+                "session_id": session.session_id,
+                "approval": pending,
+                "message": f"Reminder batch created for {len(request.party_codes)} parties and is awaiting operator approval."
+            }
+
         # Schedule the background task
         background_tasks.add_task(_background_send)
 
@@ -391,6 +425,72 @@ async def send_reminders_batch(
     except Exception as e:
         logger.error("send_reminders_batch_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/dispatch-policy")
+async def get_dispatch_policy(company_id: str = Depends(get_company_id)):
+    policy = dispatch_policy_service.get_policy(company_id)
+    return {
+        **policy.model_dump(),
+        "dispatch_mode": dispatch_policy_service.get_dispatch_mode(company_id),
+    }
+
+
+@router.put("/dispatch-policy")
+async def update_dispatch_policy(policy_update: dict, company_id: str = Depends(get_company_id)):
+    policy = dispatch_policy_service.update_policy(company_id, policy_update)
+    return {"status": "success", "policy": policy.model_dump(), "dispatch_mode": dispatch_policy_service.get_dispatch_mode(company_id)}
+
+
+@router.get("/batches/pending-approval")
+async def list_pending_approval_batches(company_id: str = Depends(get_company_id)):
+    return {"items": dispatch_policy_service.list_pending_batches(company_id=company_id)}
+
+
+@router.post("/batches/{batch_id}/approve")
+async def approve_batch(
+    batch_id: str,
+    background_tasks: BackgroundTasks,
+    company_id: str = Depends(get_company_id)
+):
+    pending = dispatch_policy_service.approve_batch(batch_id)
+    if not pending or pending.get("company_id") != company_id:
+        raise HTTPException(status_code=404, detail="Pending batch not found")
+
+    payload = pending["payload"]
+    session_id = pending["session_id"]
+
+    async def _background_send():
+        session = await anti_spam_service.get_session(session_id)
+        if session is None:
+            session = await anti_spam_service.create_session(
+                party_codes=payload["party_codes"],
+                template_id=payload["template_id"],
+            )
+        await reminder_service.send_reminders_to_parties(
+            party_codes=payload["party_codes"],
+            template_id=payload["template_id"],
+            sent_by="manual",
+            party_templates=payload.get("party_templates"),
+            company_id=payload["company_id"],
+            batch_id=batch_id,
+            session=session,
+        )
+        reminder_config_service.record_reminder_sent(scope_key=company_id)
+
+    background_tasks.add_task(_background_send)
+    return {"status": "approved", "batch_id": batch_id, "session_id": session_id}
+
+
+@router.post("/batches/{batch_id}/reject")
+async def reject_batch(batch_id: str, company_id: str = Depends(get_company_id)):
+    pending = dispatch_policy_service.reject_batch(batch_id)
+    if not pending or pending.get("company_id") != company_id:
+        raise HTTPException(status_code=404, detail="Pending batch not found")
+    session_id = pending.get("session_id")
+    if session_id:
+        await anti_spam_service.stop_session(session_id)
+    return {"status": "rejected", "batch_id": batch_id}
 
 
 @router.post("/schedule")

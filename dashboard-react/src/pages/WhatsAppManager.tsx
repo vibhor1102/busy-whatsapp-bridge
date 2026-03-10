@@ -109,7 +109,8 @@ export function WhatsAppManager() {
 
   const isConnected = status?.state === 'connected';
   const isQrReady = status?.state === 'qr_ready' || status?.qrAvailable === true;
-  const statusStyle = getStatusStyle(status?.state || 'unknown');
+  const effectiveState = status?.dispatch_mode === 'paused' && status?.state === 'connected' ? 'degraded' : (status?.state || 'unknown');
+  const statusStyle = getStatusStyle(effectiveState);
 
   return (
     <div className="space-y-5">
@@ -147,7 +148,7 @@ export function WhatsAppManager() {
             <div>
               <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Connection Status</p>
               <p className="text-xl font-bold capitalize" style={{ color: 'var(--text-primary)' }}>
-                {(status?.state || 'unknown').replace('_', ' ')}
+                {(effectiveState || 'unknown').replace('_', ' ')}
               </p>
             </div>
           </div>
@@ -208,6 +209,35 @@ export function WhatsAppManager() {
               <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Phone Number</p>
               <p className="text-sm font-medium mt-0.5" style={{ color: 'var(--text-primary)' }}>
                 {status.user.phone}
+              </p>
+            </div>
+            <div className="p-3 rounded-lg" style={{ background: 'var(--bg-input)' }}>
+              <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Bridge Library</p>
+              <p className="text-sm font-medium mt-0.5" style={{ color: 'var(--text-primary)' }}>
+                {status.bridgeLibraryVersion || 'Unknown'}
+              </p>
+            </div>
+            <div className="p-3 rounded-lg" style={{ background: 'var(--bg-input)' }}>
+              <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Dispatch Mode</p>
+              <p className="text-sm font-medium mt-0.5 capitalize" style={{ color: 'var(--text-primary)' }}>
+                {(status.dispatch_mode || 'automatic_invoice').replace('_', ' ')}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {(status?.waProtocolVersion || status?.lastDisconnectReason) && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+            <div className="p-3 rounded-lg" style={{ background: 'var(--bg-input)' }}>
+              <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>WA Protocol Version</p>
+              <p className="text-sm font-medium mt-0.5" style={{ color: 'var(--text-primary)' }}>
+                {status.waProtocolVersion || 'Unknown'}
+              </p>
+            </div>
+            <div className="p-3 rounded-lg" style={{ background: 'var(--bg-input)' }}>
+              <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Last Disconnect</p>
+              <p className="text-sm font-medium mt-0.5" style={{ color: 'var(--text-primary)' }}>
+                {status.lastDisconnectReason || 'None'}
               </p>
             </div>
           </div>

@@ -35,6 +35,7 @@ from app.services.anti_spam_service import anti_spam_service, ReminderSession, S
 from app.services.message_inflation_service import message_inflation_service
 from app.services.pdf_inflation_service import pdf_inflation_service
 from app.services.whatsapp import BaileysProvider
+from app.services.dispatch_policy_service import dispatch_policy_service
 from app.database.message_queue import message_db
 from app.database.reminder_snapshot import reminder_snapshot_db
 from app.config import get_roaming_appdata_path, get_settings
@@ -942,6 +943,7 @@ class ReminderService:
             reason_counts[key] = reason_counts.get(key, 0) + 1
         summary["batch_id"] = batch_id
         summary["failure_breakdown"] = reason_counts
+        summary["dispatch_mode"] = dispatch_policy_service.get_dispatch_mode("default")
         return summary
 
     async def get_batch_report(self, batch_id: str) -> Optional[Dict[str, Any]]:
@@ -973,7 +975,10 @@ class ReminderService:
         """
         sessions = anti_spam_service.get_active_sessions()
         summaries = [anti_spam_service.get_session_summary(s.session_id) for s in sessions]
-        return [s for s in summaries if s is not None]
+        filtered = [s for s in summaries if s is not None]
+        for item in filtered:
+            item["dispatch_mode"] = dispatch_policy_service.get_dispatch_mode("default")
+        return filtered
 
     @staticmethod
     def _infer_unsaved_contact(row: Dict[str, Any]) -> Optional[Dict[str, str]]:

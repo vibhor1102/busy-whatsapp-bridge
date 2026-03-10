@@ -37,7 +37,9 @@ import type {
   AntiSpamConfig,
   RefreshStats,
   ReminderBatchReport,
-  ReminderBatchRecipient
+  ReminderBatchRecipient,
+  PendingApprovalBatch,
+  DispatchPolicy,
 } from '../types';
 
 // ─── Sub-Components ────────────────────────────────────
@@ -301,6 +303,7 @@ export function Reminders() {
   const [failedOnly, setFailedOnly] = useState(false);
   const [failureStage, setFailureStage] = useState('');
   const [isTemplateEditorOpen, setIsTemplateEditorOpen] = useState(false);
+  const [pendingApprovalBatchId, setPendingApprovalBatchId] = useState<string | null>(null);
   const [companies, setCompanies] = useState<CompanyInfo[]>([]);
   const [activeCompanyId, setActiveCompanyId] = useState(api.getCompanyId());
 
@@ -410,6 +413,19 @@ export function Reminders() {
     refetchInterval: POLLING.SESSION_INTERVAL,
   });
 
+  const { data: dispatchPolicy } = useQuery({
+    queryKey: ['dispatch-policy', activeCompanyId],
+    queryFn: () => api.getDispatchPolicy(),
+    enabled: !!activeCompanyId,
+  });
+
+  const { data: pendingApprovals } = useQuery({
+    queryKey: ['pending-approval-batches', activeCompanyId],
+    queryFn: () => api.getPendingApprovalBatches(),
+    enabled: !!activeCompanyId,
+    refetchInterval: POLLING.SESSION_INTERVAL,
+  });
+
   useEffect(() => {
     if (config) setConfig(config);
     if (templates) {
@@ -498,6 +514,11 @@ export function Reminders() {
     mutationFn: (data: { partyCodes: string[]; templateId: string; partyTemplates?: Record<string, string> }) =>
       api.sendReminders(data.partyCodes, data.templateId, data.partyTemplates),
     onSuccess: (data) => {
+      if (data.status === 'pending_approval') {
+        setPendingApprovalBatchId(data.batch_id);
+        toast.success('Reminder batch saved for operator approval');
+        return;
+      }
       if (data.session_id) {
         setActiveSessionId(data.session_id);
       }
@@ -511,6 +532,26 @@ export function Reminders() {
     },
   });
 
+  const approveBatchMutation = useMutation({
+    mutationFn: (batchId: string) => api.approveBatch(batchId),
+    onSuccess: (data) => {
+      setPendingApprovalBatchId(null);
+      setActiveSessionId(data.session_id);
+      setActiveBatchId(data.batch_id);
+      queryClient.invalidateQueries({ queryKey: ['pending-approval-batches'] });
+      toast.success('Reminder batch approved and queued');
+    },
+  });
+
+  const rejectBatchMutation = useMutation({
+    mutationFn: (batchId: string) => api.rejectBatch(batchId),
+    onSuccess: () => {
+      setPendingApprovalBatchId(null);
+      queryClient.invalidateQueries({ queryKey: ['pending-approval-batches'] });
+      toast.success('Reminder batch rejected');
+    },
+  });
+
   const updateAntiSpamMutation = useMutation({
     mutationFn: (config: AntiSpamConfig) => api.updateAntiSpamConfig(config),
     onSuccess: () => {
@@ -518,6 +559,17 @@ export function Reminders() {
     },
     onError: (error: Error) => {
       toast.error(`Failed to update anti-spam settings: ${error.message}`);
+    },
+  });
+
+  const updateDispatchPolicyMutation = useMutation({
+    mutationFn: (policy: Partial<DispatchPolicy>) => api.updateDispatchPolicy(policy),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dispatch-policy'] });
+      toast.success('Dispatch policy updated');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to update dispatch policy: ${error.message}`);
     },
   });
 
@@ -764,6 +816,73 @@ export function Reminders() {
           />
         </div >
 
+        {dispatchPolicy && (
+          <div className="card p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Dispatch Mode</p>
+                <p className="text-sm font-semibold capitalize" style={{ color: 'var(--text-primary)' }}>
+                  {dispatchPolicy.dispatch_mode.replace('_', ' ')}
+                </p>
+              </div>
+              <div className="text-right text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                <div>Hours: {dispatchPolicy.business_hours_start} - {dispatchPolicy.business_hours_end}</div>
+                <div>Approval: {dispatchPolicy.require_batch_approval ? 'Required' : 'Off'}</div>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+              <Toggle
+                checked={dispatchPolicy.paused}
+                onChange={(val) => updateDispatchPolicyMutation.mutate({ paused: val })}
+                label="Pause Dispatch"
+                description="Blocks reminder/batch dispatch while invoice relay stays automatic"
+              />
+              <Toggle
+                checked={dispatchPolicy.require_batch_approval}
+                onChange={(val) => updateDispatchPolicyMutation.mutate({ require_batch_approval: val })}
+                label="Require Approval"
+                description="Keep reminder batches pending until an operator approves them"
+              />
+              <Toggle
+                checked={dispatchPolicy.business_hours_enabled}
+                onChange={(val) => updateDispatchPolicyMutation.mutate({ business_hours_enabled: val })}
+                label="Business Hours"
+                description="Restrict reminder dispatch to the configured time window"
+              />
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+              <input
+                type="time"
+                className="input"
+                defaultValue={dispatchPolicy.business_hours_start}
+                onBlur={(e) => updateDispatchPolicyMutation.mutate({ business_hours_start: e.target.value })}
+              />
+              <input
+                type="time"
+                className="input"
+                defaultValue={dispatchPolicy.business_hours_end}
+                onBlur={(e) => updateDispatchPolicyMutation.mutate({ business_hours_end: e.target.value })}
+              />
+              <input
+                type="number"
+                className="input"
+                defaultValue={dispatchPolicy.max_batch_size}
+                onBlur={(e) => updateDispatchPolicyMutation.mutate({ max_batch_size: Number(e.target.value) })}
+                min={1}
+                max={500}
+              />
+              <input
+                type="number"
+                className="input"
+                defaultValue={dispatchPolicy.queue_throttle_per_minute}
+                onBlur={(e) => updateDispatchPolicyMutation.mutate({ queue_throttle_per_minute: Number(e.target.value) })}
+                min={1}
+                max={240}
+              />
+            </div>
+          </div>
+        )}
+
         {/* Active Session */}
         <AnimatePresence>
           {
@@ -777,6 +896,37 @@ export function Reminders() {
             )
           }
         </AnimatePresence >
+
+        {!!pendingApprovals?.items?.length && (
+          <div className="card p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Pending Approval</h3>
+              <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>{pendingApprovals.items.length} batch(es)</span>
+            </div>
+            <div className="space-y-3">
+              {pendingApprovals.items.map((item: PendingApprovalBatch) => (
+                <div key={item.batch_id} className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'var(--bg-input)' }}>
+                  <div>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                      {item.payload.party_codes.length} parties · {item.payload.template_id}
+                    </p>
+                    <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                      Batch {item.batch_id}{pendingApprovalBatchId === item.batch_id ? ' · just created' : ''}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button className="btn-primary text-xs" onClick={() => approveBatchMutation.mutate(item.batch_id)}>
+                      Approve
+                    </button>
+                    <button className="btn-danger text-xs" onClick={() => rejectBatchMutation.mutate(item.batch_id)}>
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {batchReport && (
           <BatchReportPanel
