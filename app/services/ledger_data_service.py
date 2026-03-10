@@ -405,8 +405,9 @@ class LedgerDataService:
         """
         Normalize Folio1 opening balance to ledger sign convention.
 
-        Busy stores creditor balances as positive values in Folio1, but our
-        ledger model uses negative values for Cr/payable balances.
+        Busy opening-balance sign is not reliable across party groups in this
+        database. Debtors should open on the Dr side and creditors on the Cr
+        side regardless of the raw Folio1 sign.
         """
         parent_group = self._get_party_parent_group(party_code_int, company_id=company_id)
         return self._normalize_opening_balance_for_parent_group(raw_balance, parent_group)
@@ -417,6 +418,8 @@ class LedgerDataService:
         parent_group: Optional[int],
     ) -> Decimal:
         """Normalize Folio1 opening balance when parent group is already known."""
+        if parent_group == 116:
+            return abs(raw_balance)
         if parent_group == 117:
             return -abs(raw_balance)
         return raw_balance
@@ -987,11 +990,12 @@ class LedgerDataService:
                 vch_codes = [row[0] for row in cursor.fetchall()]
                 
                 if not vch_codes:
-                    raise NoTransactionsError(
+                    logger.info(
+                        "transactions_fetched",
                         party_code=party_code,
-                        start_date=str(start_date),
-                        end_date=str(end_date)
+                        count=0,
                     )
+                    return []
                 
                 logger.info("found_vouchers_in_tran2", party_code=party_code, count=len(vch_codes))
                 
@@ -1013,11 +1017,12 @@ class LedgerDataService:
                 rows = cursor.fetchall()
                 
                 if not rows:
-                    raise NoTransactionsError(
+                    logger.info(
+                        "transactions_fetched",
                         party_code=party_code,
-                        start_date=str(start_date),
-                        end_date=str(end_date)
+                        count=0,
                     )
+                    return []
                 
                 # Build batch lookups
                 vch_codes_list = [row[0] for row in rows]

@@ -149,7 +149,7 @@ def test_calculate_balances_reconstructs_running_balance_with_notes():
     ]
 
 
-def test_get_opening_balance_uses_d1_plus_d4(monkeypatch):
+def test_get_opening_balance_keeps_debtor_group_on_dr_side(monkeypatch):
     class FakeCursor:
         def __init__(self):
             self.last_query = ""
@@ -174,6 +174,33 @@ def test_get_opening_balance_uses_d1_plus_d4(monkeypatch):
     balance = ledger_data_service.get_opening_balance("123", date(2025, 4, 1))
 
     assert balance == Decimal("100")
+
+
+def test_get_opening_balance_flips_negative_debtor_balance_to_dr(monkeypatch):
+    class FakeCursor:
+        def __init__(self):
+            self.last_query = ""
+
+        def execute(self, _query):
+            self.last_query = _query
+            return None
+
+        def fetchone(self):
+            if "FROM Folio1" in self.last_query:
+                return (-1750582, -1750582)
+            if "SELECT ParentGrp" in self.last_query:
+                return (116,)
+            return None
+
+    @contextmanager
+    def fake_get_cursor(company_id="default"):
+        yield FakeCursor()
+
+    monkeypatch.setattr(ledger_data_service.db, "get_cursor", fake_get_cursor)
+
+    balance = ledger_data_service.get_opening_balance("20510", date(2025, 4, 1))
+
+    assert balance == Decimal("1750582")
 
 
 def test_get_opening_balance_flips_creditor_group_to_cr(monkeypatch):
@@ -201,3 +228,26 @@ def test_get_opening_balance_flips_creditor_group_to_cr(monkeypatch):
     balance = ledger_data_service.get_opening_balance("26967", date(2025, 4, 1))
 
     assert balance == Decimal("-1181895")
+
+
+def test_get_transactions_allows_opening_balance_only_party(monkeypatch):
+    class FakeCursor:
+        def execute(self, _query):
+            return None
+
+        def fetchall(self):
+            return []
+
+    @contextmanager
+    def fake_get_cursor(company_id="default"):
+        yield FakeCursor()
+
+    monkeypatch.setattr(ledger_data_service.db, "get_cursor", fake_get_cursor)
+
+    entries = ledger_data_service.get_transactions(
+        "27275",
+        date(2025, 4, 1),
+        date(2026, 3, 31),
+    )
+
+    assert entries == []
