@@ -44,6 +44,38 @@ def get_dist_path() -> Path:
     return get_dashboard_path() / "dist"
 
 
+def sync_dashboard_version() -> bool:
+    """Keep dashboard-react/package.json aligned with root version.json."""
+    root = get_project_root()
+    version_file = root / "version.json"
+    package_file = get_dashboard_path() / "package.json"
+
+    try:
+        version_data = json.loads(version_file.read_text(encoding="utf-8"))
+        package_data = json.loads(package_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"[DASHBOARD] ERROR: Failed to read version metadata: {exc}")
+        return False
+
+    target_version = str(version_data.get("version", "")).strip()
+    if not target_version:
+        print("[DASHBOARD] ERROR: version.json does not contain a valid version")
+        return False
+
+    if str(package_data.get("version", "")).strip() == target_version:
+        return True
+
+    package_data["version"] = target_version
+    try:
+        package_file.write_text(json.dumps(package_data, indent=2) + "\n", encoding="utf-8")
+    except Exception as exc:
+        print(f"[DASHBOARD] ERROR: Failed to update package.json version: {exc}")
+        return False
+
+    print(f"[DASHBOARD] Synced dashboard package version to {target_version}")
+    return True
+
+
 def is_dashboard_built() -> bool:
     """Check if dashboard is already built."""
     dist_path = get_dist_path()
@@ -190,6 +222,9 @@ def check_and_build(force: bool = False, auto_build: bool = True) -> bool:
     Returns:
         True if dashboard is ready (built or building)
     """
+    if not sync_dashboard_version():
+        return False
+
     if force:
         print("[DASHBOARD] Force rebuild requested...")
         return build_dashboard()
@@ -247,6 +282,9 @@ def main():
     dashboard_path = get_dashboard_path()
     if not dashboard_path.exists():
         print(f"[DASHBOARD] ERROR: Dashboard directory not found: {dashboard_path}")
+        sys.exit(2)
+
+    if not sync_dashboard_version():
         sys.exit(2)
     
     # Handle different modes

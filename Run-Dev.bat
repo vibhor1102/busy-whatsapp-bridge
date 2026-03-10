@@ -84,6 +84,14 @@ REM ============================================================================
 REM Step 1: Check and Build Dashboard
 REM ============================================================================
 call :log_step "STEP 1/3" "Checking dashboard build status"
+call :log_info "Syncing dashboard package version from version.json"
+"%VENV_PYTHON%" "%SCRIPT_DIR%scripts\sync_dashboard_version.py"
+IF %ERRORLEVEL% NEQ 0 (
+    call :log_error "Failed to sync dashboard package version"
+    pause
+    exit /b 1
+)
+echo.
 
 REM Check if dashboard needs building
 SET "NEEDS_BUILD=0"
