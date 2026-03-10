@@ -41,6 +41,7 @@ IF NOT DEFINED VERSION (
     echo [WARNING] Could not detect version, using 0.0.0
     SET "VERSION=0.0.0"
 )
+SET "RELEASE_TAG=v%VERSION%"
 
 echo Building version: %VERSION%
 echo.
@@ -74,14 +75,76 @@ IF NOT EXIST "python\python.exe" (
     call :maybe_pause
     exit /b 1
 )
+
+where gh >nul 2>nul
+IF ERRORLEVEL 1 (
+    echo [ERROR] GitHub CLI ^(gh^) not found!
+    call :attention "Install GitHub CLI or remove release publishing from this build."
+    call :maybe_pause
+    exit /b 1
+)
+
+gh auth status >nul 2>nul
+IF ERRORLEVEL 1 (
+    echo [ERROR] GitHub CLI is not signed in!
+    call :attention "Run: gh auth login"
+    call :maybe_pause
+    exit /b 1
+)
+
+SET "GIT_STATUS_SIZE=0"
+git status --porcelain > "%TEMP%\busy_git_status.txt" 2>nul
+FOR %%A IN ("%TEMP%\busy_git_status.txt") DO SET "GIT_STATUS_SIZE=%%~zA"
+IF NOT "%GIT_STATUS_SIZE%"=="0" (
+    echo [ERROR] Git working tree is not clean!
+    del "%TEMP%\busy_git_status.txt" 2>nul
+    call :attention "Commit or stash your changes before running build-all.bat."
+    call :maybe_pause
+    exit /b 1
+)
+del "%TEMP%\busy_git_status.txt" 2>nul
+
+git rev-parse -q --verify "refs\tags\%RELEASE_TAG%" >nul 2>nul
+IF NOT ERRORLEVEL 1 (
+    echo [ERROR] Tag %RELEASE_TAG% already exists locally!
+    call :attention "Bump version.json or delete the tag manually if you intend to rebuild that version."
+    call :maybe_pause
+    exit /b 1
+)
+
+SET "REMOTE_TAG_EXISTS="
+FOR /F "delims=" %%I IN ('git ls-remote --tags origin "refs/tags/%RELEASE_TAG%" 2^>nul') DO SET "REMOTE_TAG_EXISTS=1"
+IF DEFINED REMOTE_TAG_EXISTS (
+    echo [ERROR] Tag %RELEASE_TAG% already exists on origin!
+    call :attention "This version is already tagged remotely. Bump version.json for the next release."
+    call :maybe_pause
+    exit /b 1
+)
+
+gh release view "%RELEASE_TAG%" >nul 2>nul
+IF NOT ERRORLEVEL 1 (
+    echo [ERROR] GitHub release %RELEASE_TAG% already exists!
+    call :attention "Bump version.json for a new release, or manage the existing release manually on GitHub."
+    call :maybe_pause
+    exit /b 1
+)
+
 echo [OK] Prerequisites met
 echo.
 
 REM ============================================================================
 REM STEP 1: Build Dashboard
 REM ============================================================================
-echo [Step 1/5] Building dashboard...
+echo [Step 1/6] Building dashboard...
 echo.
+
+echo [INFO] Syncing dashboard package version...
+"%VENV_PYTHON%" "scripts\sync_dashboard_version.py"
+IF ERRORLEVEL 1 (
+    echo [ERROR] Failed to sync dashboard version!
+    call :maybe_pause
+    exit /b 1
+)
 
 IF NOT EXIST "dashboard-react\node_modules" (
     echo [INFO] Installing dashboard dependencies...
@@ -127,7 +190,7 @@ cd ..
 REM ============================================================================
 REM STEP 2: Build Launcher EXE
 REM ============================================================================
-echo [Step 2/5] Building launcher EXE...
+echo [Step 2/6] Building launcher EXE...
 echo.
 
 IF NOT EXIST "build-launcher-exe.py" (
@@ -159,7 +222,7 @@ echo.
 REM ============================================================================
 REM STEP 3: Prepare Staging Directory
 REM ============================================================================
-echo [Step 3/5] Preparing staging directory (release_dist)...
+echo [Step 3/6] Preparing staging directory (release_dist)...
 echo.
 
 SET "DIST_DIR=%SCRIPT_DIR%release_dist"
@@ -246,7 +309,7 @@ echo.
 REM ============================================================================
 REM STEP 4: Build Installer (Inno Setup)
 REM ============================================================================
-echo [Step 4/5] Building installer...
+echo [Step 4/6] Building installer...
 echo This may take a few minutes...
 echo.
 
@@ -273,7 +336,7 @@ echo.
 REM ============================================================================
 REM STEP 5: Sign and Verify
 REM ============================================================================
-echo [Step 5/5] Signing and verifying...
+echo [Step 5/6] Signing and verifying...
 echo.
 
 REM Sign the installer
@@ -296,6 +359,39 @@ IF ERRORLEVEL 1 (
 echo [OK] Installer signature verified
 echo.
 
+REM ============================================================================
+REM STEP 6: Create Git Tag and GitHub Release
+REM ============================================================================
+echo [Step 6/6] Publishing GitHub release...
+echo.
+
+git tag "%RELEASE_TAG%"
+IF ERRORLEVEL 1 (
+    echo [ERROR] Failed to create git tag %RELEASE_TAG%!
+    call :attention "Create and push the tag manually if you still want to publish this release."
+    call :maybe_pause
+    exit /b 1
+)
+
+git push origin "%RELEASE_TAG%"
+IF ERRORLEVEL 1 (
+    echo [ERROR] Failed to push git tag %RELEASE_TAG%!
+    call :attention "Push the tag manually, then create the GitHub release by hand if needed."
+    call :maybe_pause
+    exit /b 1
+)
+
+gh release create "%RELEASE_TAG%" "%INSTALLER_FILE%" --title "%RELEASE_TAG%" --generate-notes --latest
+IF ERRORLEVEL 1 (
+    echo [ERROR] Failed to create GitHub release %RELEASE_TAG%!
+    call :attention "The tag was pushed. Finish the release manually on GitHub or with gh release create."
+    call :maybe_pause
+    exit /b 1
+)
+
+echo [OK] GitHub release published
+echo.
+
 REM Report
 FOR %%A IN ("%INSTALLER_FILE%") DO SET "SIZE=%%~zA"
 
@@ -305,6 +401,7 @@ echo ================================================
 echo.
 echo Output file: %INSTALLER_FILE%
 echo Size: %SIZE% bytes
+echo Release tag: %RELEASE_TAG%
 echo.
 echo This installer includes:
 echo   - Python runtime (bundled)
@@ -315,7 +412,7 @@ echo   - All dependencies
 echo.
 echo Next steps:
 echo   1. Test the installer on a clean machine
-echo   2. Upload %INSTALLER_FILE% for distribution
+echo   2. Verify the GitHub release page and download asset
 echo.
 
 echo.
@@ -327,4 +424,8 @@ exit /b 0
 IF /I "%NO_PAUSE%"=="1" goto :eof
 IF /I "%CI%"=="true" goto :eof
 pause
+goto :eof
+
+:attention
+powershell -NoProfile -NonInteractive -Command "Write-Host ''; Write-Host '*** ACTION REQUIRED ***' -ForegroundColor Yellow; Write-Host '%~1' -ForegroundColor Red; Write-Host ''"
 goto :eof
