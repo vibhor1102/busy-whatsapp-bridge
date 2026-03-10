@@ -35,6 +35,7 @@ const navItems = [
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const baileysConnected = useSystemStore(selectIsBaileysConnected);
   const queueStats = useQueueStore((state) => state.stats);
+  const version = useDashboardStore((state) => state.stats?.system.version) || '0.0.0';
 
   return (
     <motion.aside
@@ -199,7 +200,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         {!collapsed && (
           <div className="px-1">
             <p className="text-[10px] font-medium tracking-tight" style={{ color: 'var(--text-tertiary)', opacity: 0.6 }}>
-              VERSION {useDashboardStore.getState().stats?.system.version || '0.0.0'}
+              VERSION {version}
             </p>
           </div>
         )}
